@@ -1,0 +1,1235 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ink UI 方向提案</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --page: oklch(96.8% 0.006 75);
+      --page-ink: oklch(22% 0.012 250);
+      --page-muted: oklch(53% 0.012 250);
+      --page-line: oklch(83% 0.009 250 / 0.72);
+      --r-xs: 6px;
+      --r-sm: 10px;
+      --r-md: 14px;
+      --r-lg: 22px;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      color: var(--page-ink);
+      background: var(--page);
+    }
+
+    button { font: inherit; }
+
+    .gallery {
+      width: min(1440px, 100%);
+      margin: 0 auto;
+      padding: 28px clamp(16px, 4vw, 56px) 52px;
+    }
+
+    .gallery-header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: end;
+      gap: 28px;
+      margin-bottom: 22px;
+    }
+
+    .eyebrow {
+      margin: 0 0 7px;
+      color: oklch(48% 0.12 220);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-family: "Avenir Next", -apple-system, sans-serif;
+      font-size: clamp(28px, 4vw, 44px);
+      font-weight: 600;
+      line-height: 1;
+      letter-spacing: -0.022em;
+    }
+
+    .intro {
+      max-width: 680px;
+      margin: 12px 0 0;
+      color: var(--page-muted);
+      font-size: 14px;
+      line-height: 1.65;
+      text-wrap: pretty;
+    }
+
+    .header-controls {
+      display: grid;
+      justify-items: end;
+      gap: 8px;
+    }
+
+    .selection-state {
+      min-width: 158px;
+      padding: 11px 14px;
+      border-radius: var(--r-sm);
+      background: oklch(100% 0 0 / 0.65);
+      box-shadow: 0 1px 2px oklch(20% 0.01 250 / 0.06),
+                  0 8px 24px oklch(20% 0.01 250 / 0.05);
+    }
+
+    .selection-state span {
+      display: block;
+      color: var(--page-muted);
+      font-size: 11px;
+    }
+
+    .selection-state strong {
+      display: block;
+      margin-top: 3px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .appearance-picker {
+      display: flex;
+      padding: 3px;
+      border-radius: var(--r-sm);
+      background: oklch(91% 0.008 250 / 0.72);
+      box-shadow: inset 0 0 0 1px var(--page-line);
+    }
+
+    .appearance-button {
+      min-width: 52px;
+      min-height: 30px;
+      padding: 0 9px;
+      border: 0;
+      border-radius: var(--r-xs);
+      color: var(--page-muted);
+      background: transparent;
+      cursor: pointer;
+      touch-action: manipulation;
+      transition-property: transform, color, background-color, box-shadow;
+      transition-duration: 140ms;
+      transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .appearance-button[aria-pressed="true"] {
+      color: var(--page-ink);
+      background: oklch(100% 0 0 / 0.84);
+      box-shadow: 0 1px 3px oklch(20% 0.01 250 / 0.12);
+    }
+
+    .appearance-button:active { transform: scale(0.96); }
+
+    .option-nav {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(138px, 1fr));
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .option-button {
+      min-height: 62px;
+      padding: 10px 12px;
+      border: 0;
+      border-radius: var(--r-sm);
+      text-align: left;
+      color: var(--page-muted);
+      background: transparent;
+      box-shadow: inset 0 0 0 1px var(--page-line);
+      cursor: pointer;
+      touch-action: manipulation;
+      transition-property: transform, color, background-color, box-shadow;
+      transition-duration: 160ms;
+      transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .option-button:active,
+    .choose-button:active,
+    .icon-button:active,
+    .add-button:active {
+      transform: scale(0.96);
+    }
+
+    .option-button[aria-selected="true"] {
+      color: var(--page-ink);
+      background: oklch(100% 0 0 / 0.88);
+      box-shadow: 0 1px 2px oklch(20% 0.01 250 / 0.07),
+                  0 7px 20px oklch(20% 0.01 250 / 0.06);
+    }
+
+    .option-button:focus-visible,
+    .choose-button:focus-visible,
+    .icon-button:focus-visible,
+    .add-button:focus-visible,
+    .appearance-button:focus-visible {
+      outline: 2px solid oklch(60% 0.145 224 / 0.78);
+      outline-offset: 2px;
+    }
+
+    .option-index {
+      display: inline-grid;
+      width: 20px;
+      height: 20px;
+      margin-right: 6px;
+      place-items: center;
+      border-radius: var(--r-xs);
+      color: currentColor;
+      background: oklch(91% 0.008 250);
+      font: 700 11px/1 "SF Mono", Menlo, monospace;
+    }
+
+    .option-button b {
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .option-button small {
+      display: block;
+      margin: 5px 0 0 27px;
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .stage-wrap {
+      overflow: auto;
+      padding: 12px;
+      border-radius: calc(var(--r-lg) + 4px);
+      background-color: oklch(89% 0.01 70);
+      background-image:
+        radial-gradient(circle at 10% 20%, oklch(88% 0.06 20 / 0.34), transparent 30%),
+        radial-gradient(circle at 90% 80%, oklch(86% 0.05 150 / 0.25), transparent 34%);
+      box-shadow: inset 0 0 0 1px oklch(30% 0.01 250 / 0.08);
+    }
+
+    .stage {
+      --sidebar-width: 258px;
+      --toolbar-height: 52px;
+      --canvas: oklch(99.5% 0.002 230);
+      --sidebar: oklch(93.5% 0.018 80 / 0.72);
+      --sidebar-ink: oklch(28% 0.015 255);
+      --sidebar-muted: oklch(53% 0.012 255);
+      --terminal: oklch(99.6% 0.002 230);
+      --terminal-ink: oklch(24% 0.014 250);
+      --terminal-muted: oklch(55% 0.012 250);
+      --hairline: oklch(72% 0.01 250 / 0.26);
+      --active: oklch(83% 0.018 68 / 0.68);
+      --accent: oklch(60% 0.145 224);
+      --green: oklch(57% 0.14 151);
+      --amber: oklch(66% 0.14 74);
+      --purple: oklch(64% 0.16 300);
+      --shadow: 0 30px 80px oklch(24% 0.02 260 / 0.16),
+                0 3px 10px oklch(24% 0.02 260 / 0.12);
+      position: relative;
+      display: grid;
+      grid-template-columns: var(--sidebar-width) 1fr;
+      width: max(100%, 1050px);
+      min-width: 1050px;
+      height: min(70vw, 720px);
+      min-height: 640px;
+      overflow: hidden;
+      border-radius: var(--r-lg);
+      color: var(--terminal-ink);
+      background: var(--canvas);
+      box-shadow: var(--shadow);
+      isolation: isolate;
+    }
+
+    .stage::after {
+      position: absolute;
+      inset: 0;
+      z-index: 20;
+      border-radius: inherit;
+      box-shadow: inset 0 0 0 1px oklch(20% 0.01 250 / 0.12);
+      content: "";
+      pointer-events: none;
+    }
+
+    .sidebar {
+      position: relative;
+      z-index: 2;
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+      color: var(--sidebar-ink);
+      background-color: var(--sidebar);
+      background-image:
+        radial-gradient(circle at 8% 8%, oklch(87% 0.055 25 / 0.22), transparent 34%),
+        radial-gradient(circle at 95% 88%, oklch(88% 0.045 320 / 0.18), transparent 38%);
+      -webkit-backdrop-filter: blur(28px) saturate(1.15);
+      backdrop-filter: blur(28px) saturate(1.15);
+      box-shadow: inset -1px 0 var(--hairline);
+    }
+
+    .window-bar {
+      display: flex;
+      height: var(--toolbar-height);
+      flex: 0 0 var(--toolbar-height);
+      align-items: center;
+      padding: 0 16px;
+    }
+
+    .traffic-lights {
+      display: flex;
+      gap: 8px;
+    }
+
+    .traffic-light {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      box-shadow: inset 0 0 0 0.5px oklch(30% 0.02 250 / 0.24);
+    }
+
+    .traffic-light.red { background: oklch(68% 0.2 24); }
+    .traffic-light.yellow { background: oklch(79% 0.17 86); }
+    .traffic-light.green { background: oklch(69% 0.17 145); }
+
+    .sidebar-top {
+      padding: 3px 12px 10px;
+    }
+
+    .brand-row,
+    .sidebar-section-title,
+    .session-main,
+    .tab,
+    .toolbar,
+    .statusbar {
+      display: flex;
+      align-items: center;
+    }
+
+    .brand-row {
+      justify-content: space-between;
+      min-height: 38px;
+      padding: 0 8px;
+    }
+
+    .brand {
+      font-family: "Avenir Next", -apple-system, sans-serif;
+      font-size: 15px;
+      font-weight: 650;
+      letter-spacing: -0.012em;
+    }
+
+    .brand::before {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      margin-right: 8px;
+      border-radius: 3px 6px 3px 6px;
+      background: var(--accent);
+      content: "";
+      transform: rotate(12deg);
+    }
+
+    .icon-button {
+      display: inline-grid;
+      width: 40px;
+      height: 40px;
+      border: 0;
+      place-items: center;
+      border-radius: var(--r-sm);
+      color: inherit;
+      background: transparent;
+      cursor: pointer;
+      touch-action: manipulation;
+      transition: transform 140ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .icon-button .symbol {
+      font-size: 16px;
+      opacity: 0.72;
+    }
+
+    .sidebar-section-title {
+      justify-content: space-between;
+      margin: 13px 8px 6px;
+      color: var(--sidebar-muted);
+      font-size: 10px;
+      font-weight: 650;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .sidebar-section-title .count {
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0;
+    }
+
+    .session-list {
+      display: grid;
+      gap: 3px;
+    }
+
+    .session {
+      min-height: 52px;
+      padding: 8px 9px;
+      border-radius: var(--r-sm);
+      color: var(--sidebar-muted);
+    }
+
+    .session.active {
+      color: var(--sidebar-ink);
+      background: var(--active);
+      box-shadow: 0 1px 1px oklch(20% 0.01 250 / 0.03);
+    }
+
+    .session-main {
+      min-width: 0;
+      gap: 9px;
+    }
+
+    .folder-icon {
+      position: relative;
+      width: 16px;
+      height: 12px;
+      flex: 0 0 16px;
+      border: 1.4px solid currentColor;
+      border-radius: 3px;
+      opacity: 0.78;
+    }
+
+    .folder-icon::before {
+      position: absolute;
+      top: -4px;
+      left: 1px;
+      width: 7px;
+      height: 3px;
+      border: 1.4px solid currentColor;
+      border-bottom: 0;
+      border-radius: 2px 2px 0 0;
+      content: "";
+    }
+
+    .session-name {
+      overflow: hidden;
+      font-size: 13px;
+      font-weight: 560;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .shortcut {
+      margin-left: auto;
+      color: var(--sidebar-muted);
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .session-meta {
+      margin: 4px 0 0 25px;
+      color: var(--sidebar-muted);
+      font-size: 11px;
+      opacity: 0.82;
+    }
+
+    .sidebar-footer {
+      margin-top: auto;
+      padding: 10px 12px 13px;
+    }
+
+    .add-button {
+      display: flex;
+      width: 100%;
+      min-height: 42px;
+      padding: 0 12px;
+      border: 0;
+      align-items: center;
+      justify-content: space-between;
+      border-radius: var(--r-sm);
+      color: var(--sidebar-ink);
+      background: oklch(100% 0 0 / 0.27);
+      box-shadow: inset 0 0 0 1px oklch(100% 0 0 / 0.18);
+      cursor: pointer;
+      touch-action: manipulation;
+      transition: transform 140ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .add-button span:first-child {
+      font-size: 12px;
+      font-weight: 560;
+    }
+
+    .keycap {
+      color: var(--sidebar-muted);
+      font: 11px/1 "SF Mono", Menlo, monospace;
+    }
+
+    .workspace {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      min-width: 0;
+      grid-template-rows: var(--toolbar-height) 1fr 28px;
+      background: var(--terminal);
+    }
+
+    .toolbar {
+      min-width: 0;
+      padding: 0 12px;
+      gap: 6px;
+      box-shadow: inset 0 -1px var(--hairline);
+    }
+
+    .tab {
+      min-width: 170px;
+      max-width: 230px;
+      height: 34px;
+      padding: 0 11px;
+      gap: 9px;
+      border-radius: var(--r-sm);
+      background: color-mix(in oklch, var(--active) 78%, transparent);
+    }
+
+    .tab-mark {
+      display: inline-grid;
+      width: 17px;
+      height: 17px;
+      flex: 0 0 17px;
+      place-items: center;
+      border-radius: 4px;
+      color: var(--accent);
+      background: color-mix(in oklch, var(--accent) 11%, transparent);
+      font: 700 10px/1 "SF Mono", Menlo, monospace;
+    }
+
+    .tab-name {
+      overflow: hidden;
+      font: 600 12px/1.2 "SF Mono", Menlo, monospace;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .tab .close {
+      margin-left: auto;
+      color: var(--terminal-muted);
+      font-size: 12px;
+      opacity: 0;
+    }
+
+    .toolbar-spacer { flex: 1; }
+
+    .toolbar-label {
+      margin-right: 5px;
+      color: var(--terminal-muted);
+      font: 10px/1 "SF Mono", Menlo, monospace;
+    }
+
+    .terminal {
+      overflow: hidden;
+      padding: clamp(34px, 5vw, 68px) clamp(40px, 6vw, 84px);
+      font-family: "SF Mono", Menlo, Monaco, monospace;
+      font-size: clamp(13px, 1.35vw, 16px);
+      line-height: 1.68;
+    }
+
+    .terminal pre {
+      margin: 0;
+      color: var(--terminal-ink);
+      font: inherit;
+      white-space: pre-wrap;
+    }
+
+    .prompt-line { font-weight: 600; }
+    .prompt-path { color: var(--accent); }
+    .prompt-git { color: var(--purple); }
+    .prompt-runtime { color: var(--green); }
+    .prompt-symbol { color: var(--green); }
+    .muted-output { color: var(--terminal-muted); }
+    .amber { color: var(--amber); }
+
+    .cursor {
+      display: inline-block;
+      width: 0.62em;
+      height: 1.2em;
+      margin-left: 0.22em;
+      vertical-align: -0.22em;
+      background: var(--accent);
+      animation: blink 1.15s steps(1, end) infinite;
+    }
+
+    @keyframes blink {
+      0%, 46% { opacity: 1; }
+      47%, 100% { opacity: 0; }
+    }
+
+    .statusbar {
+      min-width: 0;
+      padding: 0 14px;
+      justify-content: flex-end;
+      gap: 13px;
+      color: var(--terminal-muted);
+      font: 10px/1 "SF Mono", Menlo, monospace;
+      box-shadow: inset 0 1px var(--hairline);
+    }
+
+    .status-dot {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      margin-right: 5px;
+      border-radius: 50%;
+      background: var(--green);
+    }
+
+    .stage-meta {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 20px;
+      margin-top: 14px;
+      padding: 0 3px;
+    }
+
+    .concept-copy h2 {
+      margin: 0;
+      font-family: "Avenir Next", -apple-system, sans-serif;
+      font-size: 18px;
+      font-weight: 650;
+      letter-spacing: -0.012em;
+    }
+
+    .concept-copy p {
+      max-width: 760px;
+      margin: 5px 0 0;
+      color: var(--page-muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .choose-button {
+      min-width: 126px;
+      min-height: 42px;
+      border: 0;
+      border-radius: var(--r-sm);
+      color: oklch(98% 0.002 250);
+      background: oklch(25% 0.015 250);
+      box-shadow: 0 4px 12px oklch(20% 0.01 250 / 0.16);
+      cursor: pointer;
+      touch-action: manipulation;
+      transition-property: transform, background-color;
+      transition-duration: 150ms;
+      transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .option-panel { display: none; }
+    .option-panel.active {
+      display: block;
+      animation: panel-in 240ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    }
+
+    @keyframes panel-in {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* A / 雾白的深色伙伴：暖石墨玻璃，不做简单反相。 */
+    :root[data-appearance="dark"] {
+      color-scheme: dark;
+      --page: oklch(15.5% 0.007 250);
+      --page-ink: oklch(90% 0.008 85);
+      --page-muted: oklch(66% 0.011 250);
+      --page-line: oklch(92% 0.005 250 / 0.10);
+    }
+
+    :root[data-appearance="dark"] .theme-a {
+      --canvas: oklch(16.5% 0.008 250);
+      --sidebar: oklch(20% 0.014 68 / 0.88);
+      --sidebar-ink: oklch(90% 0.009 80);
+      --sidebar-muted: oklch(67% 0.012 80);
+      --terminal: oklch(14.5% 0.009 250);
+      --terminal-ink: oklch(88% 0.008 88);
+      --terminal-muted: oklch(62% 0.012 250);
+      --hairline: oklch(94% 0.004 250 / 0.08);
+      --active: oklch(94% 0.01 80 / 0.085);
+      --accent: oklch(73% 0.105 211);
+      --green: oklch(74% 0.13 151);
+      --amber: oklch(78% 0.12 82);
+      --purple: oklch(75% 0.11 312);
+      --shadow: 0 34px 90px oklch(6% 0.01 250 / 0.52),
+                0 4px 14px oklch(6% 0.01 250 / 0.34);
+    }
+
+    :root[data-appearance="dark"] .theme-a .sidebar {
+      background-image:
+        radial-gradient(circle at 6% 8%, oklch(48% 0.04 42 / 0.10), transparent 36%),
+        radial-gradient(circle at 100% 92%, oklch(42% 0.024 305 / 0.08), transparent 42%);
+    }
+
+    :root[data-appearance="dark"] .stage-wrap {
+      background-color: oklch(19% 0.008 70);
+      background-image:
+        radial-gradient(circle at 10% 20%, oklch(36% 0.04 28 / 0.28), transparent 31%),
+        radial-gradient(circle at 90% 80%, oklch(34% 0.035 155 / 0.18), transparent 35%);
+      box-shadow: inset 0 0 0 1px oklch(100% 0 0 / 0.07);
+    }
+
+    :root[data-appearance="dark"] .selection-state,
+    :root[data-appearance="dark"] .option-button[aria-selected="true"] {
+      background: oklch(100% 0 0 / 0.055);
+      box-shadow: 0 1px 2px oklch(0% 0 0 / 0.20),
+                  0 8px 24px oklch(0% 0 0 / 0.18);
+    }
+
+    :root[data-appearance="dark"] .appearance-picker {
+      background: oklch(100% 0 0 / 0.04);
+    }
+
+    :root[data-appearance="dark"] .appearance-button[aria-pressed="true"] {
+      background: oklch(100% 0 0 / 0.09);
+      box-shadow: 0 1px 3px oklch(0% 0 0 / 0.24);
+    }
+
+    :root[data-appearance="dark"] .option-index {
+      background: oklch(100% 0 0 / 0.08);
+    }
+
+    :root[data-appearance="dark"] .choose-button {
+      color: oklch(17% 0.01 250);
+      background: oklch(88% 0.008 85);
+      box-shadow: 0 5px 16px oklch(0% 0 0 / 0.28);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-appearance="light"]) {
+        color-scheme: dark;
+        --page: oklch(15.5% 0.007 250);
+        --page-ink: oklch(90% 0.008 85);
+        --page-muted: oklch(66% 0.011 250);
+        --page-line: oklch(92% 0.005 250 / 0.10);
+      }
+
+      :root:not([data-appearance="light"]) .theme-a {
+        --canvas: oklch(16.5% 0.008 250);
+        --sidebar: oklch(20% 0.014 68 / 0.88);
+        --sidebar-ink: oklch(90% 0.009 80);
+        --sidebar-muted: oklch(67% 0.012 80);
+        --terminal: oklch(14.5% 0.009 250);
+        --terminal-ink: oklch(88% 0.008 88);
+        --terminal-muted: oklch(62% 0.012 250);
+        --hairline: oklch(94% 0.004 250 / 0.08);
+        --active: oklch(94% 0.01 80 / 0.085);
+        --accent: oklch(73% 0.105 211);
+        --green: oklch(74% 0.13 151);
+        --amber: oklch(78% 0.12 82);
+        --purple: oklch(75% 0.11 312);
+        --shadow: 0 34px 90px oklch(6% 0.01 250 / 0.52),
+                  0 4px 14px oklch(6% 0.01 250 / 0.34);
+      }
+
+      :root:not([data-appearance="light"]) .theme-a .sidebar {
+        background-image:
+          radial-gradient(circle at 6% 8%, oklch(48% 0.04 42 / 0.10), transparent 36%),
+          radial-gradient(circle at 100% 92%, oklch(42% 0.024 305 / 0.08), transparent 42%);
+      }
+
+      :root:not([data-appearance="light"]) .stage-wrap {
+        background-color: oklch(19% 0.008 70);
+        background-image:
+          radial-gradient(circle at 10% 20%, oklch(36% 0.04 28 / 0.28), transparent 31%),
+          radial-gradient(circle at 90% 80%, oklch(34% 0.035 155 / 0.18), transparent 35%);
+        box-shadow: inset 0 0 0 1px oklch(100% 0 0 / 0.07);
+      }
+
+      :root:not([data-appearance="light"]) .selection-state,
+      :root:not([data-appearance="light"]) .option-button[aria-selected="true"] {
+        background: oklch(100% 0 0 / 0.055);
+        box-shadow: 0 1px 2px oklch(0% 0 0 / 0.20),
+                    0 8px 24px oklch(0% 0 0 / 0.18);
+      }
+
+      :root:not([data-appearance="light"]) .appearance-picker {
+        background: oklch(100% 0 0 / 0.04);
+      }
+
+      :root:not([data-appearance="light"]) .appearance-button[aria-pressed="true"] {
+        background: oklch(100% 0 0 / 0.09);
+        box-shadow: 0 1px 3px oklch(0% 0 0 / 0.24);
+      }
+
+      :root:not([data-appearance="light"]) .option-index {
+        background: oklch(100% 0 0 / 0.08);
+      }
+
+      :root:not([data-appearance="light"]) .choose-button {
+        color: oklch(17% 0.01 250);
+        background: oklch(88% 0.008 85);
+        box-shadow: 0 5px 16px oklch(0% 0 0 / 0.28);
+      }
+    }
+
+    /* B / 蓝瓷：冷色半透明侧栏，更接近 Codex 的工具密度。 */
+    .theme-b {
+      --sidebar-width: 236px;
+      --toolbar-height: 48px;
+      --canvas: oklch(98.7% 0.006 240);
+      --sidebar: oklch(91% 0.028 242 / 0.70);
+      --sidebar-ink: oklch(27% 0.022 248);
+      --sidebar-muted: oklch(50% 0.025 245);
+      --terminal: oklch(99.2% 0.004 240);
+      --terminal-ink: oklch(23% 0.016 250);
+      --terminal-muted: oklch(54% 0.018 250);
+      --hairline: oklch(62% 0.025 240 / 0.22);
+      --active: oklch(84% 0.028 246 / 0.74);
+      --accent: oklch(56% 0.155 246);
+      --green: oklch(55% 0.135 155);
+      --amber: oklch(64% 0.145 72);
+      --purple: oklch(58% 0.15 285);
+    }
+
+    .theme-b .terminal {
+      padding-top: 54px;
+      font-size: clamp(12px, 1.2vw, 15px);
+    }
+
+    .theme-b .sidebar {
+      background-image:
+        radial-gradient(circle at 5% 12%, oklch(88% 0.05 220 / 0.24), transparent 35%),
+        radial-gradient(circle at 100% 90%, oklch(88% 0.035 285 / 0.16), transparent 40%);
+    }
+
+    .theme-b .session { min-height: 45px; padding-block: 6px; }
+    .theme-b .tab { min-width: 156px; height: 31px; }
+
+    /* C / 石墨：终端优先的低眩光深色方案。 */
+    .theme-c {
+      color-scheme: dark;
+      --sidebar-width: 250px;
+      --toolbar-height: 50px;
+      --canvas: oklch(16.5% 0.008 250);
+      --sidebar: oklch(20% 0.014 75 / 0.88);
+      --sidebar-ink: oklch(90% 0.009 80);
+      --sidebar-muted: oklch(68% 0.012 80);
+      --terminal: oklch(15.5% 0.009 250);
+      --terminal-ink: oklch(88% 0.008 90);
+      --terminal-muted: oklch(61% 0.012 250);
+      --hairline: oklch(92% 0.005 250 / 0.07);
+      --active: oklch(92% 0.012 80 / 0.085);
+      --accent: oklch(72% 0.12 205);
+      --green: oklch(72% 0.14 150);
+      --amber: oklch(77% 0.135 82);
+      --purple: oklch(74% 0.12 310);
+      --shadow: 0 34px 90px oklch(8% 0.01 250 / 0.52),
+                0 4px 14px oklch(8% 0.01 250 / 0.35);
+    }
+
+    .theme-c .add-button {
+      background: oklch(100% 0 0 / 0.045);
+      box-shadow: inset 0 0 0 1px oklch(100% 0 0 / 0.04);
+    }
+
+    .theme-c .sidebar {
+      background-image:
+        radial-gradient(circle at 5% 8%, oklch(48% 0.045 48 / 0.10), transparent 36%),
+        radial-gradient(circle at 100% 90%, oklch(42% 0.026 285 / 0.08), transparent 42%);
+    }
+
+    .theme-c::after { box-shadow: inset 0 0 0 1px oklch(100% 0 0 / 0.09); }
+
+    /* D / 纸墨：低饱和暖纸面，强调阅读舒适度。 */
+    .theme-d {
+      --sidebar-width: 274px;
+      --toolbar-height: 54px;
+      --canvas: oklch(97.4% 0.014 78);
+      --sidebar: oklch(89.5% 0.032 74 / 0.68);
+      --sidebar-ink: oklch(27% 0.018 56);
+      --sidebar-muted: oklch(52% 0.02 58);
+      --terminal: oklch(97.8% 0.012 82);
+      --terminal-ink: oklch(25% 0.018 56);
+      --terminal-muted: oklch(52% 0.02 58);
+      --hairline: oklch(55% 0.022 60 / 0.18);
+      --active: oklch(82% 0.043 72 / 0.64);
+      --accent: oklch(54% 0.12 33);
+      --green: oklch(52% 0.11 147);
+      --amber: oklch(61% 0.13 70);
+      --purple: oklch(56% 0.11 312);
+    }
+
+    .theme-d .terminal {
+      padding-left: clamp(48px, 7vw, 96px);
+      font-family: "Iosevka", "SF Mono", Menlo, monospace;
+      line-height: 1.78;
+    }
+
+    .theme-d .sidebar {
+      background-image:
+        radial-gradient(circle at 4% 6%, oklch(86% 0.065 45 / 0.26), transparent 38%),
+        radial-gradient(circle at 100% 92%, oklch(86% 0.04 92 / 0.17), transparent 42%);
+    }
+
+    .theme-d .brand::before { border-radius: 50% 50% 48% 18%; }
+
+    /* E / 浮轨：更大胆的窄轨导航，适合项目数量少、终端空间优先。 */
+    .theme-e {
+      --sidebar-width: 104px;
+      --toolbar-height: 50px;
+      --canvas: oklch(97.8% 0.01 155);
+      --sidebar: oklch(88% 0.036 156 / 0.68);
+      --sidebar-ink: oklch(25% 0.022 164);
+      --sidebar-muted: oklch(48% 0.025 164);
+      --terminal: oklch(99% 0.004 155);
+      --terminal-ink: oklch(22% 0.015 220);
+      --terminal-muted: oklch(53% 0.02 220);
+      --hairline: oklch(53% 0.03 164 / 0.18);
+      --active: oklch(79% 0.055 158 / 0.76);
+      --accent: oklch(51% 0.13 174);
+      --green: oklch(51% 0.125 153);
+      --amber: oklch(62% 0.14 73);
+      --purple: oklch(58% 0.13 302);
+    }
+
+    .theme-e .sidebar-top { padding-inline: 9px; }
+    .theme-e .sidebar {
+      background-image:
+        radial-gradient(circle at 10% 5%, oklch(86% 0.06 176 / 0.25), transparent 40%),
+        radial-gradient(circle at 90% 95%, oklch(87% 0.045 118 / 0.16), transparent 44%);
+    }
+    .theme-e .brand-row { justify-content: center; }
+    .theme-e .brand {
+      width: 34px;
+      overflow: hidden;
+      color: transparent;
+      white-space: nowrap;
+    }
+    .theme-e .brand::before {
+      width: 15px;
+      height: 15px;
+      margin: 0 18px 0 9px;
+    }
+    .theme-e .brand-row .icon-button,
+    .theme-e .sidebar-section-title,
+    .theme-e .session-meta,
+    .theme-e .shortcut,
+    .theme-e .keycap { display: none; }
+    .theme-e .session-list { gap: 7px; }
+    .theme-e .session {
+      min-height: 58px;
+      padding: 9px 5px;
+      text-align: center;
+    }
+    .theme-e .session-main {
+      display: grid;
+      justify-items: center;
+      gap: 6px;
+    }
+    .theme-e .folder-icon { width: 18px; height: 14px; }
+    .theme-e .session-name {
+      width: 74px;
+      font-size: 10px;
+      text-align: center;
+    }
+    .theme-e .sidebar-footer { padding-inline: 10px; }
+    .theme-e .add-button {
+      justify-content: center;
+      font-size: 0;
+    }
+    .theme-e .add-button span:first-child {
+      font-size: 0;
+    }
+    .theme-e .add-button span:first-child::before {
+      font-size: 18px;
+      content: "+";
+    }
+    .theme-e .terminal { padding-left: clamp(54px, 8vw, 112px); }
+
+    @media (hover: hover) {
+      .option-button:hover { transform: translateY(-1px); }
+      .icon-button:hover { background: oklch(50% 0.01 250 / 0.07); }
+      .tab:hover .close { opacity: 0.7; }
+      .choose-button:hover { background: oklch(31% 0.017 250); }
+      .session:not(.active):hover { background: oklch(100% 0 0 / 0.16); }
+    }
+
+    @media (max-width: 840px) {
+      .gallery-header,
+      .stage-meta { grid-template-columns: 1fr; align-items: start; }
+      .header-controls { justify-items: stretch; }
+      .selection-state { display: none; }
+      .appearance-picker { width: max-content; }
+      .option-nav {
+        display: flex;
+        overflow-x: auto;
+        padding-bottom: 5px;
+        scroll-snap-type: x mandatory;
+      }
+      .option-button {
+        min-width: 164px;
+        scroll-snap-align: start;
+      }
+      .choose-button { width: 100%; }
+    }
+
+    @media (max-width: 480px) {
+      .gallery { padding: 20px 12px 36px; }
+      .stage-wrap { padding: 8px; }
+      .stage {
+        width: 980px;
+        min-width: 980px;
+        height: 620px;
+        min-height: 620px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="gallery">
+    <header class="gallery-header">
+      <div>
+        <p class="eyebrow">ink · selected direction</p>
+        <h1>雾白 · 双外观</h1>
+        <p class="intro">A 已选定。浅色使用暖雾玻璃与清白终端，深色使用暖石墨玻璃与低眩光终端；默认跟随 macOS，也可在这里临时切换预览。</p>
+      </div>
+      <div class="header-controls">
+        <aside class="selection-state" aria-live="polite">
+          <span>已选方案</span>
+          <strong id="current-choice">A · 雾白</strong>
+        </aside>
+        <div class="appearance-picker" aria-label="外观预览">
+          <button class="appearance-button" type="button" data-appearance="system" aria-pressed="true">系统</button>
+          <button class="appearance-button" type="button" data-appearance="light" aria-pressed="false">浅色</button>
+          <button class="appearance-button" type="button" data-appearance="dark" aria-pressed="false">深色</button>
+        </div>
+      </div>
+    </header>
+
+    <nav class="option-nav" aria-label="设计方案">
+      <button class="option-button" type="button" data-option="a" aria-selected="true">
+        <span class="option-index">A</span><b>雾白</b>
+        <small>已选 · 自动外观</small>
+      </button>
+      <button class="option-button" type="button" data-option="b" aria-selected="false">
+        <span class="option-index">B</span><b>蓝瓷</b>
+        <small>冷静、紧凑</small>
+      </button>
+      <button class="option-button" type="button" data-option="c" aria-selected="false">
+        <span class="option-index">C</span><b>石墨</b>
+        <small>深色、低眩光</small>
+      </button>
+      <button class="option-button" type="button" data-option="d" aria-selected="false">
+        <span class="option-index">D</span><b>纸墨</b>
+        <small>温暖、长时阅读</small>
+      </button>
+      <button class="option-button" type="button" data-option="e" aria-selected="false">
+        <span class="option-index">E</span><b>浮轨</b>
+        <small>大胆、空间优先</small>
+      </button>
+    </nav>
+
+    <div id="panels"></div>
+  </main>
+
+  <template id="stage-template">
+    <section class="option-panel">
+      <div class="stage-wrap">
+        <div class="stage">
+          <aside class="sidebar">
+            <div class="window-bar" aria-label="窗口控制">
+              <div class="traffic-lights" aria-hidden="true">
+                <i class="traffic-light red"></i>
+                <i class="traffic-light yellow"></i>
+                <i class="traffic-light green"></i>
+              </div>
+            </div>
+            <div class="sidebar-top">
+              <div class="brand-row">
+                <span class="brand">ink</span>
+                <button class="icon-button" type="button" aria-label="搜索"><span class="symbol">⌕</span></button>
+              </div>
+              <div class="sidebar-section-title">
+                <span>项目</span>
+                <span class="count">3</span>
+              </div>
+              <div class="session-list">
+                <div class="session active">
+                  <div class="session-main">
+                    <i class="folder-icon" aria-hidden="true"></i>
+                    <span class="session-name">ink</span>
+                    <span class="shortcut">⌘1</span>
+                  </div>
+                  <div class="session-meta">2 个会话 · 当前</div>
+                </div>
+                <div class="session">
+                  <div class="session-main">
+                    <i class="folder-icon" aria-hidden="true"></i>
+                    <span class="session-name">scribe</span>
+                    <span class="shortcut">⌘2</span>
+                  </div>
+                  <div class="session-meta">docs · 18 分钟前</div>
+                </div>
+                <div class="session">
+                  <div class="session-main">
+                    <i class="folder-icon" aria-hidden="true"></i>
+                    <span class="session-name">netinfra</span>
+                    <span class="shortcut">⌘3</span>
+                  </div>
+                  <div class="session-meta">main · 昨天</div>
+                </div>
+              </div>
+            </div>
+            <div class="sidebar-footer">
+              <button class="add-button" type="button">
+                <span>＋ 新建项目</span>
+                <span class="keycap">⌘N</span>
+              </button>
+            </div>
+          </aside>
+
+          <section class="workspace" aria-label="终端工作区">
+            <header class="toolbar">
+              <div class="tab">
+                <span class="tab-mark">&gt;_</span>
+                <span class="tab-name">~/work/ink</span>
+                <span class="close">×</span>
+              </div>
+              <button class="icon-button" type="button" aria-label="新建标签"><span class="symbol">＋</span></button>
+              <div class="toolbar-spacer"></div>
+              <span class="toolbar-label">120 fps</span>
+              <button class="icon-button" type="button" aria-label="切换侧边栏"><span class="symbol">◫</span></button>
+            </header>
+
+            <div class="terminal">
+              <pre><span class="prompt-line"><span class="prompt-path">ink</span> on <span class="prompt-git">⌁ main</span> via <span class="prompt-runtime">◆ swift 6.0</span></span>
+<span class="prompt-symbol">❯</span> swift test
+<span class="muted-output">Building for debugging...</span>
+[12/12] Linking inkPackageTests
+<span class="prompt-runtime">✓ Test run with 48 tests passed after 0.37 seconds.</span>
+
+<span class="prompt-line"><span class="prompt-path">ink</span> on <span class="prompt-git">⌁ main</span> via <span class="prompt-runtime">◆ swift 6.0</span></span>
+<span class="prompt-symbol">❯</span> <span class="cursor" aria-label="光标"></span></pre>
+            </div>
+
+            <footer class="statusbar">
+              <span><i class="status-dot"></i>shell ready</span>
+              <span>120 × 36</span>
+              <span>UTF-8</span>
+            </footer>
+          </section>
+        </div>
+      </div>
+
+      <footer class="stage-meta">
+        <div class="concept-copy">
+          <h2></h2>
+          <p></p>
+        </div>
+        <button class="choose-button" type="button">选这套</button>
+      </footer>
+    </section>
+  </template>
+
+  <script>
+    const options = {
+      a: {
+        name: "A · 雾白",
+        theme: "theme-a",
+        description: "最稳妥的主方向。暖中性雾面侧栏与高亮白色终端形成清晰层级，圆角和选中块接近参考一，工具密度沿用参考二。"
+      },
+      b: {
+        name: "B · 蓝瓷",
+        theme: "theme-b",
+        description: "更接近 Codex 的冷静气质：侧栏偏蓝灰、信息更紧凑、标签更轻。适合强调“专业工具”而不是“生活方式应用”。"
+      },
+      c: {
+        name: "C · 石墨",
+        theme: "theme-c",
+        description: "为长时间终端工作准备的深色方案。用亮度阶而不是重阴影表达层级，暖灰侧栏避免常见的蓝紫开发者主题。"
+      },
+      d: {
+        name: "D · 纸墨",
+        theme: "theme-d",
+        description: "最温暖、最具编辑气质的一套。纸面白与陶土强调色降低技术产品的冷感，适合希望 ink 有独立品牌性格的方向。"
+      },
+      e: {
+        name: "E · 浮轨",
+        theme: "theme-e",
+        description: "最大胆的空间优先方案。将传统侧栏收成半透明项目轨道，让终端获得最大面积；适合项目较少、键盘切换为主的重度用户。"
+      }
+    };
+
+    const panels = document.querySelector("#panels");
+    const template = document.querySelector("#stage-template");
+
+    Object.entries(options).forEach(([key, option], index) => {
+      const fragment = template.content.cloneNode(true);
+      const panel = fragment.querySelector(".option-panel");
+      panel.dataset.panel = key;
+      panel.classList.toggle("active", index === 0);
+      fragment.querySelector(".stage").classList.add(option.theme);
+      fragment.querySelector("h2").textContent = option.name;
+      fragment.querySelector(".concept-copy p").textContent = option.description;
+      fragment.querySelector(".choose-button").dataset.choose = key;
+      panels.appendChild(fragment);
+    });
+
+    const navButtons = [...document.querySelectorAll(".option-button")];
+    const optionPanels = [...document.querySelectorAll(".option-panel")];
+    const choiceLabel = document.querySelector("#current-choice");
+    const appearanceButtons = [...document.querySelectorAll(".appearance-button")];
+
+    function showOption(key) {
+      navButtons.forEach((button) => {
+        const selected = button.dataset.option === key;
+        button.setAttribute("aria-selected", String(selected));
+      });
+      optionPanels.forEach((panel) => {
+        panel.classList.toggle("active", panel.dataset.panel === key);
+      });
+      choiceLabel.textContent = options[key].name;
+      history.replaceState(null, "", `#${key}`);
+    }
+
+    navButtons.forEach((button) => {
+      button.addEventListener("click", () => showOption(button.dataset.option));
+    });
+
+    function setAppearance(mode) {
+      if (mode === "system") {
+        document.documentElement.removeAttribute("data-appearance");
+      } else {
+        document.documentElement.dataset.appearance = mode;
+      }
+      appearanceButtons.forEach((button) => {
+        button.setAttribute("aria-pressed", String(button.dataset.appearance === mode));
+      });
+    }
+
+    appearanceButtons.forEach((button) => {
+      button.addEventListener("click", () => setAppearance(button.dataset.appearance));
+    });
+
+    document.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-choose]");
+      if (!button) return;
+      const key = button.dataset.choose;
+      localStorage.setItem("ink-ui-choice", key);
+      document.querySelectorAll(".choose-button").forEach((item) => {
+        item.textContent = item === button ? "✓ 已选定" : "选这套";
+      });
+      choiceLabel.textContent = `${options[key].name} · 已选`;
+    });
+
+    const hashChoice = location.hash.slice(1);
+    if (options[hashChoice]) showOption(hashChoice);
+  </script>
+</body>
+</html>
