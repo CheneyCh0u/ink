@@ -8,6 +8,14 @@ import InkDesign
 // AppKit 系有同名类型，显式限定到 TerminalCore。
 private typealias ColorTable = TerminalCore.ColorTable
 
+/// Metal 在驱动自己的 completion queue 上调用完成回调，不能继承
+/// `TerminalRenderer` 的 MainActor 隔离。
+enum MetalCommandCompletion {
+    static func signal(_ semaphore: DispatchSemaphore) -> @Sendable (MTLCommandBuffer) -> Void {
+        { _ in semaphore.signal() }
+    }
+}
+
 /// Metal 渲染器：把 `Terminal` 的 grid 变成一次 instanced draw。
 ///
 /// 热路径纪律（CLAUDE.md）：`buildInstances` 每帧跑满屏 cell，里面只做
@@ -205,7 +213,7 @@ final class TerminalRenderer {
         }
         encoder.endEncoding()
 
-        commands.addCompletedHandler { [inflight] _ in inflight.signal() }
+        commands.addCompletedHandler(MetalCommandCompletion.signal(inflight))
         commands.present(drawable)
         commands.commit()
     }
