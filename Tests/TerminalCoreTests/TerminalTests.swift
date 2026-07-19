@@ -2,22 +2,22 @@ import Testing
 @testable import TerminalCore
 
 /// 端到端：原始字节 → Parser → Terminal → grid。
-/// 所有 VT 兼容性验证都走这条路，不需要窗口。
-private func makeTerminal(
+/// 所有 VT 兼容性验证都走这条路，不需要窗口。测试文件间共享。
+func makeTerminal(
     columns: Int = 20, rows: Int = 5, scrollback: Int = 100
 ) -> (Parser, Terminal) {
     (Parser(), Terminal(size: TerminalSize(columns: columns, rows: rows), scrollbackCapacity: scrollback))
 }
 
-private func feed(_ bytes: some Sequence<UInt8>, _ parser: inout Parser, _ term: inout Terminal) {
+func feed(_ bytes: some Sequence<UInt8>, _ parser: inout Parser, _ term: inout Terminal) {
     parser.feed(bytes, handler: &term)
 }
 
-private func feed(_ text: String, _ parser: inout Parser, _ term: inout Terminal) {
+func feed(_ text: String, _ parser: inout Parser, _ term: inout Terminal) {
     parser.feed(Array(text.utf8), handler: &term)
 }
 
-private func rowText(_ term: Terminal, _ row: Int) -> String {
+func rowText(_ term: Terminal, _ row: Int) -> String {
     var s = ""
     for cell in term.grid.row(row) where !cell.isCluster {
         if let scalar = UnicodeScalar(cell.scalar & ~Cell.clusterFlag) {
