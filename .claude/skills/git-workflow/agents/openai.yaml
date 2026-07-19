@@ -1,0 +1,4 @@
+interface:
+  display_name: "Git Workflow"
+  short_description: "通过 Issue、分支、提交和 PR 管理仓库全部变更"
+  default_prompt: "Use $git-workflow to complete this repository change through an Issue-linked branch and pull request."
