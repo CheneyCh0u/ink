@@ -1,0 +1,303 @@
+import AppKit
+import Metal
+import QuartzCore
+import simd
+import TerminalCore
+import InkDesign
+
+// AppKit 系有同名类型，显式限定到 TerminalCore。
+private typealias ColorTable = TerminalCore.ColorTable
+
+/// Metal 渲染器：把 `Terminal` 的 grid 变成一次 instanced draw。
+///
+/// 热路径纪律（CLAUDE.md）：`buildInstances` 每帧跑满屏 cell，里面只做
+/// 位运算、数组索引和字典命中；`NSColor`、`String` 分配只发生在 atlas
+/// 未命中的首次栅格化里。调色板换成 LUT 数组，外观切换时整表重建。
+@MainActor
+final class TerminalRenderer {
+
+    let device: MTLDevice
+    private let commandQueue: MTLCommandQueue
+    private let pipeline: MTLRenderPipelineState
+    private(set) var atlas: GlyphAtlas
+
+    // 三缓冲环：CPU 写第 N 帧时 GPU 还在读第 N-1 帧。
+    private var instanceBuffers: [MTLBuffer] = []
+    private var bufferIndex = 0
+    private let inflight = DispatchSemaphore(value: 3)
+    private var bufferCapacity = 0
+
+    // 调色板快照 → float4 LUT。0–255 索引 + 默认前景/背景 + 光标。
+    private var lut = [SIMD4<Float>](repeating: .zero, count: 256)
+    private var defaultFG: SIMD4<Float> = .zero
+    private var defaultBG: SIMD4<Float> = .zero
+    private var cursorColor: SIMD4<Float> = .zero
+    private(set) var clearColor = MTLClearColor()
+
+    private let contentInset: CGFloat
+
+    init?(font: NSFont, scale: CGFloat) {
+        // swift build 不编译 .metal（只有 Xcode 构建系统会），shader 以源码
+        // 进 bundle、启动时编译一次。失败原因打到 stderr，方便命令行排查。
+        guard
+            let device = MTLCreateSystemDefaultDevice(),
+            let queue = device.makeCommandQueue(),
+            let shaderURL = Bundle.module.url(forResource: "Shaders", withExtension: "metal"),
+            let shaderSource = try? String(contentsOf: shaderURL, encoding: .utf8)
+        else { return nil }
+        let library: MTLLibrary
+        do {
+            library = try device.makeLibrary(source: shaderSource, options: nil)
+        } catch {
+            FileHandle.standardError.write(Data("shader 编译失败：\(error)\n".utf8))
+            return nil
+        }
+        guard
+            let vertexFn = library.makeFunction(name: "cell_vertex"),
+            let fragmentFn = library.makeFunction(name: "cell_fragment"),
+            let atlas = GlyphAtlas(device: device, font: font, scale: scale)
+        else { return nil }
+
+        let desc = MTLRenderPipelineDescriptor()
+        desc.vertexFunction = vertexFn
+        desc.fragmentFunction = fragmentFn
+        desc.colorAttachments[0].pixelFormat = .bgra8Unorm
+        guard let pipeline = try? device.makeRenderPipelineState(descriptor: desc) else {
+            return nil
+        }
+
+        self.device = device
+        self.commandQueue = queue
+        self.pipeline = pipeline
+        self.atlas = atlas
+        self.contentInset = InkDesignTokens.Spacing.sm * scale
+    }
+
+    // MARK: - 调色板
+
+    func apply(palette: InkTerminalPalette) {
+        for i in 0..<16 {
+            lut[i] = Self.floatColor(palette.ansi[i].rgb)
+        }
+        // 16–255：xterm 标准公式生成，不属于主题（docs/design-system.md）。
+        for i in 16..<232 {
+            let v = i - 16
+            let levels: [Float] = [0, 95, 135, 175, 215, 255]
+            lut[i] = SIMD4(
+                levels[v / 36] / 255,
+                levels[v / 6 % 6] / 255,
+                levels[v % 6] / 255,
+                1
+            )
+        }
+        for i in 232..<256 {
+            let g = Float((i - 232) * 10 + 8) / 255
+            lut[i] = SIMD4(g, g, g, 1)
+        }
+        defaultFG = Self.floatColor(palette.defaultForeground.rgb)
+        defaultBG = Self.floatColor(palette.defaultBackground.rgb)
+        cursorColor = Self.floatColor(palette.cursor.rgb)
+        clearColor = MTLClearColor(
+            red: Double(defaultBG.x), green: Double(defaultBG.y),
+            blue: Double(defaultBG.z), alpha: 1
+        )
+    }
+
+    private static func floatColor(_ rgb: UInt32) -> SIMD4<Float> {
+        SIMD4(
+            Float((rgb >> 16) & 0xFF) / 255,
+            Float((rgb >> 8) & 0xFF) / 255,
+            Float(rgb & 0xFF) / 255,
+            1
+        )
+    }
+
+    // MARK: - 网格度量
+
+    /// 视图尺寸（物理像素）能容纳的列 × 行。
+    func gridSize(forPixelSize size: CGSize) -> TerminalSize {
+        TerminalSize(
+            columns: Int((size.width - contentInset * 2) / atlas.cellWidth),
+            rows: Int((size.height - contentInset * 2) / atlas.cellHeight)
+        )
+    }
+
+    // MARK: - 渲染
+
+    func render(terminal: Terminal, into layer: CAMetalLayer, cursorOn: Bool) {
+        let grid = terminal.grid
+        let maxInstances = grid.size.columns * grid.size.rows + 1
+        ensureBuffers(capacity: maxInstances)
+
+        inflight.wait()
+        bufferIndex = (bufferIndex + 1) % instanceBuffers.count
+        let buffer = instanceBuffers[bufferIndex]
+
+        let count = buildInstances(terminal: terminal, cursorOn: cursorOn, into: buffer)
+
+        guard
+            let drawable = layer.nextDrawable(),
+            let commands = commandQueue.makeCommandBuffer()
+        else {
+            inflight.signal()
+            return
+        }
+
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = drawable.texture
+        pass.colorAttachments[0].loadAction = .clear
+        pass.colorAttachments[0].storeAction = .store
+        pass.colorAttachments[0].clearColor = clearColor
+
+        var uniforms = Uniforms(
+            viewportSize: SIMD2(Float(layer.drawableSize.width), Float(layer.drawableSize.height)),
+            cellSize: SIMD2(Float(atlas.cellWidth), Float(atlas.cellHeight)),
+            origin: SIMD2(Float(contentInset), Float(contentInset))
+        )
+
+        guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {
+            inflight.signal()
+            return
+        }
+        if count > 0 {
+            encoder.setRenderPipelineState(pipeline)
+            encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
+            encoder.setVertexBuffer(buffer, offset: 0, index: 1)
+            encoder.setFragmentTexture(atlas.monoTexture, index: 0)
+            encoder.setFragmentTexture(atlas.colorTexture, index: 1)
+            encoder.drawPrimitives(
+                type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: count
+            )
+        }
+        encoder.endEncoding()
+
+        commands.addCompletedHandler { [inflight] _ in inflight.signal() }
+        commands.present(drawable)
+        commands.commit()
+    }
+
+    private func ensureBuffers(capacity: Int) {
+        guard capacity > bufferCapacity else { return }
+        let bytes = capacity * MemoryLayout<CellInstance>.stride
+        instanceBuffers = (0..<3).compactMap { _ in
+            device.makeBuffer(length: bytes, options: .storageModeShared)
+        }
+        bufferCapacity = capacity
+        bufferIndex = 0
+    }
+
+    // MARK: - 实例构建
+
+    /// 满屏 cell → instance buffer。返回实例数。
+    /// 空白且默认背景的 cell 不发实例（clear color 已经盖住），
+    /// 常见画面里这能砍掉七八成实例。
+    private func buildInstances(
+        terminal: Terminal, cursorOn: Bool, into buffer: MTLBuffer
+    ) -> Int {
+        let grid = terminal.grid
+        let cols = grid.size.columns
+        let rows = grid.size.rows
+        let output = buffer.contents().bindMemory(to: CellInstance.self, capacity: bufferCapacity)
+        var count = 0
+
+        let cursorRow = grid.cursorRow
+        let cursorCol = grid.cursorCol
+        let drawCursor = cursorOn && terminal.modes.showCursor
+
+        for row in 0..<rows {
+            for col in 0..<cols {
+                let cell = grid[row, col]
+                let attr = cell.attr
+
+                if attr & Cell.Attr.wideTrailing != 0 { continue } // 首格的宽 quad 盖住
+
+                let isCursorCell = drawCursor && row == cursorRow
+                    && (col == cursorCol || (col == cursorCol - 1 && attr & Cell.Attr.wideLeading != 0))
+
+                var (fg, bg) = resolve(attr: attr, colorTable: terminal.colorTable)
+                if isCursorCell {
+                    bg = cursorColor
+                    fg = defaultBG
+                }
+
+                let hasGlyph = !(cell.scalar == 0x20 && !cell.isCluster)
+                let decorations = attr & (Cell.Attr.underline | Cell.Attr.strikethrough)
+
+                // 纯空白 + 默认背景 + 非光标：不发实例。
+                if !hasGlyph, decorations == 0, !isCursorCell,
+                   Cell.Attr.background(of: attr) == Cell.Attr.colorDefault,
+                   attr & Cell.Attr.inverse == 0 {
+                    continue
+                }
+
+                var flags: UInt32 = 0
+                var uv = SIMD4<Float>.zero
+                if attr & Cell.Attr.wideLeading != 0 { flags |= CellInstance.wide }
+                if decorations & Cell.Attr.underline != 0 { flags |= CellInstance.underline }
+                if decorations & Cell.Attr.strikethrough != 0 { flags |= CellInstance.strikethrough }
+
+                if hasGlyph {
+                    let text = glyphText(for: cell, clusterTable: terminal.clusterTable)
+                    if let entry = atlas.entry(
+                        for: text,
+                        bold: attr & Cell.Attr.bold != 0,
+                        italic: attr & Cell.Attr.italic != 0
+                    ) {
+                        flags |= CellInstance.hasGlyph
+                        if entry.isColor { flags |= CellInstance.colorGlyph }
+                        uv = entry.uvRect
+                        // 窄字形只采样槽位左半，避免把邻座采进来。
+                        if flags & CellInstance.wide == 0 { uv.z /= 2 }
+                    }
+                }
+
+                output[count] = CellInstance(
+                    gridPos: SIMD2(Float(col), Float(row)),
+                    uvRect: uv, fg: fg, bg: bg, flags: flags
+                )
+                count += 1
+            }
+        }
+        return count
+    }
+
+    private func glyphText(for cell: Cell, clusterTable: ClusterTable) -> String {
+        if cell.isCluster {
+            var text = ""
+            for scalar in clusterTable.scalars(for: cell.scalar) {
+                text.unicodeScalars.append(Unicode.Scalar(scalar) ?? "\u{FFFD}")
+            }
+            return text
+        }
+        return String(Unicode.Scalar(cell.scalar) ?? "\u{FFFD}")
+    }
+
+    private func resolve(attr: UInt32, colorTable: ColorTable) -> (SIMD4<Float>, SIMD4<Float>) {
+        var fgIdx = Cell.Attr.foreground(of: attr)
+        let bgIdx = Cell.Attr.background(of: attr)
+
+        // 经典行为：粗体把 0–7 提亮到 8–15。
+        if attr & Cell.Attr.bold != 0, fgIdx < 8 { fgIdx += 8 }
+
+        var fg = color(at: fgIdx, isForeground: true, colorTable: colorTable)
+        var bg = color(at: bgIdx, isForeground: false, colorTable: colorTable)
+
+        if attr & Cell.Attr.faint != 0 {
+            fg = simd_mix(fg, bg, SIMD4(repeating: 0.45))
+        }
+        if attr & Cell.Attr.inverse != 0 {
+            swap(&fg, &bg)
+        }
+        if attr & Cell.Attr.hidden != 0 {
+            fg = bg
+        }
+        return (fg, bg)
+    }
+
+    @inline(__always)
+    private func color(at index: UInt32, isForeground: Bool, colorTable: ColorTable) -> SIMD4<Float> {
+        if index < 256 { return lut[Int(index)] }
+        if index == Cell.Attr.colorDefault { return isForeground ? defaultFG : defaultBG }
+        return Self.floatColor(colorTable.rgb(for: index))
+    }
+}

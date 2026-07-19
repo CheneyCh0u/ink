@@ -1,15 +1,16 @@
 import AppKit
 import InkDesign
-import InkPTY
+import InkTerminalView
+import TerminalCore
 
-/// M1 外壳：单窗口 + 占位终端视图 + 一个 PTY 会话。
-/// 侧边栏、标签页等真正的外壳是 M5（任务 #12），现在不搭。
+/// M2 外壳：单窗口 + Metal 终端视图 + 一个会话。
+/// 侧边栏、标签页等真正的外壳是 M5（任务 #12）。
 @MainActor
 public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private var window: NSWindow?
-    private var terminalView: PlaceholderTerminalView?
-    private var session: PTYSession?
+    private var terminalView: TerminalMetalView?
+    private var session: TerminalSession?
 
     public override init() {
         super.init()
@@ -18,7 +19,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
     public func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
         buildWindow()
-        startShell()
         NSApplication.shared.activate()
     }
 
@@ -42,49 +42,55 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         window.delegate = self
         window.isReleasedWhenClosed = false
 
-        let view = PlaceholderTerminalView(frame: window.contentLayoutRect)
+        let view = TerminalMetalView(frame: window.contentLayoutRect)
+
+        // 格数就绪 / 变化：首次启动 shell，之后同步尺寸。
+        view.onGridResize = { [weak self] size in
+            guard let self else { return }
+            if let session = self.session {
+                session.resize(to: size)
+            } else {
+                self.startSession(size: size, view: view)
+            }
+        }
+
         window.contentView = view
         window.center()
         window.makeKeyAndOrderFront(nil)
-        view.focus()
+        window.makeFirstResponder(view)
 
         self.window = window
         self.terminalView = view
-    }
-
-    public func windowDidResize(_ notification: Notification) {
-        guard let view = terminalView, let session else { return }
-        let grid = view.gridSize()
-        session.resize(columns: grid.columns, rows: grid.rows)
     }
 
     public func windowWillClose(_ notification: Notification) {
         session?.terminate()
     }
 
-    // MARK: - Shell
+    // MARK: - 会话
 
-    private func startShell() {
-        guard let view = terminalView else { return }
-        let session = PTYSession()
+    private func startSession(size: TerminalSize, view: TerminalMetalView) {
+        let session = TerminalSession(size: size)
 
-        session.onOutput = { [weak view] data in
-            view?.append(data)
-        }
-        session.onExit = { [weak self] status in
-            self?.terminalView?.appendNotice("[shell 已退出，状态 \(status)]")
-            self?.session = nil
+        view.terminalProvider = { [weak session] in
+            session?.terminal ?? Terminal(size: size, scrollbackCapacity: 1)
         }
         view.onInput = { [weak session] data in
             session?.write(data)
         }
+        session.onUpdate = { [weak view] in
+            view?.markDirty()
+        }
+        session.onExit = { [weak self] _ in
+            // M2 单窗口语义：shell 退了窗口就关。
+            self?.window?.close()
+        }
 
-        let grid = view.gridSize()
         do {
-            try session.start(columns: grid.columns, rows: grid.rows)
+            try session.start()
             self.session = session
         } catch {
-            view.appendNotice("[启动 shell 失败：\(error)]")
+            NSAlert(error: error).runModal()
         }
     }
 
@@ -105,9 +111,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
 
         let editItem = NSMenuItem()
         let editMenu = NSMenu(title: "编辑")
-        editMenu.addItem(withTitle: "拷贝", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        editMenu.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        editMenu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        // 拷贝是任务 #9（选中）的一部分，选中做好后接。
+        editMenu.addItem(withTitle: "粘贴", action: #selector(TerminalMetalView.paste(_:)), keyEquivalent: "v")
         editItem.submenu = editMenu
         mainMenu.addItem(editItem)
 

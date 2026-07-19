@@ -30,6 +30,9 @@ public struct Terminal: TerminalActionHandler, Sendable {
     public private(set) var title = ""
     /// OSC 133 当前段落语义，新行产生时自动继承（详见任务 #8）。
     public private(set) var currentSemantic: SemanticMark = .none
+    /// 待写回 PTY 的应答（DSR / DA 等查询的回复）。TUI 启动时会探测终端
+    /// 并**等待回音**，没有应答通道它们会直接卡死。会话层每次 feed 后取走。
+    private var responseBuffer: [UInt8] = []
 
     private var currentAttr = Cell.Attr.default
     /// 延迟折行：写满最后一列后光标停在原地，下一个可打印字符才真正折行。
@@ -231,6 +234,21 @@ public struct Terminal: TerminalActionHandler, Sendable {
             savedCursor = (grid.cursorRow, grid.cursorCol, currentAttr)
         case UInt8(ascii: "u"):
             restoreCursor()
+        case UInt8(ascii: "n"):
+            // DSR：5 报状态，6 报光标位置（1 基，origin 模式下相对区域）。
+            switch param(0, default: 0) {
+            case 5:
+                respond("\u{1B}[0n")
+            case 6:
+                let row = grid.cursorRow - originOffset + 1
+                let col = grid.cursorCol + 1
+                respond("\u{1B}[\(row);\(col)R")
+            default:
+                break
+            }
+        case UInt8(ascii: "c"):
+            // DA1：报 VT220 级 + 若干能力位，现代 TUI 认这个就够了。
+            respond("\u{1B}[?62;22c")
         default:
             break // 未实现的序列静默忽略——终端的传统美德
         }
@@ -260,9 +278,24 @@ public struct Terminal: TerminalActionHandler, Sendable {
             let size = grid.size
             let capacity = scrollback.capacity
             self = Terminal(size: size, scrollbackCapacity: capacity)
+        case UInt8(ascii: "Z"): // DECID，同 DA1
+            respond("\u{1B}[?62;22c")
         default:
             break
         }
+    }
+
+    // MARK: - 应答通道
+
+    private mutating func respond(_ sequence: String) {
+        responseBuffer.append(contentsOf: sequence.utf8)
+    }
+
+    /// 取走积压的应答字节（调用后清空）。会话层写回 PTY。
+    public mutating func takeResponses() -> [UInt8] {
+        guard !responseBuffer.isEmpty else { return [] }
+        defer { responseBuffer.removeAll(keepingCapacity: true) }
+        return responseBuffer
     }
 
     // MARK: - TerminalActionHandler：OSC
