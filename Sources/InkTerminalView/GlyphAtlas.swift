@@ -49,14 +49,16 @@ final class GlyphAtlas {
 
     private let fonts: (regular: NSFont, bold: NSFont, italic: NSFont, boldItalic: NSFont)
 
-    init?(device: MTLDevice, font: NSFont, scale: CGFloat) {
+    init?(device: MTLDevice, font: NSFont, scale: CGFloat, lineHeightMultiplier: CGFloat = 1.0) {
         self.scale = scale
 
         let advance = ("0" as NSString).size(withAttributes: [.font: font]).width
-        let lineHeight = NSLayoutManager().defaultLineHeight(for: font)
+        let naturalHeight = ceil(NSLayoutManager().defaultLineHeight(for: font) * scale)
         cellWidth = ceil(advance * scale)
-        cellHeight = ceil(lineHeight * scale)
-        baselineFromBottom = ceil(-font.descender * scale)
+        cellHeight = ceil(naturalHeight * max(0.8, lineHeightMultiplier))
+        // 倍数带来的额外行距上下均分，字形垂直居中。
+        let extra = cellHeight - naturalHeight
+        baselineFromBottom = ceil(-font.descender * scale) + floor(extra / 2)
 
         slotWidth = Int(cellWidth) * 2
         slotHeight = Int(cellHeight)

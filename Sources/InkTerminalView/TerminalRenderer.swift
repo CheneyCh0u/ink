@@ -45,7 +45,7 @@ final class TerminalRenderer {
         CGSize(width: atlas.cellWidth / scale, height: atlas.cellHeight / scale)
     }
 
-    init?(font: NSFont, scale: CGFloat) {
+    init?(font: NSFont, scale: CGFloat, lineHeightMultiplier: CGFloat = 1.0) {
         // swift build 不编译 .metal（只有 Xcode 构建系统会），shader 以源码
         // 进 bundle、启动时编译一次。失败原因打到 stderr，方便命令行排查。
         guard
@@ -64,7 +64,10 @@ final class TerminalRenderer {
         guard
             let vertexFn = library.makeFunction(name: "cell_vertex"),
             let fragmentFn = library.makeFunction(name: "cell_fragment"),
-            let atlas = GlyphAtlas(device: device, font: font, scale: scale)
+            let atlas = GlyphAtlas(
+                device: device, font: font, scale: scale,
+                lineHeightMultiplier: lineHeightMultiplier
+            )
         else { return nil }
 
         let desc = MTLRenderPipelineDescriptor()
