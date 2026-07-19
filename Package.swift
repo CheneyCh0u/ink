@@ -21,6 +21,10 @@ let package = Package(
         .target(
             name: "InkDesign"
         ),
+        // 配置：极小 TOML 子集解析 + 热重载。零第三方依赖。
+        .target(
+            name: "InkConfig"
+        ),
         // 终端内容区：NSView + CAMetalLayer 自绘，glyph atlas 渲染。
         .target(
             name: "InkTerminalView",
@@ -31,7 +35,7 @@ let package = Package(
         // 外壳 UI：窗口、侧边栏、标签。
         .target(
             name: "InkShell",
-            dependencies: ["InkDesign", "TerminalCore", "InkPTY", "InkTerminalView"]
+            dependencies: ["InkDesign", "TerminalCore", "InkPTY", "InkTerminalView", "InkConfig"]
         ),
         // 可执行入口。
         .executableTarget(
@@ -45,6 +49,10 @@ let package = Package(
         .testTarget(
             name: "InkTerminalViewTests",
             dependencies: ["InkTerminalView"]
+        ),
+        .testTarget(
+            name: "InkConfigTests",
+            dependencies: ["InkConfig"]
         ),
     ]
 )

@@ -8,6 +8,7 @@ struct Uniforms {
     float2 viewportSize; // 像素
     float2 cellSize;     // 像素
     float2 origin;       // 内容区左上内边距，像素
+    float4 cursorColor;  // bar / underline 光标叠加色
 };
 
 // 与 CellInstance.swift 的内存布局严格一致。
@@ -24,6 +25,8 @@ constant uint FLAG_COLOR_GLYPH = 1 << 1;
 constant uint FLAG_WIDE        = 1 << 2;
 constant uint FLAG_UNDERLINE   = 1 << 3;
 constant uint FLAG_STRIKE      = 1 << 4;
+constant uint FLAG_CURSOR_BAR   = 1 << 5; // 竖线光标：cell 左缘细条
+constant uint FLAG_CURSOR_UNDER = 1 << 6; // 下划线光标：cell 底缘横条
 
 struct VSOut {
     float4 position [[position]];
@@ -67,6 +70,7 @@ vertex VSOut cell_vertex(
 
 fragment float4 cell_fragment(
     VSOut in [[stage_in]],
+    constant Uniforms &u [[buffer(0)]],
     texture2d<float> monoAtlas [[texture(0)]],
     texture2d<float> colorAtlas [[texture(1)]]
 ) {
@@ -88,6 +92,12 @@ fragment float4 cell_fragment(
     }
     if (in.flags & FLAG_STRIKE) {
         if (in.cellUV.y > 0.52 && in.cellUV.y < 0.58) { color = float4(in.fg.rgb, 1.0); }
+    }
+    if (in.flags & FLAG_CURSOR_BAR) {
+        if (in.cellUV.x < 0.14) { color = float4(u.cursorColor.rgb, 1.0); }
+    }
+    if (in.flags & FLAG_CURSOR_UNDER) {
+        if (in.cellUV.y > 0.86) { color = float4(u.cursorColor.rgb, 1.0); }
     }
     return color;
 }

@@ -1,4 +1,5 @@
 import AppKit
+import InkConfig
 import InkDesign
 import InkTerminalView
 import TerminalCore
@@ -24,6 +25,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     private var activeProjectIndex = 0
     private var lastChromeSignature = ""
     private var firstSessionScheduled = false
+    private var config = InkConfig.load()
+    private var configWatcher: ConfigWatcher?
 
     private var activeProject: Project? {
         projects.indices.contains(activeProjectIndex) ? projects[activeProjectIndex] : nil
@@ -44,9 +47,30 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.delegate = self
         loadProjects()
         buildContent()
+        applyConfig(config)
+        // 配置热重载：~/.config/ink/config.toml 保存即生效。
+        configWatcher = ConfigWatcher { [weak self] fresh in
+            self?.config = fresh
+            self?.applyConfig(fresh)
+        }
         window.center()
         // 记住用户上次调整的尺寸与位置；1280×800 只是首启默认。
         window.setFrameAutosaveName("InkMainWindow")
+    }
+
+    private func applyConfig(_ config: InkConfig) {
+        terminalView.fontSize = CGFloat(config.fontSize)
+        terminalView.cursorStyle =
+            switch config.cursorStyle {
+            case .block: .block
+            case .bar: .bar
+            case .underline: .underline
+            }
+        terminalView.cursorBlinkEnabled = config.cursorBlink
+        terminalView.optionAsMeta = config.optionAsMeta
+        terminalView.copyOnSelect = config.copyOnSelect
+        // scrollbackLines 只对新会话生效：改已有 Terminal 的环形容量
+        // 需要整体搬迁，不值得为配置热改付这个复杂度。
     }
 
     // MARK: - 项目持久化
@@ -213,7 +237,11 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     @objc public func newSession(_ sender: Any?) {
         guard let project = activeProject,
               let size = terminalView.currentGridSize else { return }
-        let session = TerminalSession(size: size, workingDirectory: project.directory.path)
+        let session = TerminalSession(
+            size: size,
+            workingDirectory: project.directory.path,
+            scrollbackLines: config.scrollbackLines
+        )
         session.onUpdate = { [weak self] in
             self?.terminalView.markDirty()
             self?.refreshChromeIfNeeded()
