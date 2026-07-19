@@ -3,8 +3,9 @@ import InkDesign
 
 /// 侧边栏：项目列表 + 底部新建按钮。
 ///
-/// 材质由 NSSplitViewController 的 sidebar item 提供（系统 vibrancy），
-/// 这里只放内容。行是自绘的两行式，项目数量个位数，直接重建行比
+/// 根视图直接承载系统 sidebar 材质，让背景从标题栏贯穿到底部。
+/// 不使用系统 sidebar split item，避免新系统把侧栏变成浮动圆角面板。
+/// 行是自绘的两行式，项目数量个位数，直接重建行比
 /// NSTableView 的复用机制更简单。支持拖动排序（本地拖拽）、悬停关闭、
 /// 右键置顶/备注。
 @MainActor
@@ -28,9 +29,14 @@ final class SidebarViewController: NSViewController {
     static let dragType = NSPasteboard.PasteboardType("com.ink.project-row")
 
     private let rowStack = NSStackView()
+    private let newButton = SidebarActionButton()
 
     override func loadView() {
         let root = ProjectDropView()
+        root.material = InkDesignTokens.Sidebar.material
+        root.blendingMode = InkDesignTokens.Sidebar.blendingMode
+        root.state = .active
+        root.isEmphasized = true
         root.rowStack = rowStack
         root.onDrop = { [weak self] from, to in self?.onReorder?(from, to) }
 
@@ -44,12 +50,17 @@ final class SidebarViewController: NSViewController {
         title.textColor = InkDesignTokens.Color.textSecondary
         title.translatesAutoresizingMaskIntoConstraints = false
 
-        let newButton = NSButton(title: "新建项目", target: self, action: #selector(newProject))
+        newButton.title = "新建项目"
+        newButton.target = self
+        newButton.action = #selector(newProject)
         newButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)
         newButton.imagePosition = .imageLeading
         newButton.isBordered = false
         newButton.font = InkDesignTokens.Typography.body
         newButton.contentTintColor = InkDesignTokens.Color.textSecondary
+        newButton.alignment = .left
+        newButton.layer?.cornerRadius = InkDesignTokens.Radius.item
+        newButton.layer?.cornerCurve = .continuous
         newButton.translatesAutoresizingMaskIntoConstraints = false
 
         let shortcutHint = NSTextField(labelWithString: "⌘N")
@@ -57,13 +68,8 @@ final class SidebarViewController: NSViewController {
         shortcutHint.textColor = InkDesignTokens.Color.textSecondary
         shortcutHint.translatesAutoresizingMaskIntoConstraints = false
 
-        let separator = NSBox()
-        separator.boxType = .separator
-        separator.translatesAutoresizingMaskIntoConstraints = false
-
         root.addSubview(title)
         root.addSubview(rowStack)
-        root.addSubview(separator)
         root.addSubview(newButton)
         root.addSubview(shortcutHint)
 
@@ -77,12 +83,10 @@ final class SidebarViewController: NSViewController {
             rowStack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.xs),
             rowStack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.xs),
 
-            separator.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            separator.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            separator.bottomAnchor.constraint(equalTo: newButton.topAnchor, constant: -sp.xs),
-
-            newButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.md),
+            newButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.sm),
+            newButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.sm),
             newButton.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -sp.sm),
+            newButton.heightAnchor.constraint(equalToConstant: InkDesignTokens.Sidebar.actionHeight),
             shortcutHint.centerYAnchor.constraint(equalTo: newButton.centerYAnchor),
             shortcutHint.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.md),
         ])
@@ -108,7 +112,7 @@ final class SidebarViewController: NSViewController {
 
 /// 承接项目行拖拽的容器：按落点 y 算插入位置。
 @MainActor
-private final class ProjectDropView: NSView {
+private final class ProjectDropView: NSVisualEffectView {
     weak var rowStack: NSStackView?
     var onDrop: ((Int, Int) -> Void)?
 
@@ -119,6 +123,9 @@ private final class ProjectDropView: NSView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("代码构建") }
+
+    /// 侧栏空白区域与标题栏一样可以拖动窗口。
+    override var mouseDownCanMoveWindow: Bool { true }
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation { .move }
     override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation { .move }
@@ -158,6 +165,7 @@ private final class ProjectRowView: NSView, NSDraggingSource {
 
     private let index: Int
     private let pinned: Bool
+    private let active: Bool
     private let closeButton = NSButton()
     private var mouseDownPoint: NSPoint?
     private var didDrag = false
@@ -165,18 +173,12 @@ private final class ProjectRowView: NSView, NSDraggingSource {
     init(row: SidebarViewController.Row, index: Int) {
         self.index = index
         self.pinned = row.pinned
+        self.active = row.active
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = InkDesignTokens.Radius.item
         layer?.cornerCurve = .continuous
-        if row.active {
-            layer?.backgroundColor = InkDesignTokens.Color.selected.cgColor
-            layer?.masksToBounds = false
-            layer?.shadowColor = NSColor.black.cgColor
-            layer?.shadowOpacity = 0.10
-            layer?.shadowRadius = 2
-            layer?.shadowOffset = CGSize(width: 0, height: -1)
-        }
+        updateLayerColors()
 
         let icon = NSImageView(image: NSImage(
             systemSymbolName: row.pinned ? "pin.fill" : "folder",
@@ -233,6 +235,17 @@ private final class ProjectRowView: NSView, NSDraggingSource {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("代码构建") }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateLayerColors()
+    }
+
+    private func updateLayerColors() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = active ? InkDesignTokens.Color.selected.cgColor : nil
+        }
+    }
 
     override func mouseEntered(with event: NSEvent) { closeButton.isHidden = false }
     override func mouseExited(with event: NSEvent) { closeButton.isHidden = true }
@@ -298,4 +311,46 @@ private final class ProjectRowView: NSView, NSDraggingSource {
     @objc private func removeAction() { onRemove?() }
     @objc private func pinAction() { onTogglePin?() }
     @objc private func noteAction() { onEditNote?() }
+}
+
+/// 底部操作按钮的背景是 layer 色，外观变化时需要重新解析动态 NSColor。
+@MainActor
+private final class SidebarActionButton: NSButton {
+
+    private var hovered = false
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        updateLayerColor()
+        addTrackingArea(NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self
+        ))
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("代码构建") }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateLayerColor()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        hovered = true
+        updateLayerColor()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hovered = false
+        updateLayerColor()
+    }
+
+    private func updateLayerColor() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = hovered ? InkDesignTokens.Color.pill.cgColor : nil
+        }
+    }
 }

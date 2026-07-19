@@ -115,14 +115,7 @@ private final class TabItemView: NSView, NSTextFieldDelegate {
         wantsLayer = true
         layer?.cornerRadius = InkDesignTokens.Radius.item
         layer?.cornerCurve = .continuous
-        if tab.active {
-            layer?.backgroundColor = InkDesignTokens.Color.selected.cgColor
-            layer?.masksToBounds = false
-            layer?.shadowColor = NSColor.black.cgColor
-            layer?.shadowOpacity = 0.10
-            layer?.shadowRadius = 2
-            layer?.shadowOffset = CGSize(width: 0, height: -1)
-        }
+        updateLayerColors()
 
         titleLabel.stringValue = tab.title
         titleLabel.font = InkDesignTokens.Typography.body
@@ -172,6 +165,17 @@ private final class TabItemView: NSView, NSTextFieldDelegate {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("代码构建") }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateLayerColors()
+    }
+
+    private func updateLayerColors() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = active ? InkDesignTokens.Color.pill.cgColor : nil
+        }
+    }
 
     override var mouseDownCanMoveWindow: Bool { false }
 

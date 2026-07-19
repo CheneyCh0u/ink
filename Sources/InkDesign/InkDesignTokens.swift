@@ -146,6 +146,7 @@ public enum InkDesignTokens {
 
     public enum Sidebar {
         public static let width: CGFloat = 258
+        public static let actionHeight: CGFloat = 36
         public static let material: NSVisualEffectView.Material = .sidebar
         public static let blendingMode: NSVisualEffectView.BlendingMode = .behindWindow
     }
