@@ -24,6 +24,7 @@ public struct Terminal: TerminalActionHandler, Sendable {
     public private(set) var grid: Grid
     public private(set) var scrollback: ScrollbackBuffer
     public private(set) var colorTable = ColorTable()
+    public private(set) var clusterTable = ClusterTable()
     public private(set) var modes = Modes()
     /// OSC 0 / 2 设置的窗口标题。
     public private(set) var title = ""
@@ -34,6 +35,8 @@ public struct Terminal: TerminalActionHandler, Sendable {
     /// 延迟折行：写满最后一列后光标停在原地，下一个可打印字符才真正折行。
     /// vttest 会验这个行为，少了它满屏输出会多出空行。
     private var pendingWrap = false
+    /// 刚收到 ZWJ：下一个可打印码点并入前一个簇而不是开新格。
+    private var pendingJoin = false
     private var scrollTop = 0
     private var scrollBottom: Int
     private var savedCursor: (row: Int, col: Int, attr: UInt32)?
@@ -62,18 +65,92 @@ public struct Terminal: TerminalActionHandler, Sendable {
     // MARK: - TerminalActionHandler：打印
 
     public mutating func print(_ scalar: UInt32) {
-        // TODO(#7)：宽度全部按 1 处理。东亚全角 / emoji / 组合字符是任务 #7，
-        // 会在这里接 scalarWidth 并写 wideLeading/Trailing 双格。
+        let width = CharWidth.width(of: scalar)
+
+        // 零宽：组合进前格。ZWJ 额外挂起，让下一个码点也并进同一簇。
+        if width == 0 {
+            appendToPreviousCell(scalar)
+            if scalar == 0x200D { pendingJoin = true }
+            return
+        }
+        // ZWJ 序列的后续 emoji：并簇，不动光标（👨‍👩‍👧 整体占一个宽格）。
+        if pendingJoin {
+            pendingJoin = false
+            appendToPreviousCell(scalar)
+            return
+        }
+
         if pendingWrap {
             pendingWrap = false
             carriageReturn()
             lineFeed(markWrapped: true)
         }
-        grid[grid.cursorRow, grid.cursorCol] = Cell(scalar: scalar, attr: currentAttr)
-        if grid.cursorCol + 1 < grid.size.columns {
-            grid.cursorCol += 1
-        } else if modes.autowrap {
-            pendingWrap = true
+
+        let cols = grid.size.columns
+        if width == 2, grid.cursorCol == cols - 1 {
+            if modes.autowrap {
+                // 行尾剩一格放不下宽字符：补空白，整字折到下一行。
+                grid[grid.cursorRow, grid.cursorCol] = .blank
+                carriageReturn()
+                lineFeed(markWrapped: true)
+            } else {
+                grid.cursorCol = cols - 2
+            }
+        }
+
+        let row = grid.cursorRow
+        let col = grid.cursorCol
+        // 覆写别人的半个宽字符时，把孤儿半格清掉，不留残影。
+        clearWideOrphan(row: row, col: col)
+        if width == 2 { clearWideOrphan(row: row, col: col + 1) }
+
+        grid[row, col] = Cell(
+            scalar: scalar,
+            attr: currentAttr | (width == 2 ? Cell.Attr.wideLeading : 0)
+        )
+        if width == 2 {
+            grid[row, col + 1] = Cell(scalar: 0x20, attr: currentAttr | Cell.Attr.wideTrailing)
+        }
+
+        if col + width < cols {
+            grid.cursorCol = col + width
+        } else {
+            grid.cursorCol = cols - 1
+            if modes.autowrap { pendingWrap = true }
+        }
+    }
+
+    /// 组合标记 / 变体选择符 / ZWJ 后续码点并进光标前一个格的簇。
+    private mutating func appendToPreviousCell(_ scalar: UInt32) {
+        guard var (row, col) = previousCellPosition() else { return } // 行首孤立组合符：丢
+        if grid[row, col].attr & Cell.Attr.wideTrailing != 0 {
+            col -= 1 // 落在宽字符尾格上，退回首格
+        }
+        let cell = grid[row, col]
+        var scalars: ContiguousArray<UInt32>
+        if cell.isCluster {
+            scalars = clusterTable.scalars(for: cell.scalar)
+            scalars.append(scalar)
+        } else {
+            scalars = [cell.scalar, scalar]
+        }
+        grid[row, col] = Cell(scalar: clusterTable.encode(scalars), attr: cell.attr)
+    }
+
+    private func previousCellPosition() -> (row: Int, col: Int)? {
+        if pendingWrap {
+            return (grid.cursorRow, grid.cursorCol) // 光标停在刚写完的末列
+        }
+        guard grid.cursorCol > 0 else { return nil }
+        return (grid.cursorRow, grid.cursorCol - 1)
+    }
+
+    private mutating func clearWideOrphan(row: Int, col: Int) {
+        let attr = grid[row, col].attr
+        if attr & Cell.Attr.wideTrailing != 0, col > 0 {
+            grid[row, col - 1] = .blank
+        } else if attr & Cell.Attr.wideLeading != 0, col + 1 < grid.size.columns {
+            grid[row, col + 1] = .blank
         }
     }
 
