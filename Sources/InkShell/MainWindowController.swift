@@ -76,11 +76,11 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - 项目持久化
 
     private func loadProjects() {
-        var urls = ProjectStore.load()
-        if urls.isEmpty {
-            urls = [FileManager.default.homeDirectoryForCurrentUser]
+        projects = ProjectStore.load()
+        if projects.isEmpty {
+            projects = [Project(directory: FileManager.default.homeDirectoryForCurrentUser)]
         }
-        projects = urls.map(Project.init(directory:))
+        sortPinnedFirst()
         // 恢复上次的活动项目。
         if let last = ProjectStore.activeProjectPath,
            let index = projects.firstIndex(where: { $0.displayName == last }) {
@@ -89,8 +89,19 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func persistProjects() {
-        ProjectStore.save(projects.map(\.directory))
+        ProjectStore.save(projects)
         ProjectStore.activeProjectPath = activeProject?.displayName
+    }
+
+    /// 不变式：置顶块永远在顶部（组内保持相对顺序）。
+    private func sortPinnedFirst() {
+        let active = activeProject
+        let pinned = projects.filter(\.pinned)
+        let rest = projects.filter { !$0.pinned }
+        projects = pinned + rest
+        if let active, let index = projects.firstIndex(where: { $0 === active }) {
+            activeProjectIndex = index
+        }
     }
 
     // MARK: - 组装
@@ -144,11 +155,25 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
 
         // 事件接线。
         tabBar.onSelect = { [weak self] in self?.selectSession(at: $0) }
+        tabBar.onClose = { [weak self] index in
+            guard let self, let project = self.activeProject,
+                  project.sessions.indices.contains(index) else { return }
+            project.sessions[index].terminate() // 退出回调里走 removeSession
+        }
+        tabBar.onRename = { [weak self] index, name in
+            guard let self, let project = self.activeProject,
+                  project.sessions.indices.contains(index) else { return }
+            project.sessions[index].customName = name
+            self.refreshChrome()
+        }
         tabBar.onNewTab = { [weak self] in self?.newSession(nil) }
         tabBar.onToggleSidebar = { [weak self] in self?.splitVC.toggleSidebar(nil) }
         sidebarVC.onSelect = { [weak self] in self?.selectProject(at: $0) }
         sidebarVC.onNewProject = { [weak self] in self?.newProject(nil) }
         sidebarVC.onRemove = { [weak self] in self?.removeProject(at: $0) }
+        sidebarVC.onTogglePin = { [weak self] in self?.togglePin(at: $0) }
+        sidebarVC.onEditNote = { [weak self] in self?.editNote(at: $0) }
+        sidebarVC.onReorder = { [weak self] from, to in self?.reorderProject(from: from, to: to) }
 
         terminalView.onGridResize = { [weak self] size in
             guard let self else { return }
@@ -202,12 +227,64 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
         refreshChrome()
     }
 
-    @objc public func selectProjectMenu(_ sender: NSMenuItem) {
-        selectProject(at: sender.tag)
+    @objc public func selectSessionMenu(_ sender: NSMenuItem) {
+        selectSession(at: sender.tag)
     }
 
     @objc public func removeCurrentProject(_ sender: Any?) {
         removeProject(at: activeProjectIndex)
+    }
+
+    private func togglePin(at index: Int) {
+        guard projects.indices.contains(index) else { return }
+        projects[index].pinned.toggle()
+        sortPinnedFirst()
+        persistProjects()
+        refreshChrome()
+    }
+
+    private func editNote(at index: Int) {
+        guard projects.indices.contains(index), let window else { return }
+        let project = projects[index]
+        let alert = NSAlert()
+        alert.messageText = "项目备注"
+        alert.informativeText = project.displayName
+        alert.addButton(withTitle: "保存")
+        alert.addButton(withTitle: "取消")
+        let field = NSTextField(string: project.note ?? "")
+        field.frame = NSRect(x: 0, y: 0, width: 240, height: 24)
+        field.placeholderString = "写点这个项目是干什么的"
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .alertFirstButtonReturn else { return }
+            MainActor.assumeIsolated {
+                let text = field.stringValue.trimmingCharacters(in: .whitespaces)
+                project.note = text.isEmpty ? nil : text
+                self.persistProjects()
+                self.refreshChrome()
+            }
+        }
+    }
+
+    /// 拖动排序。目标位置夹回源所在的组（置顶块 / 普通块），拖动不改变置顶状态。
+    private func reorderProject(from: Int, to: Int) {
+        guard projects.indices.contains(from), projects.indices.contains(to), from != to else { return }
+        let active = activeProject
+        let moved = projects.remove(at: from)
+        var target = to
+        let pinnedCount = projects.filter(\.pinned).count
+        if moved.pinned {
+            target = min(target, pinnedCount)
+        } else {
+            target = max(target, pinnedCount)
+        }
+        projects.insert(moved, at: min(target, projects.count))
+        if let active, let index = projects.firstIndex(where: { $0 === active }) {
+            activeProjectIndex = index
+        }
+        persistProjects()
+        refreshChrome()
     }
 
     func removeProject(at index: Int) {
@@ -331,17 +408,19 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - 外壳刷新
 
-    /// 标签标题：shell 主动设的 OSC 标题优先；否则显示前台进程名
-    /// （zsh / vim / claude），一眼可知标签在跑什么。
-    private func sessionTitle(_ session: TerminalSession, index: Int) -> String {
+    /// 标签标题（Ghostty 式优先级）：用户改的名 > shell 设的 OSC 标题 >
+    /// 项目路径缩写。路径在标签里头部截断（保 .../code/ink 尾部）。
+    private func sessionTitle(_ session: TerminalSession, project: Project) -> String {
+        if let custom = session.customName { return custom }
         let osc = session.terminal.title
         if !osc.isEmpty { return osc }
-        return session.foregroundProcessName ?? "会话 \(index + 1)"
+        return project.displayName
     }
 
     private func chromeSignature() -> String {
-        let tabs = activeProject?.sessions.enumerated()
-            .map { sessionTitle($1, index: $0) }.joined(separator: "\u{1}") ?? ""
+        let tabs = activeProject.map { project in
+            project.sessions.map { sessionTitle($0, project: project) }.joined(separator: "\u{1}")
+        } ?? ""
         let sidebar = projects.map { "\($0.displayName):\($0.sessions.count)" }.joined(separator: "\u{1}")
         return "\(activeProjectIndex)|\(activeProject?.activeSessionIndex ?? -1)|\(tabs)|\(sidebar)"
     }
@@ -356,19 +435,24 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     private func refreshChrome() {
         lastChromeSignature = chromeSignature()
 
-        let sessions = activeProject?.sessions ?? []
         let activeSession = activeProject?.activeSessionIndex ?? -1
-        tabBar.reload(tabs: sessions.enumerated().map { index, session in
-            TabBarView.Tab(
-                title: sessionTitle(session, index: index),
-                active: index == activeSession
-            )
-        })
+        let tabs: [TabBarView.Tab] = activeProject.map { project in
+            project.sessions.enumerated().map { index, session in
+                TabBarView.Tab(
+                    title: sessionTitle(session, project: project),
+                    shortcut: index < 9 ? "⌘\(index + 1)" : "",
+                    active: index == activeSession
+                )
+            }
+        } ?? []
+        tabBar.reload(tabs: tabs)
         sidebarVC.reload(rows: projects.enumerated().map { index, project in
-            SidebarViewController.Row(
+            let fallback = project.sessions.isEmpty ? "未打开" : "\(project.sessions.count) 个会话"
+            return SidebarViewController.Row(
                 title: project.displayName,
-                subtitle: project.sessions.isEmpty ? "未打开" : "\(project.sessions.count) 个会话",
-                active: index == activeProjectIndex
+                subtitle: project.note ?? fallback,
+                active: index == activeProjectIndex,
+                pinned: project.pinned
             )
         })
     }
