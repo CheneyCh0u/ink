@@ -34,4 +34,15 @@ struct ProjectSidebarTests {
         #expect(SidebarDisplayMode.compact.next == .hidden)
         #expect(SidebarDisplayMode.hidden.next == .expanded)
     }
+
+    @Test("项目颜色只在图标态展示")
+    func projectLabelVisibility() {
+        #expect(!SidebarViewController.DisplayMode.expanded.showsProjectLabels)
+        #expect(SidebarViewController.DisplayMode.compact.showsProjectLabels)
+    }
+
+    @Test("图标态宽度完整容纳窗口控制按钮")
+    func compactSidebarClearsWindowControls() {
+        #expect(InkDesignTokens.Sidebar.compactWidth >= 72)
+    }
 }

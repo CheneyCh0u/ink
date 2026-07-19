@@ -172,15 +172,16 @@ public enum InkDesignTokens {
 
     public enum Sidebar {
         public static let width: CGFloat = 258
-        public static let compactWidth: CGFloat = 56
+        /// 必须覆盖 macOS 红绿灯的完整横向占位，避免绿灯跨过分隔线。
+        public static let compactWidth: CGFloat = 72
         public static let minimumExpandedWidth: CGFloat = 200
         public static let maximumExpandedWidth: CGFloat = 320
         public static let collapsedTitlebarInset: CGFloat = 84
         public static let projectRowHeight: CGFloat = 40
         public static let actionHeight: CGFloat = 36
-        public static let labelDotSize: CGFloat = 7
-        public static let labelRailWidth: CGFloat = 3
-        public static let labelRailHeight: CGFloat = 24
+        public static let labelRailWidth: CGFloat = 4
+        public static let labelRailHeight: CGFloat = 26
+        public static let labelRailInset: CGFloat = 4
         public static let material: NSVisualEffectView.Material = .sidebar
         public static let blendingMode: NSVisualEffectView.BlendingMode = .behindWindow
     }
