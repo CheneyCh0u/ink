@@ -32,9 +32,16 @@ final class TerminalRenderer {
     private var defaultFG: SIMD4<Float> = .zero
     private var defaultBG: SIMD4<Float> = .zero
     private var cursorColor: SIMD4<Float> = .zero
+    private var selectionColor: SIMD4<Float> = .zero
     private(set) var clearColor = MTLClearColor()
 
     private let contentInset: CGFloat
+    let scale: CGFloat
+
+    /// 视图坐标（point）下的 cell 尺寸，鼠标命中用。
+    var cellSizePoints: CGSize {
+        CGSize(width: atlas.cellWidth / scale, height: atlas.cellHeight / scale)
+    }
 
     init?(font: NSFont, scale: CGFloat) {
         // swift build 不编译 .metal（只有 Xcode 构建系统会），shader 以源码
@@ -70,6 +77,7 @@ final class TerminalRenderer {
         self.commandQueue = queue
         self.pipeline = pipeline
         self.atlas = atlas
+        self.scale = scale
         self.contentInset = InkDesignTokens.Spacing.sm * scale
     }
 
@@ -97,6 +105,7 @@ final class TerminalRenderer {
         defaultFG = Self.floatColor(palette.defaultForeground.rgb)
         defaultBG = Self.floatColor(palette.defaultBackground.rgb)
         cursorColor = Self.floatColor(palette.cursor.rgb)
+        selectionColor = Self.floatColor(palette.selection.rgb)
         clearColor = MTLClearColor(
             red: Double(defaultBG.x), green: Double(defaultBG.y),
             blue: Double(defaultBG.z), alpha: 1
@@ -124,7 +133,13 @@ final class TerminalRenderer {
 
     // MARK: - 渲染
 
-    func render(terminal: Terminal, into layer: CAMetalLayer, cursorOn: Bool) {
+    func render(
+        terminal: Terminal,
+        into layer: CAMetalLayer,
+        cursorOn: Bool,
+        scrollOffset: Int = 0,
+        selection: SelectionRange? = nil
+    ) {
         let grid = terminal.grid
         let maxInstances = grid.size.columns * grid.size.rows + 1
         ensureBuffers(capacity: maxInstances)
@@ -133,7 +148,11 @@ final class TerminalRenderer {
         bufferIndex = (bufferIndex + 1) % instanceBuffers.count
         let buffer = instanceBuffers[bufferIndex]
 
-        let count = buildInstances(terminal: terminal, cursorOn: cursorOn, into: buffer)
+        let count = buildInstances(
+            terminal: terminal, cursorOn: cursorOn,
+            scrollOffset: scrollOffset, selection: selection?.normalized,
+            into: buffer
+        )
 
         guard
             let drawable = layer.nextDrawable(),
@@ -188,33 +207,53 @@ final class TerminalRenderer {
 
     // MARK: - 实例构建
 
-    /// 满屏 cell → instance buffer。返回实例数。
+    /// 可见区 cell → instance buffer。返回实例数。
+    /// 可见区 = scrollback 尾部 `scrollOffset` 行 + grid 顶部若干行。
     /// 空白且默认背景的 cell 不发实例（clear color 已经盖住），
     /// 常见画面里这能砍掉七八成实例。
     private func buildInstances(
-        terminal: Terminal, cursorOn: Bool, into buffer: MTLBuffer
+        terminal: Terminal, cursorOn: Bool,
+        scrollOffset: Int, selection: SelectionRange?,
+        into buffer: MTLBuffer
     ) -> Int {
         let grid = terminal.grid
         let cols = grid.size.columns
         let rows = grid.size.rows
+        let sbCount = terminal.scrollback.count
+        let offset = min(scrollOffset, sbCount)
         let output = buffer.contents().bindMemory(to: CellInstance.self, capacity: bufferCapacity)
         var count = 0
 
         let cursorRow = grid.cursorRow
         let cursorCol = grid.cursorCol
-        let drawCursor = cursorOn && terminal.modes.showCursor
+        // 翻看历史时不画光标——它属于屏上区域，回到底部才有意义。
+        let drawCursor = cursorOn && terminal.modes.showCursor && offset == 0
 
-        for row in 0..<rows {
+        for visualRow in 0..<rows {
+            let absLine = sbCount - offset + visualRow
+            let fromScrollback = visualRow < offset
+            let gridRow = visualRow - offset
+            let sbCells: ContiguousArray<Cell>? = fromScrollback ? terminal.scrollback[absLine].cells : nil
+
             for col in 0..<cols {
-                let cell = grid[row, col]
+                let cell: Cell
+                if let sbCells {
+                    cell = col < sbCells.count ? sbCells[col] : .blank
+                } else {
+                    cell = grid[gridRow, col]
+                }
                 let attr = cell.attr
 
                 if attr & Cell.Attr.wideTrailing != 0 { continue } // 首格的宽 quad 盖住
 
-                let isCursorCell = drawCursor && row == cursorRow
+                let isCursorCell = drawCursor && gridRow == cursorRow
                     && (col == cursorCol || (col == cursorCol - 1 && attr & Cell.Attr.wideLeading != 0))
+                let isSelected = selection?.contains(line: absLine, column: col) ?? false
 
                 var (fg, bg) = resolve(attr: attr, colorTable: terminal.colorTable)
+                if isSelected {
+                    bg = selectionColor
+                }
                 if isCursorCell {
                     bg = cursorColor
                     fg = defaultBG
@@ -223,8 +262,8 @@ final class TerminalRenderer {
                 let hasGlyph = !(cell.scalar == 0x20 && !cell.isCluster)
                 let decorations = attr & (Cell.Attr.underline | Cell.Attr.strikethrough)
 
-                // 纯空白 + 默认背景 + 非光标：不发实例。
-                if !hasGlyph, decorations == 0, !isCursorCell,
+                // 纯空白 + 默认背景 + 非光标非选中：不发实例。
+                if !hasGlyph, decorations == 0, !isCursorCell, !isSelected,
                    Cell.Attr.background(of: attr) == Cell.Attr.colorDefault,
                    attr & Cell.Attr.inverse == 0 {
                     continue
@@ -252,7 +291,7 @@ final class TerminalRenderer {
                 }
 
                 output[count] = CellInstance(
-                    gridPos: SIMD2(Float(col), Float(row)),
+                    gridPos: SIMD2(Float(col), Float(visualRow)),
                     uvRect: uv, fg: fg, bg: bg, flags: flags
                 )
                 count += 1
