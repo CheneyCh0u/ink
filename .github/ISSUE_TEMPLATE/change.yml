@@ -1,0 +1,39 @@
+name: 变更
+description: 任何代码/文档/配置改动的入口（issue-first 工作流）
+labels: []
+body:
+  - type: dropdown
+    id: type
+    attributes:
+      label: 类型
+      options: [feat, fix, docs, core, refactor, test, perf, build, ci, chore]
+    validations:
+      required: true
+  - type: textarea
+    id: background
+    attributes:
+      label: 背景
+      description: 为什么需要这个改动
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: 目标与验收标准
+      description: 做成什么样算完成
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: 影响面与风险
+      description: 涉及哪些模块；性能/内存指标是否受影响（CLAUDE.md 两条纪律）
+    validations:
+      required: false
+  - type: dropdown
+    id: release
+    attributes:
+      label: 发布意图
+      options: ["不发布（默认）", "需要发布（用户明确要求时）"]
+    validations:
+      required: true
