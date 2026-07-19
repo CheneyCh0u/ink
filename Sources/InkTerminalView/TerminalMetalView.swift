@@ -24,6 +24,9 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     private var lastBlinkFlip = CACurrentMediaTime()
     private var lastGridSize: TerminalSize?
 
+    /// 当前按视图尺寸算出的格数（布局未就绪时为 nil）。
+    public var currentGridSize: TerminalSize? { lastGridSize }
+
     // 滚动与选区。offset 单位是行，0 = 跟住底部。
     private var scrollOffset = 0
     private var scrollAccumulator: CGFloat = 0
@@ -151,8 +154,6 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
 
     public override func scrollWheel(with event: NSEvent) {
         guard let renderer, let terminal = terminalProvider?() else { return }
-        // 备用屏（vim/less）没有 scrollback，滚轮交给应用自己（任务 #11 接鼠标上报）。
-        guard !terminal.modes.alternateScreen else { return }
 
         scrollAccumulator += event.scrollingDeltaY
         let cellH = renderer.cellSizePoints.height
@@ -160,9 +161,69 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         guard deltaRows != 0 else { return }
         scrollAccumulator -= CGFloat(deltaRows) * cellH
 
+        // 应用要了鼠标：滚轮直接上报（vim 里滚轮滚文档）。
+        if terminal.modes.mouseMode != .none, !event.modifierFlags.contains(.option) {
+            reportWheel(rows: deltaRows, event: event, terminal: terminal)
+            return
+        }
+        // 备用屏没有 scrollback：滚轮转方向键（less / man 直接能滚）。
+        if terminal.modes.alternateScreen {
+            if terminal.modes.alternateScroll {
+                let key = deltaRows > 0 ? "\u{1B}OA" : "\u{1B}OB"
+                let arrows = terminal.modes.applicationCursorKeys
+                    ? key
+                    : (deltaRows > 0 ? "\u{1B}[A" : "\u{1B}[B")
+                for _ in 0..<abs(deltaRows) { onInput?(Data(arrows.utf8)) }
+            }
+            return
+        }
+
         let target = scrollOffset + deltaRows // 向上滚 delta 为正，翻历史
         scrollOffset = max(0, min(target, terminal.scrollback.count))
         markDirty()
+    }
+
+    private func reportWheel(rows: Int, event: NSEvent, terminal: Terminal) {
+        guard let cell = hitCell(event, terminal: terminal) else { return }
+        let action: KeyEncoder.MouseAction = rows > 0 ? .wheelUp : .wheelDown
+        for _ in 0..<abs(rows) {
+            onInput?(KeyEncoder.encodeMouse(
+                action: action, button: 0,
+                column: cell.col + 1, row: cell.row + 1,
+                flags: event.modifierFlags, sgr: terminal.modes.sgrMouse
+            ))
+        }
+    }
+
+    /// 命中屏上格（0 基），鼠标上报用（与选区的绝对行坐标不同）。
+    private func hitCell(_ event: NSEvent, terminal: Terminal) -> (row: Int, col: Int)? {
+        guard let renderer else { return nil }
+        let point = convert(event.locationInWindow, from: nil)
+        let cell = renderer.cellSizePoints
+        let inset = InkDesignTokens.Spacing.sm
+        return (
+            row: max(0, min(Int((point.y - inset) / cell.height), terminal.grid.size.rows - 1)),
+            col: max(0, min(Int((point.x - inset) / cell.width), terminal.grid.size.columns - 1))
+        )
+    }
+
+    /// 尝试把鼠标事件上报给应用。返回 true 表示已消费（不再做本地选区）。
+    /// 按住 Option 强制走本地选区——在 vim 里也能选中复制，跟 iTerm2 一致。
+    private func reportMouse(
+        _ event: NSEvent, action: KeyEncoder.MouseAction, button: Int
+    ) -> Bool {
+        guard let terminal = terminalProvider?(),
+              terminal.modes.mouseMode != .none,
+              !event.modifierFlags.contains(.option),
+              let cell = hitCell(event, terminal: terminal)
+        else { return false }
+        if action == .drag, terminal.modes.mouseMode == .click { return true } // 级别不够，吞掉
+        onInput?(KeyEncoder.encodeMouse(
+            action: action, button: button,
+            column: cell.col + 1, row: cell.row + 1,
+            flags: event.modifierFlags, sgr: terminal.modes.sgrMouse
+        ))
+        return true
     }
 
     // MARK: - 选区
@@ -186,6 +247,7 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
 
     public override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
+        if reportMouse(event, action: .press, button: 0) { return }
         guard let pos = hitPosition(event), let terminal = terminalProvider?() else { return }
 
         switch event.clickCount {
@@ -211,6 +273,7 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     }
 
     public override func mouseDragged(with event: NSEvent) {
+        if reportMouse(event, action: .drag, button: 0) { return }
         guard let anchor = selectionAnchor, let pos = hitPosition(event) else { return }
         selection = SelectionRange(
             start: anchor, end: pos,
@@ -220,7 +283,16 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     }
 
     public override func mouseUp(with event: NSEvent) {
+        if reportMouse(event, action: .release, button: 0) { return }
         selectionAnchor = nil
+    }
+
+    public override func rightMouseDown(with event: NSEvent) {
+        _ = reportMouse(event, action: .press, button: 2)
+    }
+
+    public override func rightMouseUp(with event: NSEvent) {
+        _ = reportMouse(event, action: .release, button: 2)
     }
 
     @objc public func copy(_ sender: Any?) {
@@ -250,7 +322,15 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         }
         // ⌃ 组合键（⌃C 等）直发终端，不给输入法机会。
         if event.modifierFlags.contains(.control), markedText.isEmpty {
-            if let data = Self.encode(event: event) { onInput?(data) }
+            if let data = encode(event) { onInput?(data) }
+            return
+        }
+        // Option-as-Meta：⌥b/⌥f 这类发 ESC 前缀（shell 里跳词）。只拦普通
+        // 字符键，⌥方向键留给编码器出 CSI 1;3 系列。可配置是任务 #13。
+        if event.modifierFlags.contains(.option), markedText.isEmpty,
+           let base = event.charactersIgnoringModifiers,
+           let first = base.unicodeScalars.first, first.value < 0x80, first.value >= 0x20 {
+            onInput?(Data("\u{1B}\(base)".utf8))
             return
         }
         // 其余全部路过输入法：中文拼音在这里被 IME 截走变成
@@ -261,17 +341,31 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     }
 
     public override func doCommand(by selector: Selector) {
-        // IME 未消费的按键（回车、退格、方向键、⌃C…）：用暂存的原始事件
+        // IME 未消费的按键（回车、退格、方向键…）：用暂存的原始事件
         // 按终端语义编码，不走 AppKit 的文本编辑命令。
-        if let event = pendingKeyEvent, let data = Self.encode(event: event) {
+        if let event = pendingKeyEvent, let data = encode(event) {
             onInput?(data)
         }
     }
 
+    private func encode(_ event: NSEvent) -> Data? {
+        KeyEncoder.encode(
+            event: event,
+            applicationCursorKeys: terminalProvider?().modes.applicationCursorKeys ?? false
+        )
+    }
+
     @objc public func paste(_ sender: Any?) {
-        guard let text = NSPasteboard.general.string(forType: .string) else { return }
-        // Bracketed paste 包裹在任务 #11 接（terminal.modes.bracketedPaste）。
-        onInput?(Data(text.utf8))
+        guard var text = NSPasteboard.general.string(forType: .string) else { return }
+        if terminalProvider?().modes.bracketedPaste ?? false {
+            // 剥掉内容里的结束标记，防转义注入（粘贴文本伪造 201~ 提前结束
+            // 包裹，后续内容会被 shell 当按键执行——安全问题）。
+            text = text.replacingOccurrences(of: "\u{1B}[201~", with: "")
+            onInput?(Data("\u{1B}[200~\(text)\u{1B}[201~".utf8))
+        } else {
+            // 无包裹时换行转 CR：shell 行编辑器认 CR，直发 LF 会被吞。
+            onInput?(Data(text.replacingOccurrences(of: "\n", with: "\r").utf8))
+        }
     }
 
     public func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
@@ -349,22 +443,4 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         }
     }
 
-    /// 键 → 终端字节。完整的功能键矩阵与 Option-as-Meta 是任务 #11；
-    /// NSTextInputClient（中文输入）是任务 #10，接入后这里改走 interpretKeyEvents。
-    private static func encode(event: NSEvent) -> Data? {
-        guard let characters = event.characters, let scalar = characters.unicodeScalars.first else {
-            return nil
-        }
-        switch scalar.value {
-        case 0xF700: return Data("\u{1B}[A".utf8)
-        case 0xF701: return Data("\u{1B}[B".utf8)
-        case 0xF703: return Data("\u{1B}[C".utf8)
-        case 0xF702: return Data("\u{1B}[D".utf8)
-        case 0xF728: return Data("\u{1B}[3~".utf8)
-        case 0xF700...0xF8FF: return nil
-        case 0x0D: return Data([0x0D])
-        case 0x7F: return Data([0x7F])
-        default: return Data(characters.utf8)
-        }
-    }
 }
