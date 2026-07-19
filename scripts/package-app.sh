@@ -80,7 +80,7 @@ for architecture in arm64 x86_64; do
     [[ "$architecture" == "x86_64" ]] && binary_path="$x86_64_bin_dir/ink"
     actual_architecture="$(lipo -archs "$binary_path")"
     if [[ "$actual_architecture" != "$architecture" ]]; then
-        echo "错误：$binary_path 的架构应为 $architecture，实际为：$actual_architecture" >&2
+        echo "错误：$binary_path 的架构应为 ${architecture}，实际为：$actual_architecture" >&2
         exit 1
     fi
 done

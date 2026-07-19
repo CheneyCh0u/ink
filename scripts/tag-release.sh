@@ -63,4 +63,4 @@ if ! git push origin "refs/tags/$next_tag"; then
     exit 1
 fi
 
-echo "已推送 $next_tag，GitHub Actions 将开始构建 macOS 应用"
+echo "已推送 ${next_tag}，GitHub Actions 将开始构建 macOS 应用"
