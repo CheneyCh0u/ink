@@ -1,0 +1,144 @@
+import AppKit
+
+/// ink 全局视觉 token。
+///
+/// 颜色使用语义名称，不允许业务组件直接写 RGB 值。动态颜色会随 macOS
+/// 外观实时解析；侧边栏材质由 `NSVisualEffectView` 承担，不在组件中模拟透明。
+///
+/// 终端内容区的 ANSI 调色板见 `InkTerminalPalette`——渲染热路径不用本文件的
+/// `NSColor`，而是用解析后的快照，避免每帧动态解色。
+public enum InkDesignTokens {
+    public enum Color {
+        // MARK: - Surface
+
+        public static let canvas = dynamic(
+            light: rgb(0xF9F9F7),
+            dark: rgb(0x171819)
+        )
+
+        public static let terminal = dynamic(
+            light: rgb(0xFDFDFD),
+            dark: rgb(0x111314)
+        )
+
+        public static let sidebarFallback = dynamic(
+            light: rgb(0xEFEAE2, alpha: 0.78),
+            dark: rgb(0x262421, alpha: 0.86)
+        )
+
+        public static let elevated = dynamic(
+            light: rgb(0xFFFFFF, alpha: 0.88),
+            dark: rgb(0xFFFFFF, alpha: 0.05)
+        )
+
+        public static let selected = dynamic(
+            light: rgb(0xD9D2C8, alpha: 0.68),
+            dark: rgb(0xFFFFFF, alpha: 0.085)
+        )
+
+        // MARK: - Content
+
+        public static let textPrimary = dynamic(
+            light: rgb(0x303238),
+            dark: rgb(0xE2E3DF)
+        )
+
+        public static let textSecondary = dynamic(
+            light: rgb(0x777A80),
+            dark: rgb(0x92969C)
+        )
+
+        public static let separator = dynamic(
+            light: rgb(0x70737A, alpha: 0.22),
+            dark: rgb(0xFFFFFF, alpha: 0.08)
+        )
+
+        // MARK: - Semantic
+
+        public static let accent = dynamic(
+            light: rgb(0x168FAF),
+            dark: rgb(0x58B6C9)
+        )
+
+        public static let success = dynamic(
+            light: rgb(0x228F5B),
+            dark: rgb(0x67C88D)
+        )
+
+        public static let warning = dynamic(
+            light: rgb(0xB67F2B),
+            dark: rgb(0xD9B25E)
+        )
+
+        public static let branch = dynamic(
+            light: rgb(0x9B67C8),
+            dark: rgb(0xC29ADA)
+        )
+
+        public static let danger = dynamic(
+            light: rgb(0xD84A4A),
+            dark: rgb(0xF06B68)
+        )
+
+        static func dynamic(light: NSColor, dark: NSColor) -> NSColor {
+            NSColor(name: nil) { appearance in
+                appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                    ? dark
+                    : light
+            }
+        }
+
+        static func rgb(_ value: UInt32, alpha: CGFloat = 1) -> NSColor {
+            NSColor(
+                srgbRed: CGFloat((value >> 16) & 0xFF) / 255,
+                green: CGFloat((value >> 8) & 0xFF) / 255,
+                blue: CGFloat(value & 0xFF) / 255,
+                alpha: alpha
+            )
+        }
+    }
+
+    public enum Spacing {
+        public static let xxs: CGFloat = 4
+        public static let xs: CGFloat = 8
+        public static let sm: CGFloat = 12
+        public static let md: CGFloat = 16
+        public static let lg: CGFloat = 24
+        public static let xl: CGFloat = 32
+    }
+
+    public enum Radius {
+        public static let control: CGFloat = 6
+        public static let item: CGFloat = 10
+        public static let panel: CGFloat = 14
+        public static let window: CGFloat = 22
+    }
+
+    // NSFont 非 Sendable，字体 token 只在主线程使用（渲染器走 CoreText，不经这里）。
+    @MainActor
+    public enum Typography {
+        public static let label = NSFont.systemFont(ofSize: 11, weight: .medium)
+        public static let body = NSFont.systemFont(ofSize: 13, weight: .regular)
+        public static let bodyEmphasized = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        public static let title = NSFont.systemFont(ofSize: 15, weight: .semibold)
+
+        public static func terminal(size: CGFloat = 14) -> NSFont {
+            NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+        }
+
+        public static func terminalEmphasized(size: CGFloat = 14) -> NSFont {
+            NSFont.monospacedSystemFont(ofSize: size, weight: .semibold)
+        }
+    }
+
+    public enum Motion {
+        public static let pressDuration: TimeInterval = 0.14
+        public static let stateDuration: TimeInterval = 0.18
+    }
+
+    public enum Sidebar {
+        public static let width: CGFloat = 258
+        public static let material: NSVisualEffectView.Material = .sidebar
+        public static let blendingMode: NSVisualEffectView.BlendingMode = .behindWindow
+    }
+}
