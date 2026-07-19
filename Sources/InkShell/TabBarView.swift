@@ -80,6 +80,17 @@ final class TabBarView: NSView {
         toggleLeading?.constant = inset
     }
 
+    func setSidebarMode(_ mode: SidebarDisplayMode) {
+        let action: String =
+            switch mode {
+            case .expanded: "收为项目图标"
+            case .compact: "隐藏侧边栏"
+            case .hidden: "展开侧边栏"
+            }
+        toggleButton.toolTip = action
+        toggleButton.setAccessibilityLabel(action)
+    }
+
     func reload(tabs: [Tab]) {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for (index, tab) in tabs.enumerated() {

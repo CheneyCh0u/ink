@@ -1,5 +1,30 @@
 import AppKit
 
+/// Finder 式项目颜色标记。`.none` 也参与持久化和菜单选择。
+public enum InkProjectLabel: String, CaseIterable, Codable, Sendable {
+    case none
+    case red
+    case orange
+    case yellow
+    case green
+    case blue
+    case purple
+    case gray
+
+    public var title: String {
+        switch self {
+        case .none: "无颜色"
+        case .red: "红色"
+        case .orange: "橙色"
+        case .yellow: "黄色"
+        case .green: "绿色"
+        case .blue: "蓝色"
+        case .purple: "紫色"
+        case .gray: "灰色"
+        }
+    }
+}
+
 /// ink 全局视觉 token。
 ///
 /// 颜色使用语义名称，不允许业务组件直接写 RGB 值。动态颜色会随 macOS
@@ -120,6 +145,7 @@ public enum InkDesignTokens {
         public static let item: CGFloat = 10
         public static let panel: CGFloat = 14
         public static let window: CGFloat = 22
+        public static let pill: CGFloat = 999
     }
 
     // NSFont 非 Sendable，字体 token 只在主线程使用（渲染器走 CoreText，不经这里）。
@@ -146,8 +172,39 @@ public enum InkDesignTokens {
 
     public enum Sidebar {
         public static let width: CGFloat = 258
+        public static let compactWidth: CGFloat = 56
+        public static let minimumExpandedWidth: CGFloat = 200
+        public static let maximumExpandedWidth: CGFloat = 320
+        public static let collapsedTitlebarInset: CGFloat = 84
+        public static let projectRowHeight: CGFloat = 40
         public static let actionHeight: CGFloat = 36
+        public static let labelDotSize: CGFloat = 7
+        public static let labelRailWidth: CGFloat = 3
+        public static let labelRailHeight: CGFloat = 24
         public static let material: NSVisualEffectView.Material = .sidebar
         public static let blendingMode: NSVisualEffectView.BlendingMode = .behindWindow
+    }
+
+    public enum ProjectLabel {
+        public static func color(for label: InkProjectLabel) -> NSColor? {
+            switch label {
+            case .none:
+                nil
+            case .red:
+                Color.dynamic(light: Color.rgb(0xD95F59), dark: Color.rgb(0xEF7771))
+            case .orange:
+                Color.dynamic(light: Color.rgb(0xD1843E), dark: Color.rgb(0xE4A05C))
+            case .yellow:
+                Color.dynamic(light: Color.rgb(0xB99532), dark: Color.rgb(0xD7B85B))
+            case .green:
+                Color.dynamic(light: Color.rgb(0x4C9965), dark: Color.rgb(0x69BD82))
+            case .blue:
+                Color.dynamic(light: Color.rgb(0x4789BC), dark: Color.rgb(0x68A9DA))
+            case .purple:
+                Color.dynamic(light: Color.rgb(0x916DB9), dark: Color.rgb(0xB08CD5))
+            case .gray:
+                Color.dynamic(light: Color.rgb(0x85898F), dark: Color.rgb(0xA3A6AA))
+            }
+        }
     }
 }
