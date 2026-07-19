@@ -36,16 +36,18 @@ public final class PTYSession: @unchecked Sendable {
 
     // MARK: - 生命周期
 
-    /// 启动登录 shell。shell 取 `$SHELL`，回退 `/bin/zsh`。
-    /// `workingDirectory` 非空时子进程先 chdir 再 exec（项目会话在项目目录打开）。
+    /// 启动登录 shell。与 Terminal.app / Ghostty 一致，经 `/usr/bin/login`
+    /// 启动：注册 utmpx（`w`/`who` 可见）并打印 "Last login" 横幅。
     ///
-    /// `argv[0]` 带前导 `-`：zsh 只有识别到自己是 login shell 才会读
-    /// `.zprofile`，用户的 PATH 和环境全在里面。
+    /// 旗标组合是实验验证过的：`-f` 免认证、`-p` 保留环境、`-l` 不 chdir
+    /// 回家目录（项目会话要留在项目目录）。`-l` 同时会去掉 argv[0] 的
+    /// 前导 `-`，登录语义用 shell 自己的 `-l` 参数补回（zsh/bash/fish 通用），
+    /// `.zprofile` 照常生效。
     public func start(columns: Int, rows: Int, workingDirectory: String? = nil) throws {
         precondition(masterFD < 0, "PTYSession 只能 start 一次")
 
         let shellPath = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-        let shellName = shellPath.split(separator: "/").last.map(String.init) ?? "zsh"
+        let userName = NSUserName()
 
         // fork 之后到 exec 之间只能调 async-signal-safe 函数，Swift 运行时的
         // 分配都不行。所以 argv / envp 全部在 fork 之前备成 C 缓冲。
@@ -57,10 +59,13 @@ public final class PTYSession: @unchecked Sendable {
             environment["LANG"] = "zh_CN.UTF-8"
         }
 
-        let cShell = strdup(shellPath)
-        let cArgv = UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>.allocate(capacity: 2)
-        cArgv[0] = strdup("-" + shellName)
-        cArgv[1] = nil
+        let cShell = strdup("/usr/bin/login")
+        let loginArgs = ["login", "-fpl", userName, shellPath, "-l"]
+        let cArgv = UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>.allocate(capacity: loginArgs.count + 1)
+        for (i, arg) in loginArgs.enumerated() {
+            cArgv[i] = strdup(arg)
+        }
+        cArgv[loginArgs.count] = nil
 
         let envPairs = environment.map { "\($0.key)=\($0.value)" }
         let cEnvp = UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>.allocate(capacity: envPairs.count + 1)
@@ -73,7 +78,7 @@ public final class PTYSession: @unchecked Sendable {
 
         defer {
             free(cShell)
-            for i in 0...1 { free(cArgv[i]) }
+            for i in 0..<loginArgs.count { free(cArgv[i]) }
             cArgv.deallocate()
             for i in 0...envPairs.count { free(cEnvp[i]) }
             cEnvp.deallocate()
