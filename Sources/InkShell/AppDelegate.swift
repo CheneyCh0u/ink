@@ -111,7 +111,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
 
         let editItem = NSMenuItem()
         let editMenu = NSMenu(title: "编辑")
-        // 拷贝是任务 #9（选中）的一部分，选中做好后接。
+        editMenu.addItem(withTitle: "拷贝", action: #selector(TerminalMetalView.copy(_:)), keyEquivalent: "c")
         editMenu.addItem(withTitle: "粘贴", action: #selector(TerminalMetalView.paste(_:)), keyEquivalent: "v")
         editItem.submenu = editMenu
         mainMenu.addItem(editItem)

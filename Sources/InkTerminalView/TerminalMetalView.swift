@@ -8,7 +8,7 @@ import InkDesign
 /// 帧驱动是 `CADisplayLink`（macOS 14+ 的 NSView API，自动跟随窗口所在
 /// 显示器的刷新率），只有脏帧才真正编码渲染——空闲时 GPU 零负载。
 @MainActor
-public final class TerminalMetalView: NSView {
+public final class TerminalMetalView: NSView, NSMenuItemValidation {
 
     /// 用户输入字节流（键盘编码后），外部接 PTY。
     public var onInput: ((Data) -> Void)?
@@ -24,7 +24,16 @@ public final class TerminalMetalView: NSView {
     private var lastBlinkFlip = CACurrentMediaTime()
     private var lastGridSize: TerminalSize?
 
+    // 滚动与选区。offset 单位是行，0 = 跟住底部。
+    private var scrollOffset = 0
+    private var scrollAccumulator: CGFloat = 0
+    private var selectionAnchor: TextPosition?
+    private var selection: SelectionRange?
+
     private var metalLayer: CAMetalLayer { layer as! CAMetalLayer }
+
+    /// 鼠标命中要 y 朝下，与网格行序一致。
+    public override var isFlipped: Bool { true }
 
     public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -125,21 +134,113 @@ public final class TerminalMetalView: NSView {
         }
         guard dirty, let renderer, let terminal = terminalProvider?() else { return }
         dirty = false
-        renderer.render(terminal: terminal, into: metalLayer, cursorOn: cursorOn)
+        scrollOffset = min(scrollOffset, terminal.scrollback.count)
+        renderer.render(
+            terminal: terminal, into: metalLayer, cursorOn: cursorOn,
+            scrollOffset: scrollOffset, selection: selection
+        )
     }
+
+    // MARK: - 滚动
+
+    public override func scrollWheel(with event: NSEvent) {
+        guard let renderer, let terminal = terminalProvider?() else { return }
+        // 备用屏（vim/less）没有 scrollback，滚轮交给应用自己（任务 #11 接鼠标上报）。
+        guard !terminal.modes.alternateScreen else { return }
+
+        scrollAccumulator += event.scrollingDeltaY
+        let cellH = renderer.cellSizePoints.height
+        let deltaRows = Int(scrollAccumulator / cellH)
+        guard deltaRows != 0 else { return }
+        scrollAccumulator -= CGFloat(deltaRows) * cellH
+
+        let target = scrollOffset + deltaRows // 向上滚 delta 为正，翻历史
+        scrollOffset = max(0, min(target, terminal.scrollback.count))
+        markDirty()
+    }
+
+    // MARK: - 选区
+
+    private func hitPosition(_ event: NSEvent) -> TextPosition? {
+        guard let renderer, let terminal = terminalProvider?() else { return nil }
+        let point = convert(event.locationInWindow, from: nil)
+        let cell = renderer.cellSizePoints
+        let inset = InkDesignTokens.Spacing.sm
+        let col = Int((point.x - inset) / cell.width)
+        let visualRow = Int((point.y - inset) / cell.height)
+        let cols = terminal.grid.size.columns
+        let rows = terminal.grid.size.rows
+        let absLine = terminal.scrollback.count - min(scrollOffset, terminal.scrollback.count)
+            + max(0, min(visualRow, rows - 1))
+        return TextPosition(
+            line: max(0, min(absLine, terminal.totalLines - 1)),
+            column: max(0, min(col, cols - 1))
+        )
+    }
+
+    public override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        guard let pos = hitPosition(event), let terminal = terminalProvider?() else { return }
+
+        switch event.clickCount {
+        case 2:
+            if let cols = terminal.wordColumns(at: pos) {
+                selection = SelectionRange(
+                    start: TextPosition(line: pos.line, column: cols.lowerBound),
+                    end: TextPosition(line: pos.line, column: cols.upperBound)
+                )
+            }
+        case 3:
+            selection = SelectionRange(
+                start: TextPosition(line: pos.line, column: 0),
+                end: TextPosition(line: pos.line, column: terminal.grid.size.columns - 1)
+            )
+        default:
+            selectionAnchor = pos
+            if selection != nil {
+                selection = nil // 单击清掉旧选区
+            }
+        }
+        markDirty()
+    }
+
+    public override func mouseDragged(with event: NSEvent) {
+        guard let anchor = selectionAnchor, let pos = hitPosition(event) else { return }
+        selection = SelectionRange(
+            start: anchor, end: pos,
+            block: event.modifierFlags.contains(.option)
+        )
+        markDirty()
+    }
+
+    public override func mouseUp(with event: NSEvent) {
+        selectionAnchor = nil
+    }
+
+    @objc public func copy(_ sender: Any?) {
+        guard let selection, let terminal = terminalProvider?() else { return }
+        let text = terminal.extractText(in: selection)
+        guard !text.isEmpty else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+    }
+
 
     // MARK: - 键盘输入
 
     public override var acceptsFirstResponder: Bool { true }
 
-    public override func mouseDown(with event: NSEvent) {
-        window?.makeFirstResponder(self)
-    }
-
     public override func keyDown(with event: NSEvent) {
         if event.modifierFlags.contains(.command) {
             super.keyDown(with: event)
             return
+        }
+        // 敲键即回到底部并清选区，跟系统终端一致。
+        if scrollOffset != 0 || selection != nil {
+            scrollOffset = 0
+            selection = nil
+            markDirty()
         }
         if let data = Self.encode(event: event) {
             onInput?(data)
@@ -152,6 +253,11 @@ public final class TerminalMetalView: NSView {
         guard let text = NSPasteboard.general.string(forType: .string) else { return }
         // Bracketed paste 包裹在任务 #11 接（terminal.modes.bracketedPaste）。
         onInput?(Data(text.utf8))
+    }
+
+    public func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(copy(_:)) { return selection != nil }
+        return true
     }
 
     /// 键 → 终端字节。完整的功能键矩阵与 Option-as-Meta 是任务 #11；
