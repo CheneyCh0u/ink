@@ -2,7 +2,7 @@
 ///
 /// 纯 Swift 值类型，不依赖任何 UI——VT 兼容性全部在这里用单元测试验证
 /// （CLAUDE.md 分层纪律）。
-public struct Terminal: TerminalActionHandler, Sendable {
+public struct Terminal: Sendable {
 
     // MARK: - 状态
 

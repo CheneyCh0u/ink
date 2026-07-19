@@ -192,7 +192,9 @@ final class TerminalRenderer {
             encoder.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
             encoder.setVertexBuffer(buffer, offset: 0, index: 1)
             encoder.setFragmentTexture(atlas.monoTexture, index: 0)
-            encoder.setFragmentTexture(atlas.colorTexture, index: 1)
+            // 彩色图集未分配（没出现过 emoji）时随便绑一个占位，
+            // colorGlyph flag 不会置起，不会被采样。
+            encoder.setFragmentTexture(atlas.colorTexture ?? atlas.monoTexture, index: 1)
             encoder.drawPrimitives(
                 type: .triangle, vertexStart: 0, vertexCount: 6, instanceCount: count
             )
@@ -242,12 +244,12 @@ final class TerminalRenderer {
             let absLine = sbCount - offset + visualRow
             let fromScrollback = visualRow < offset
             let gridRow = visualRow - offset
-            let sbCells: ContiguousArray<Cell>? = fromScrollback ? terminal.scrollback[absLine].cells : nil
+            let sbLine: ScrollbackLine? = fromScrollback ? terminal.scrollback[absLine] : nil
 
             for col in 0..<cols {
                 let cell: Cell
-                if let sbCells {
-                    cell = col < sbCells.count ? sbCells[col] : .blank
+                if let sbLine {
+                    cell = col < sbLine.count ? sbLine.cell(at: col) : .blank
                 } else {
                     cell = grid[gridRow, col]
                 }

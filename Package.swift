@@ -42,6 +42,11 @@ let package = Package(
             name: "ink",
             dependencies: ["InkShell"]
         ),
+        // 内存基准：灌 10 万行实测 footprint，M6 验收用（docs/perf.md）。
+        .executableTarget(
+            name: "ink-bench",
+            dependencies: ["TerminalCore"]
+        ),
         .testTarget(
             name: "TerminalCoreTests",
             dependencies: ["TerminalCore"]

@@ -112,6 +112,25 @@ struct ScrollbackTests {
         #expect(buffer[2].cells[0].scalar == 69) // E
     }
 
+    @Test("纯 ASCII 默认属性行走 1 字节紧凑存储，读取等价")
+    func asciiCompaction() {
+        var grid = Grid(size: TerminalSize(columns: 80, rows: 1))
+        for (i, ch) in "ls -la /tmp".unicodeScalars.enumerated() {
+            grid[0, i] = Cell(scalar: ch.value)
+        }
+        let line = ScrollbackLine(trimming: grid.row(0), info: .none)
+        #expect(line.count == 11)
+        #expect(line.cell(at: 0).scalar == UnicodeScalar("l").value)
+        #expect(line.cell(at: 10).scalar == UnicodeScalar("p").value)
+        #expect(line.cell(at: 2).isBlank) // 中间空格保留
+
+        // 带色行不走紧凑格式，属性完整保留。
+        var colored = Grid(size: TerminalSize(columns: 80, rows: 1))
+        colored[0, 0] = Cell(scalar: 65, attr: Cell.Attr.pack(fg: 1, bg: Cell.Attr.colorDefault))
+        let coloredLine = ScrollbackLine(trimming: colored.row(0), info: .none)
+        #expect(Cell.Attr.foreground(of: coloredLine.cell(at: 0).attr) == 1)
+    }
+
     @Test("语义标记随行入库——OSC 133 的落点")
     func semanticSurvives() {
         var buffer = ScrollbackBuffer(capacity: 2)

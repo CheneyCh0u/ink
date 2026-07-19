@@ -27,7 +27,9 @@ public final class TerminalSession {
     public func start() throws {
         pty.onOutput = { [weak self] data in
             guard let self else { return }
-            self.parser.feed(data, handler: &self.terminal)
+            data.withUnsafeBytes { raw in
+                self.parser.feed(raw, handler: &self.terminal)
+            }
             // DSR/DA 等查询的应答写回，TUI 探测终端在等这个。
             let responses = self.terminal.takeResponses()
             if !responses.isEmpty {

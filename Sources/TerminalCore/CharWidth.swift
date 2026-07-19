@@ -10,10 +10,19 @@ public enum CharWidth {
         // ASCII 快速通道：终端流量的绝对大头。
         if scalar < 0x0300 { return 1 }
 
+        // 宽表二分在前：CJK 是第二大流量，一次查表出结果，绝不碰下面
+        // 的 generalCategory（运行时 Unicode 库调用，采样里它吃掉可观
+        // CPU）。宽表与零宽码点无交集，先后顺序安全。
+        if isWide(scalar) { return 2 }
+
         // 零宽：ZWJ、变体选择符、韩文中/终声、组合标记。
         if scalar == 0x200D { return 0 }
         if (0xFE00...0xFE0F).contains(scalar) || (0xE0100...0xE01EF).contains(scalar) { return 0 }
         if (0x1160...0x11FF).contains(scalar) { return 0 }
+        if scalar < 0x2000, !(0x0300...0x036F).contains(scalar), !(0x0483...0x0489).contains(scalar) {
+            // 常见拉丁扩展 / 希腊 / 西里尔快速放行，避免落到属性查询。
+            if scalar < 0x0590 { return 1 }
+        }
         if let s = Unicode.Scalar(scalar) {
             switch s.properties.generalCategory {
             case .nonspacingMark, .enclosingMark, .format:
@@ -22,8 +31,7 @@ public enum CharWidth {
                 break
             }
         }
-
-        return isWide(scalar) ? 2 : 1
+        return 1
     }
 
     /// 东亚宽 / 全角 / emoji 表示。区间已排序，二分查找。

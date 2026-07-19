@@ -41,15 +41,22 @@ public struct Parser: Sendable {
         intermediates.reserveCapacity(4)
     }
 
-    public mutating func feed<H: TerminalActionHandler>(_ data: some Sequence<UInt8>, handler: inout H) {
-        for byte in data {
+    /// 喂字节。handler 具体化为 `Terminal`——曾是泛型协议，跨模块调用时
+    /// 每字节走 witness 动态派发 + 装箱，采样显示吞吐被它吃掉一个数量级。
+    /// 协议只有一个实现、测试也不 mock，抽象没有买到任何东西。
+    public mutating func feed(_ bytes: UnsafeRawBufferPointer, handler: inout Terminal) {
+        for byte in bytes {
             consume(byte, handler: &handler)
         }
     }
 
+    public mutating func feed(_ bytes: [UInt8], handler: inout Terminal) {
+        bytes.withUnsafeBytes { feed($0, handler: &handler) }
+    }
+
     // MARK: - 状态机
 
-    private mutating func consume<H: TerminalActionHandler>(_ byte: UInt8, handler: inout H) {
+    private mutating func consume(_ byte: UInt8, handler: inout Terminal) {
         // CAN / SUB 在任何状态下取消当前序列。
         if byte == 0x18 || byte == 0x1A {
             state = .ground
@@ -196,16 +203,3 @@ public struct Parser: Sendable {
     }
 }
 
-/// Parser 的动作输出。实现者是 `Terminal`；测试里用捕获桩。
-public protocol TerminalActionHandler {
-    /// 打印一个已解码的 Unicode 码点。
-    mutating func print(_ scalar: UInt32)
-    /// C0 控制字符（LF、CR、BS、HT、BEL…）。
-    mutating func execute(_ control: UInt8)
-    /// CSI 序列。`params` 未出现的参数为 0，语义端自补默认值。
-    mutating func csiDispatch(prefix: UInt8, params: ArraySlice<UInt16>, intermediates: ArraySlice<UInt8>, final: UInt8)
-    /// 非 CSI/OSC 的 ESC 序列（ESC 7 / ESC 8 / ESC M / ESC (B …）。
-    mutating func escDispatch(intermediate: UInt8, final: UInt8)
-    /// OSC 完整载荷（不含终结符）。
-    mutating func oscDispatch(_ bytes: ArraySlice<UInt8>)
-}

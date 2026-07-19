@@ -10,7 +10,7 @@ func makeTerminal(
 }
 
 func feed(_ bytes: some Sequence<UInt8>, _ parser: inout Parser, _ term: inout Terminal) {
-    parser.feed(bytes, handler: &term)
+    parser.feed(Array(bytes), handler: &term)
 }
 
 func feed(_ text: String, _ parser: inout Parser, _ term: inout Terminal) {
