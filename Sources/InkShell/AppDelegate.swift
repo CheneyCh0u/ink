@@ -1,17 +1,11 @@
 import AppKit
-import InkDesign
 import InkTerminalView
-import TerminalCore
 
-/// M2 外壳：单窗口 + Metal 终端视图 + 一个会话。
-/// 侧边栏、标签页等真正的外壳是 M5（任务 #12）。
+/// 应用入口：菜单 + 主窗口。窗口结构在 `MainWindowController`。
 @MainActor
-public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+public final class AppDelegate: NSObject, NSApplicationDelegate {
 
-    private var window: NSWindow?
-    private var terminalView: TerminalMetalView?
-    private var session: TerminalSession?
-    private var sessionStartScheduled = false
+    private var mainWindowController: MainWindowController?
 
     public override init() {
         super.init()
@@ -19,103 +13,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
-        buildWindow()
+        let controller = MainWindowController()
+        controller.showWindow(nil)
+        mainWindowController = controller
         NSApplication.shared.activate()
     }
 
     public func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
-    }
-
-    // MARK: - 窗口
-
-    private func buildWindow() {
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 960, height: 620),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
-        window.backgroundColor = InkDesignTokens.Color.canvas
-        window.minSize = NSSize(width: 400, height: 300)
-        window.delegate = self
-        window.isReleasedWhenClosed = false
-
-        let view = TerminalMetalView(frame: window.contentLayoutRect)
-
-        // 格数就绪 / 变化：首次启动 shell，之后同步尺寸。
-        // 启动推迟到下一个 runloop：窗口刚建时 backingScaleFactor 与布局
-        // 还会变一轮，立刻起 shell 会紧跟一次 resize，zsh 收到 SIGWINCH
-        // 重画 prompt，屏顶留下错位空行（首启"掉下来"的根源）。
-        view.onGridResize = { [weak self] size in
-            guard let self else { return }
-            if let session = self.session {
-                session.resize(to: size)
-                return
-            }
-            guard !self.sessionStartScheduled else { return }
-            self.sessionStartScheduled = true
-            DispatchQueue.main.async { [weak self, weak view] in
-                guard let self, let view else { return }
-                self.startSession(size: view.currentGridSize ?? size, view: view)
-            }
-        }
-
-        // fullSizeContentView 下内容会伸到标题栏底下，grid 第 0 行压进红绿灯。
-        // 终端区约束到 contentLayoutGuide（自动避开标题栏）；这条带在 M5
-        // 由标签栏正式接管。
-        let container = NSView()
-        container.wantsLayer = true
-        window.contentView = container
-        view.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(view)
-        if let guide = window.contentLayoutGuide as? NSLayoutGuide {
-            NSLayoutConstraint.activate([
-                view.topAnchor.constraint(equalTo: guide.topAnchor),
-                view.bottomAnchor.constraint(equalTo: guide.bottomAnchor),
-                view.leadingAnchor.constraint(equalTo: guide.leadingAnchor),
-                view.trailingAnchor.constraint(equalTo: guide.trailingAnchor),
-            ])
-        }
-        window.center()
-        window.makeKeyAndOrderFront(nil)
-        window.makeFirstResponder(view)
-
-        self.window = window
-        self.terminalView = view
-    }
-
-    public func windowWillClose(_ notification: Notification) {
-        session?.terminate()
-    }
-
-    // MARK: - 会话
-
-    private func startSession(size: TerminalSize, view: TerminalMetalView) {
-        let session = TerminalSession(size: size)
-
-        view.terminalProvider = { [weak session] in
-            session?.terminal ?? Terminal(size: size, scrollbackCapacity: 1)
-        }
-        view.onInput = { [weak session] data in
-            session?.write(data)
-        }
-        session.onUpdate = { [weak view] in
-            view?.markDirty()
-        }
-        session.onExit = { [weak self] _ in
-            // M2 单窗口语义：shell 退了窗口就关。
-            self?.window?.close()
-        }
-
-        do {
-            try session.start()
-            self.session = session
-        } catch {
-            NSAlert(error: error).runModal()
-        }
     }
 
     // MARK: - 菜单
@@ -133,12 +38,77 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         appItem.submenu = appMenu
         mainMenu.addItem(appItem)
 
+        let fileItem = NSMenuItem()
+        let fileMenu = NSMenu(title: "文件")
+        fileMenu.addItem(
+            withTitle: "新建项目…",
+            action: #selector(MainWindowController.newProject(_:)),
+            keyEquivalent: "n"
+        )
+        fileMenu.addItem(
+            withTitle: "新建会话",
+            action: #selector(MainWindowController.newSession(_:)),
+            keyEquivalent: "t"
+        )
+        fileMenu.addItem(
+            withTitle: "关闭会话",
+            action: #selector(MainWindowController.closeSession(_:)),
+            keyEquivalent: "w"
+        )
+        fileMenu.addItem(.separator())
+        fileMenu.addItem(
+            withTitle: "移除当前项目",
+            action: #selector(MainWindowController.removeCurrentProject(_:)),
+            keyEquivalent: ""
+        )
+        fileItem.submenu = fileMenu
+        mainMenu.addItem(fileItem)
+
         let editItem = NSMenuItem()
         let editMenu = NSMenu(title: "编辑")
         editMenu.addItem(withTitle: "拷贝", action: #selector(TerminalMetalView.copy(_:)), keyEquivalent: "c")
         editMenu.addItem(withTitle: "粘贴", action: #selector(TerminalMetalView.paste(_:)), keyEquivalent: "v")
         editItem.submenu = editMenu
         mainMenu.addItem(editItem)
+
+        let viewItem = NSMenuItem()
+        let viewMenu = NSMenu(title: "显示")
+        viewMenu.addItem(
+            withTitle: "切换侧边栏",
+            action: #selector(NSSplitViewController.toggleSidebar(_:)),
+            keyEquivalent: "0"
+        )
+        viewItem.submenu = viewMenu
+        mainMenu.addItem(viewItem)
+
+        let windowItem = NSMenuItem()
+        let windowMenu = NSMenu(title: "窗口")
+        let nextItem = NSMenuItem(
+            title: "下一个会话",
+            action: #selector(MainWindowController.nextSession(_:)),
+            keyEquivalent: "]"
+        )
+        nextItem.keyEquivalentModifierMask = [.command, .shift]
+        windowMenu.addItem(nextItem)
+        let prevItem = NSMenuItem(
+            title: "上一个会话",
+            action: #selector(MainWindowController.previousSession(_:)),
+            keyEquivalent: "["
+        )
+        prevItem.keyEquivalentModifierMask = [.command, .shift]
+        windowMenu.addItem(prevItem)
+        windowMenu.addItem(.separator())
+        for i in 1...9 {
+            let item = NSMenuItem(
+                title: "项目 \(i)",
+                action: #selector(MainWindowController.selectProjectMenu(_:)),
+                keyEquivalent: "\(i)"
+            )
+            item.tag = i - 1
+            windowMenu.addItem(item)
+        }
+        windowItem.submenu = windowMenu
+        mainMenu.addItem(windowItem)
 
         NSApplication.shared.mainMenu = mainMenu
     }

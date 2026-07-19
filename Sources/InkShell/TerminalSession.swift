@@ -17,9 +17,11 @@ public final class TerminalSession {
 
     private let pty = PTYSession()
     private var parser = Parser()
+    private let workingDirectory: String?
 
-    public init(size: TerminalSize) {
+    public init(size: TerminalSize, workingDirectory: String? = nil) {
         terminal = Terminal(size: size)
+        self.workingDirectory = workingDirectory
     }
 
     public func start() throws {
@@ -36,7 +38,11 @@ public final class TerminalSession {
         pty.onExit = { [weak self] status in
             self?.onExit?(status)
         }
-        try pty.start(columns: terminal.grid.size.columns, rows: terminal.grid.size.rows)
+        try pty.start(
+            columns: terminal.grid.size.columns,
+            rows: terminal.grid.size.rows,
+            workingDirectory: workingDirectory
+        )
     }
 
     public func write(_ data: Data) {
@@ -52,5 +58,16 @@ public final class TerminalSession {
 
     public func terminate() {
         pty.terminate()
+    }
+
+    /// 前台进程名（标签标题的兜底：OSC 标题缺席时显示 zsh / vim / claude）。
+    public var foregroundProcessName: String? {
+        pty.foregroundProcessName()
+    }
+
+    /// 移除会话时先解除退出回调，避免 terminate 触发的回调重入列表管理。
+    public func detach() {
+        onExit = nil
+        onUpdate = nil
     }
 }

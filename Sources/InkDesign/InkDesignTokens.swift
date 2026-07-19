@@ -31,9 +31,17 @@ public enum InkDesignTokens {
             dark: rgb(0xFFFFFF, alpha: 0.05)
         )
 
+        /// 侧边栏选中行：白色高光浮在 vibrancy 材质上（chatwise 式的透亮）。
+        /// 曾用暖褐 #D9D2C8——HTML mock 里好看，真机叠上壁纸透光就发闷。
         public static let selected = dynamic(
-            light: rgb(0xD9D2C8, alpha: 0.68),
+            light: rgb(0xFFFFFF, alpha: 0.72),
             dark: rgb(0xFFFFFF, alpha: 0.085)
+        )
+
+        /// 标签 pill 活动态：中性灰压在 canvas 上，不带色相。
+        public static let pill = dynamic(
+            light: rgb(0x000000, alpha: 0.055),
+            dark: rgb(0xFFFFFF, alpha: 0.075)
         )
 
         // MARK: - Content
