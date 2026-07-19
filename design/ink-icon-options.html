@@ -1,0 +1,724 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ink · 应用图标方向</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --page: oklch(97% 0.008 75);
+      --ink: oklch(22% 0.012 250);
+      --muted: oklch(52% 0.014 250);
+      --line: oklch(76% 0.012 250 / 0.45);
+      --card: oklch(99.5% 0.003 75 / 0.82);
+      --selected: oklch(92% 0.018 78);
+      --accent: oklch(60% 0.145 224);
+      --r-xs: 6px;
+      --r-sm: 10px;
+      --r-md: 14px;
+      --r-lg: 22px;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      color: var(--ink);
+      background: var(--page);
+    }
+
+    button { font: inherit; }
+
+    .page {
+      width: min(1500px, 100%);
+      margin: 0 auto;
+      padding: 34px clamp(16px, 4vw, 58px) 56px;
+    }
+
+    .masthead {
+      display: grid;
+      grid-template-columns: minmax(0, 760px) auto;
+      align-items: end;
+      justify-content: space-between;
+      gap: 32px;
+      margin-bottom: 24px;
+    }
+
+    .eyebrow {
+      margin: 0 0 8px;
+      color: oklch(49% 0.12 220);
+      font-size: 11px;
+      font-weight: 720;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-family: "Avenir Next", -apple-system, sans-serif;
+      font-size: clamp(32px, 5vw, 52px);
+      font-weight: 600;
+      line-height: 0.98;
+      letter-spacing: -0.03em;
+    }
+
+    .lead {
+      max-width: 690px;
+      margin: 14px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.65;
+      text-wrap: pretty;
+    }
+
+    .brief {
+      display: grid;
+      grid-template-columns: repeat(3, auto);
+      align-items: center;
+      gap: 18px;
+      padding: 12px 15px;
+      border-radius: var(--r-md);
+      background: var(--card);
+      box-shadow: 0 1px 3px oklch(20% 0.01 250 / 0.08),
+                  0 10px 28px oklch(20% 0.01 250 / 0.055);
+    }
+
+    .brief-item span,
+    .selected-label {
+      display: block;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.2;
+    }
+
+    .brief-item strong {
+      display: block;
+      margin-top: 4px;
+      font-size: 12px;
+      font-weight: 620;
+      white-space: nowrap;
+    }
+
+    .concept-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(190px, 1fr));
+      gap: 10px;
+    }
+
+    .concept {
+      position: relative;
+      min-width: 0;
+      padding: 12px;
+      border: 0;
+      border-radius: var(--r-md);
+      color: inherit;
+      text-align: left;
+      background: transparent;
+      box-shadow: inset 0 0 0 1px var(--line);
+      cursor: pointer;
+      touch-action: manipulation;
+      transition-property: transform, background-color, box-shadow;
+      transition-duration: 180ms;
+      transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .concept[aria-selected="true"] {
+      background: var(--selected);
+      box-shadow: 0 1px 2px oklch(20% 0.01 250 / 0.08),
+                  0 10px 28px oklch(20% 0.01 250 / 0.08);
+    }
+
+    .concept:active,
+    .select-button:active {
+      transform: scale(0.97);
+    }
+
+    .concept:focus-visible,
+    .select-button:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 3px;
+    }
+
+    .concept-index {
+      position: absolute;
+      top: 18px;
+      left: 18px;
+      z-index: 2;
+      display: grid;
+      width: 24px;
+      height: 24px;
+      place-items: center;
+      border-radius: 8px;
+      color: oklch(26% 0.012 250);
+      background: oklch(98% 0.003 75 / 0.82);
+      box-shadow: 0 1px 4px oklch(15% 0.01 250 / 0.14);
+      font: 700 11px/1 "SF Mono", Menlo, monospace;
+    }
+
+    .hero-icon {
+      display: grid;
+      min-height: 218px;
+      place-items: center;
+      border-radius: var(--r-sm);
+      background-color: oklch(91% 0.01 75);
+      background-image:
+        radial-gradient(circle at 8% 12%, oklch(90% 0.045 24 / 0.3), transparent 34%),
+        radial-gradient(circle at 92% 88%, oklch(87% 0.04 160 / 0.22), transparent 38%);
+      box-shadow: inset 0 0 0 1px oklch(30% 0.01 250 / 0.07);
+    }
+
+    .app-icon {
+      display: block;
+      width: 170px;
+      height: 170px;
+      overflow: visible;
+      filter: drop-shadow(0 13px 18px oklch(22% 0.02 250 / 0.22))
+              drop-shadow(0 2px 3px oklch(22% 0.02 250 / 0.18));
+      transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .concept-copy {
+      min-height: 108px;
+      padding: 13px 3px 8px;
+    }
+
+    .concept-title {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .concept-title h2 {
+      margin: 0;
+      font-family: "Avenir Next", -apple-system, sans-serif;
+      font-size: 16px;
+      font-weight: 650;
+      letter-spacing: -0.012em;
+    }
+
+    .concept-title code {
+      color: var(--muted);
+      font: 10px/1 "SF Mono", Menlo, monospace;
+    }
+
+    .concept-copy p {
+      margin: 7px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.55;
+      text-wrap: pretty;
+    }
+
+    .size-test {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+
+    .size-surface {
+      display: flex;
+      min-width: 0;
+      height: 54px;
+      padding: 0 8px;
+      align-items: center;
+      gap: 7px;
+      overflow: hidden;
+      border-radius: var(--r-xs);
+    }
+
+    .size-surface.light {
+      color: oklch(26% 0.012 250);
+      background: oklch(97% 0.004 75);
+      box-shadow: inset 0 0 0 1px oklch(30% 0.01 250 / 0.08);
+    }
+
+    .size-surface.dark {
+      color: oklch(90% 0.006 85);
+      background: oklch(19% 0.008 250);
+      box-shadow: inset 0 0 0 1px oklch(100% 0 0 / 0.07);
+    }
+
+    .mini-icon {
+      display: block;
+      flex: 0 0 auto;
+      filter: drop-shadow(0 2px 2px oklch(18% 0.01 250 / 0.22));
+    }
+
+    .mini-icon.s32 { width: 32px; height: 32px; }
+    .mini-icon.s16 { width: 16px; height: 16px; }
+
+    .finder-copy {
+      min-width: 0;
+      font-size: 10px;
+      font-weight: 560;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .dock {
+      display: grid;
+      grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.75fr);
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .dock-preview,
+    .decision-panel {
+      min-height: 220px;
+      border-radius: var(--r-lg);
+    }
+
+    .dock-preview {
+      position: relative;
+      display: flex;
+      overflow: hidden;
+      align-items: flex-end;
+      justify-content: center;
+      padding: 32px 28px 24px;
+      background-color: oklch(22% 0.012 250);
+      background-image:
+        radial-gradient(circle at 18% 10%, oklch(44% 0.07 45 / 0.35), transparent 36%),
+        radial-gradient(circle at 88% 22%, oklch(42% 0.06 200 / 0.28), transparent 34%);
+      box-shadow: inset 0 0 0 1px oklch(100% 0 0 / 0.08),
+                  0 16px 44px oklch(20% 0.01 250 / 0.12);
+    }
+
+    .dock-wallpaper-copy {
+      position: absolute;
+      top: 21px;
+      left: 24px;
+      color: oklch(90% 0.008 85 / 0.72);
+    }
+
+    .dock-wallpaper-copy span {
+      display: block;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .dock-wallpaper-copy strong {
+      display: block;
+      margin-top: 4px;
+      font-family: "Avenir Next", -apple-system, sans-serif;
+      font-size: 18px;
+      font-weight: 580;
+      letter-spacing: -0.012em;
+    }
+
+    .dock-shelf {
+      display: flex;
+      height: 92px;
+      padding: 9px 13px;
+      align-items: center;
+      gap: 11px;
+      border-radius: 23px;
+      background: oklch(96% 0.008 85 / 0.25);
+      -webkit-backdrop-filter: blur(24px) saturate(1.2);
+      backdrop-filter: blur(24px) saturate(1.2);
+      box-shadow: inset 0 0 0 1px oklch(100% 0 0 / 0.22),
+                  0 12px 32px oklch(8% 0.01 250 / 0.28);
+    }
+
+    .dock-placeholder {
+      width: 66px;
+      height: 66px;
+      border-radius: 16px;
+      opacity: 0.68;
+      box-shadow: 0 7px 12px oklch(8% 0.01 250 / 0.18);
+    }
+
+    .dock-placeholder.one { background: oklch(72% 0.1 250); }
+    .dock-placeholder.two { background: oklch(74% 0.09 145); }
+    .dock-placeholder.three { background: oklch(76% 0.09 70); }
+
+    #dock-icon {
+      width: 76px;
+      height: 76px;
+      filter: drop-shadow(0 8px 10px oklch(8% 0.01 250 / 0.28));
+      transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .decision-panel {
+      display: flex;
+      flex-direction: column;
+      padding: 22px;
+      background: var(--card);
+      box-shadow: 0 1px 3px oklch(20% 0.01 250 / 0.08),
+                  0 12px 34px oklch(20% 0.01 250 / 0.07);
+    }
+
+    .decision-panel h3 {
+      margin: 7px 0 0;
+      font-family: "Avenir Next", -apple-system, sans-serif;
+      font-size: 23px;
+      font-weight: 650;
+      letter-spacing: -0.022em;
+    }
+
+    .decision-panel p {
+      margin: 9px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+      text-wrap: pretty;
+    }
+
+    .select-button {
+      min-height: 42px;
+      margin-top: auto;
+      border: 0;
+      border-radius: var(--r-sm);
+      color: oklch(97% 0.004 85);
+      background: oklch(25% 0.014 250);
+      box-shadow: 0 5px 14px oklch(20% 0.01 250 / 0.16);
+      cursor: pointer;
+      touch-action: manipulation;
+      transition-property: transform, background-color;
+      transition-duration: 150ms;
+      transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @media (hover: hover) {
+      .concept:hover { transform: translateY(-2px); }
+      .concept:hover .app-icon { transform: translateY(-3px) scale(1.025); }
+      .select-button:hover { background: oklch(31% 0.017 250); }
+      .dock-shelf:hover #dock-icon { transform: translateY(-5px) scale(1.08); }
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page: oklch(15.5% 0.007 250);
+        --ink: oklch(90% 0.008 85);
+        --muted: oklch(66% 0.011 250);
+        --line: oklch(92% 0.005 250 / 0.10);
+        --card: oklch(100% 0 0 / 0.045);
+        --selected: oklch(100% 0 0 / 0.085);
+      }
+
+      .brief,
+      .decision-panel {
+        box-shadow: 0 1px 3px oklch(0% 0 0 / 0.22),
+                    0 12px 34px oklch(0% 0 0 / 0.2);
+      }
+
+      .hero-icon {
+        background-color: oklch(18.5% 0.009 65);
+        background-image:
+          radial-gradient(circle at 8% 12%, oklch(36% 0.04 35 / 0.28), transparent 36%),
+          radial-gradient(circle at 92% 88%, oklch(34% 0.035 160 / 0.2), transparent 40%);
+        box-shadow: inset 0 0 0 1px oklch(100% 0 0 / 0.07);
+      }
+
+      .select-button {
+        color: oklch(18% 0.01 250);
+        background: oklch(88% 0.008 85);
+      }
+    }
+
+    @media (max-width: 1100px) {
+      .concept-grid {
+        grid-template-columns: repeat(3, minmax(190px, 1fr));
+      }
+    }
+
+    @media (max-width: 760px) {
+      .page { padding-inline: 14px; }
+      .masthead { grid-template-columns: 1fr; align-items: start; }
+      .brief { grid-template-columns: repeat(3, 1fr); width: 100%; }
+      .concept-grid {
+        display: flex;
+        overflow-x: auto;
+        padding: 0 1px 6px;
+        scroll-snap-type: x mandatory;
+      }
+      .concept {
+        min-width: min(82vw, 300px);
+        scroll-snap-align: start;
+      }
+      .dock { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 420px) {
+      .brief { gap: 8px; padding-inline: 10px; }
+      .brief-item strong { font-size: 10px; }
+      .dock-preview { padding-inline: 10px; }
+      .dock-placeholder { width: 54px; height: 54px; border-radius: 13px; }
+      .dock-shelf { height: 76px; gap: 7px; padding: 8px 10px; }
+      #dock-icon { width: 64px; height: 64px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="masthead">
+      <div>
+        <p class="eyebrow">ink · app icon study 01</p>
+        <h1>一眼看见“墨迹终端”</h1>
+        <p class="lead">五个方向都从产品本身出发：ink 的名字、终端提示符，以及 macOS 原生工具的克制感。每套都同时展示大图、Finder 32px 和菜单级 16px，避免只选到一张漂亮但不可用的大图。</p>
+      </div>
+      <aside class="brief" aria-label="图标设计约束">
+        <div class="brief-item"><span>平台</span><strong>macOS 14+</strong></div>
+        <div class="brief-item"><span>基准</span><strong>1024 × 1024</strong></div>
+        <div class="brief-item"><span>小尺寸</span><strong>16px 可辨</strong></div>
+      </aside>
+    </header>
+
+    <section class="concept-grid" id="concept-grid" aria-label="五个应用图标方向"></section>
+
+    <section class="dock">
+      <div class="dock-preview" aria-label="Dock 环境预览">
+        <div class="dock-wallpaper-copy">
+          <span>真实环境测试</span>
+          <strong>Dock · 深色桌面</strong>
+        </div>
+        <div class="dock-shelf">
+          <i class="dock-placeholder one" aria-hidden="true"></i>
+          <i class="dock-placeholder two" aria-hidden="true"></i>
+          <div id="dock-icon"></div>
+          <i class="dock-placeholder three" aria-hidden="true"></i>
+        </div>
+      </div>
+
+      <aside class="decision-panel" aria-live="polite">
+        <span class="selected-label">当前查看</span>
+        <h3 id="selected-name">A · 墨滴提示符</h3>
+        <p id="selected-description"></p>
+        <button class="select-button" id="select-button" type="button">选这套</button>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    const squircle = '<rect x="8" y="8" width="240" height="240" rx="55"/>';
+
+    const concepts = [
+      {
+        key: "a",
+        index: "A",
+        name: "雾白墨滴",
+        tag: "ink + >_",
+        description: "把暖雾白作为稳定外轮廓，深色墨滴承载终端提示符。浅色背景靠墨滴识别，深色 Dock 靠瓷白底板识别，16px 仍保留完整层级。",
+        svg: `
+          <svg viewBox="0 0 256 256" role="img" aria-label="雾白底板上的墨滴终端提示符">
+            <defs>
+              <linearGradient id="a-bg" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#faf5eb"/>
+                <stop offset=".58" stop-color="#ebe4d9"/>
+                <stop offset="1" stop-color="#d7cfc3"/>
+              </linearGradient>
+              <linearGradient id="a-drop" x1="0.18" y1="0.12" x2="0.82" y2="0.92">
+                <stop offset="0" stop-color="#34464c"/>
+                <stop offset=".62" stop-color="#1f2d32"/>
+                <stop offset="1" stop-color="#11191c"/>
+              </linearGradient>
+              <clipPath id="a-clip">${squircle}</clipPath>
+            </defs>
+            <g clip-path="url(#a-clip)">
+              <rect width="256" height="256" fill="url(#a-bg)"/>
+              <circle cx="216" cy="45" r="75" fill="#58b6c9" opacity=".13"/>
+              <ellipse cx="54" cy="18" rx="106" ry="76" fill="#fff" opacity=".26"/>
+              <ellipse cx="128" cy="216" rx="63" ry="12" fill="#6b6258" opacity=".18"/>
+              <path d="M128 35C105 72 68 113 68 153c0 40 27 70 60 70s60-30 60-70c0-40-37-81-60-118Z" fill="url(#a-drop)"/>
+              <path d="M101 122l29 25-29 25" fill="none" stroke="#f6f0e6" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M142 172h29" fill="none" stroke="#58b6c9" stroke-width="14" stroke-linecap="round"/>
+              <path d="M102 83c10-14 18-25 26-38" fill="none" stroke="#fff" stroke-width="7" stroke-linecap="round" opacity=".12"/>
+            </g>
+            <rect x="8.5" y="8.5" width="239" height="239" rx="54.5" fill="none" stroke="#302b25" opacity=".11"/>
+          </svg>`
+      },
+      {
+        key: "b",
+        index: "B",
+        name: "钢笔尖终端",
+        tag: "nib + cursor",
+        description: "用钢笔尖连接“ink”的书写含义，笔尖开孔变成光标。品牌气质最成熟，但 16px 下终端属性会比 A 更含蓄。",
+        svg: `
+          <svg viewBox="0 0 256 256" role="img" aria-label="包含终端光标的钢笔尖">
+            <defs>
+              <linearGradient id="b-bg" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#f8f2e8"/>
+                <stop offset="1" stop-color="#ded3c3"/>
+              </linearGradient>
+              <clipPath id="b-clip">${squircle}</clipPath>
+            </defs>
+            <g clip-path="url(#b-clip)">
+              <rect width="256" height="256" fill="url(#b-bg)"/>
+              <circle cx="206" cy="44" r="74" fill="#55b6c9" opacity=".14"/>
+              <path d="M128 41 62 118l31 88h70l31-88-66-77Z" fill="#253238"/>
+              <path d="M128 42v91" fill="none" stroke="#f3ede3" stroke-width="9" stroke-linecap="round"/>
+              <circle cx="128" cy="136" r="17" fill="#55b6c9"/>
+              <path d="M128 153v54" fill="none" stroke="#55b6c9" stroke-width="12" stroke-linecap="round"/>
+              <path d="M91 207h74" fill="none" stroke="#168faf" stroke-width="13" stroke-linecap="round"/>
+              <path d="M93 91l-18 28 13 35" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" opacity=".13"/>
+            </g>
+            <rect x="8.5" y="8.5" width="239" height="239" rx="54.5" fill="none" stroke="#302b25" opacity=".1"/>
+          </svg>`
+      },
+      {
+        key: "c",
+        index: "C",
+        name: "折页终端",
+        tag: "window + paper",
+        description: "把终端窗口处理成一张折角纸，呼应应用里“清白终端 + 雾面侧栏”的界面。系统原生感最强，气质安静。",
+        svg: `
+          <svg viewBox="0 0 256 256" role="img" aria-label="折角纸面上的终端窗口">
+            <defs>
+              <linearGradient id="c-bg" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#59b9ca"/>
+                <stop offset="1" stop-color="#157d98"/>
+              </linearGradient>
+              <clipPath id="c-clip">${squircle}</clipPath>
+            </defs>
+            <g clip-path="url(#c-clip)">
+              <rect width="256" height="256" fill="url(#c-bg)"/>
+              <ellipse cx="60" cy="25" rx="120" ry="80" fill="#fff" opacity=".13"/>
+              <path d="M55 57h112l38 38v104H55V57Z" fill="#f6f1e8"/>
+              <path d="M167 57v38h38" fill="#d7ccc0"/>
+              <path d="M75 83h72" fill="none" stroke="#c8c0b5" stroke-width="9" stroke-linecap="round"/>
+              <path d="M82 123l30 25-30 25" fill="none" stroke="#253238" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M128 173h43" fill="none" stroke="#168faf" stroke-width="15" stroke-linecap="round"/>
+              <path d="M55 199h150" fill="none" stroke="#253238" stroke-width="8" opacity=".13"/>
+            </g>
+            <rect x="8.5" y="8.5" width="239" height="239" rx="54.5" fill="none" stroke="#fff" opacity=".15"/>
+          </svg>`
+      },
+      {
+        key: "d",
+        index: "D",
+        name: "极速笔划",
+        tag: "speed + prompt",
+        description: "三道连续墨迹组成一个向前的提示符，表达项目最重要的性能目标。运动感最强，适合强调“快”，但“终端”语义更抽象。",
+        svg: `
+          <svg viewBox="0 0 256 256" role="img" aria-label="高速墨迹组成的终端提示符">
+            <defs>
+              <linearGradient id="d-bg" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#202325"/>
+                <stop offset="1" stop-color="#0c0e0f"/>
+              </linearGradient>
+              <clipPath id="d-clip">${squircle}</clipPath>
+            </defs>
+            <g clip-path="url(#d-clip)">
+              <rect width="256" height="256" fill="url(#d-bg)"/>
+              <path d="M43 78c45 4 77 16 112 45l-42 20c-26-26-44-41-70-65Z" fill="#6fc7d2" opacity=".44"/>
+              <path d="M50 105c45 7 77 24 112 52l-41 19c-27-27-47-48-71-71Z" fill="#46aeba" opacity=".7"/>
+              <path d="M57 132c45 9 76 29 111 55l-39 19c-27-29-48-51-72-74Z" fill="#168faf"/>
+              <path d="M152 90l48 40-48 40" fill="none" stroke="#f3eee5" stroke-width="17" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M164 191h39" fill="none" stroke="#67c88d" stroke-width="14" stroke-linecap="round"/>
+            </g>
+            <rect x="8.5" y="8.5" width="239" height="239" rx="54.5" fill="none" stroke="#fff" opacity=".1"/>
+          </svg>`
+      },
+      {
+        key: "e",
+        index: "E",
+        name: "ink 字符印",
+        tag: "i + >",
+        description: "把小写 i 与提示符压成一枚字符印章：墨点是 i 的点，右侧切口是终端箭头。最像独立品牌字标，也最不像传统终端图标。",
+        svg: `
+          <svg viewBox="0 0 256 256" role="img" aria-label="ink 字符与终端提示符组合的印章">
+            <defs>
+              <linearGradient id="e-bg" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#c57156"/>
+                <stop offset="1" stop-color="#8f4135"/>
+              </linearGradient>
+              <clipPath id="e-clip">${squircle}</clipPath>
+            </defs>
+            <g clip-path="url(#e-clip)">
+              <rect width="256" height="256" fill="url(#e-bg)"/>
+              <ellipse cx="42" cy="30" rx="110" ry="75" fill="#fff" opacity=".1"/>
+              <path d="M66 56h65c34 0 59 24 59 57 0 18-8 34-22 44 13 9 22 22 27 41h-43c-8-20-18-27-37-27H66V56Z" fill="#f4eee4"/>
+              <circle cx="96" cy="87" r="14" fill="#243137"/>
+              <path d="M96 116v48" fill="none" stroke="#243137" stroke-width="18" stroke-linecap="round"/>
+              <path d="M128 104l34 28-34 28" fill="none" stroke="#168faf" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M158 178h26" fill="none" stroke="#243137" stroke-width="13" stroke-linecap="round"/>
+            </g>
+            <rect x="8.5" y="8.5" width="239" height="239" rx="54.5" fill="none" stroke="#fff" opacity=".13"/>
+          </svg>`
+      }
+    ];
+
+    const grid = document.querySelector("#concept-grid");
+    const selectedName = document.querySelector("#selected-name");
+    const selectedDescription = document.querySelector("#selected-description");
+    const dockIcon = document.querySelector("#dock-icon");
+    const selectButton = document.querySelector("#select-button");
+    let currentKey = "a";
+
+    function iconAtSize(svg, sizeClass) {
+      return svg.replace("<svg ", `<svg class="mini-icon ${sizeClass}" `);
+    }
+
+    concepts.forEach((concept, index) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "concept";
+      button.dataset.key = concept.key;
+      button.setAttribute("aria-selected", String(index === 0));
+      button.innerHTML = `
+        <span class="concept-index">${concept.index}</span>
+        <div class="hero-icon">${concept.svg.replace("<svg ", '<svg class="app-icon" ')}</div>
+        <div class="concept-copy">
+          <div class="concept-title">
+            <h2>${concept.name}</h2>
+            <code>${concept.tag}</code>
+          </div>
+          <p>${concept.description}</p>
+        </div>
+        <div class="size-test" aria-label="${concept.name}小尺寸测试">
+          <div class="size-surface light">
+            ${iconAtSize(concept.svg, "s32")}
+            <span class="finder-copy">ink</span>
+          </div>
+          <div class="size-surface dark">
+            ${iconAtSize(concept.svg, "s16")}
+            <span class="finder-copy">ink</span>
+          </div>
+        </div>`;
+      grid.appendChild(button);
+    });
+
+    function showConcept(key) {
+      const concept = concepts.find((item) => item.key === key);
+      if (!concept) return;
+      currentKey = key;
+      document.querySelectorAll(".concept").forEach((button) => {
+        button.setAttribute("aria-selected", String(button.dataset.key === key));
+      });
+      selectedName.textContent = `${concept.index} · ${concept.name}`;
+      selectedDescription.textContent = concept.description;
+      dockIcon.innerHTML = concept.svg;
+      history.replaceState(null, "", `#${key}`);
+    }
+
+    grid.addEventListener("click", (event) => {
+      const button = event.target.closest(".concept");
+      if (button) showConcept(button.dataset.key);
+    });
+
+    selectButton.addEventListener("click", () => {
+      localStorage.setItem("ink-icon-choice", currentKey);
+      selectButton.textContent = "✓ 已选定";
+      selectedName.textContent += " · 已选";
+    });
+
+    const hash = location.hash.slice(1);
+    showConcept(concepts.some((item) => item.key === hash) ? hash : "a");
+  </script>
+</body>
+</html>

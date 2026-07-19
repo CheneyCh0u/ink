@@ -100,8 +100,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         windowMenu.addItem(.separator())
         for i in 1...9 {
             let item = NSMenuItem(
-                title: "项目 \(i)",
-                action: #selector(MainWindowController.selectProjectMenu(_:)),
+                title: "会话 \(i)",
+                action: #selector(MainWindowController.selectSessionMenu(_:)),
                 keyEquivalent: "\(i)"
             )
             item.tag = i - 1

@@ -1,11 +1,12 @@
 import AppKit
 import InkDesign
 
-/// 侧边栏：会话列表 + 底部新建按钮。
+/// 侧边栏：项目列表 + 底部新建按钮。
 ///
 /// 材质由 NSSplitViewController 的 sidebar item 提供（系统 vibrancy），
-/// 这里只放内容。行是自绘的两行式（标题 + 状态 + ⌘n 快捷键提示），
-/// 会话数量个位数，直接重建行比 NSTableView 的复用机制更简单。
+/// 这里只放内容。行是自绘的两行式，项目数量个位数，直接重建行比
+/// NSTableView 的复用机制更简单。支持拖动排序（本地拖拽）、悬停关闭、
+/// 右键置顶/备注。
 @MainActor
 final class SidebarViewController: NSViewController {
 
@@ -13,16 +14,25 @@ final class SidebarViewController: NSViewController {
         let title: String
         let subtitle: String
         let active: Bool
+        let pinned: Bool
     }
 
     var onSelect: ((Int) -> Void)?
     var onNewProject: (() -> Void)?
     var onRemove: ((Int) -> Void)?
+    var onTogglePin: ((Int) -> Void)?
+    var onEditNote: ((Int) -> Void)?
+    /// 拖动排序：把第 from 行移动到第 to 位。
+    var onReorder: ((Int, Int) -> Void)?
+
+    static let dragType = NSPasteboard.PasteboardType("com.ink.project-row")
 
     private let rowStack = NSStackView()
 
     override func loadView() {
-        let root = NSView()
+        let root = ProjectDropView()
+        root.rowStack = rowStack
+        root.onDrop = { [weak self] from, to in self?.onReorder?(from, to) }
 
         rowStack.orientation = .vertical
         rowStack.spacing = 2
@@ -83,9 +93,11 @@ final class SidebarViewController: NSViewController {
     func reload(rows: [Row]) {
         rowStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for (index, row) in rows.enumerated() {
-            let rowView = SessionRowView(row: row, shortcut: index < 9 ? "⌘\(index + 1)" : "")
+            let rowView = ProjectRowView(row: row, index: index)
             rowView.onClick = { [weak self] in self?.onSelect?(index) }
             rowView.onRemove = { [weak self] in self?.onRemove?(index) }
+            rowView.onTogglePin = { [weak self] in self?.onTogglePin?(index) }
+            rowView.onEditNote = { [weak self] in self?.onEditNote?(index) }
             rowStack.addArrangedSubview(rowView)
             rowView.widthAnchor.constraint(equalTo: rowStack.widthAnchor).isActive = true
         }
@@ -94,21 +106,71 @@ final class SidebarViewController: NSViewController {
     @objc private func newProject() { onNewProject?() }
 }
 
-/// 两行式会话行：标题 + 状态，右侧 ⌘n。选中态圆角底。
+/// 承接项目行拖拽的容器：按落点 y 算插入位置。
 @MainActor
-private final class SessionRowView: NSView {
+private final class ProjectDropView: NSView {
+    weak var rowStack: NSStackView?
+    var onDrop: ((Int, Int) -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        registerForDraggedTypes([SidebarViewController.dragType])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("代码构建") }
+
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation { .move }
+    override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation { .move }
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        guard
+            let raw = sender.draggingPasteboard.string(forType: SidebarViewController.dragType),
+            let from = Int(raw),
+            let rows = rowStack?.arrangedSubviews, !rows.isEmpty
+        else { return false }
+
+        let point = convert(sender.draggingLocation, from: nil)
+        var target = rows.count - 1
+        for (i, row) in rows.enumerated() {
+            let frame = row.convert(row.bounds, to: self)
+            if point.y < frame.midY { // isFlipped == false：y 向上
+                continue
+            }
+            target = i
+            break
+        }
+        if target != from {
+            onDrop?(from, target)
+        }
+        return true
+    }
+}
+
+/// 两行式项目行：标题 + 备注/状态，置顶别针，悬停出关闭钮，可拖动。
+@MainActor
+private final class ProjectRowView: NSView, NSDraggingSource {
 
     var onClick: (() -> Void)?
     var onRemove: (() -> Void)?
+    var onTogglePin: (() -> Void)?
+    var onEditNote: (() -> Void)?
 
-    init(row: SidebarViewController.Row, shortcut: String) {
+    private let index: Int
+    private let pinned: Bool
+    private let closeButton = NSButton()
+    private var mouseDownPoint: NSPoint?
+    private var didDrag = false
+
+    init(row: SidebarViewController.Row, index: Int) {
+        self.index = index
+        self.pinned = row.pinned
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = InkDesignTokens.Radius.item
         layer?.cornerCurve = .continuous
         if row.active {
             layer?.backgroundColor = InkDesignTokens.Color.selected.cgColor
-            // 白色高光浮在材质上，需要一道极浅的影子给出边界。
             layer?.masksToBounds = false
             layer?.shadowColor = NSColor.black.cgColor
             layer?.shadowOpacity = 0.10
@@ -117,7 +179,8 @@ private final class SessionRowView: NSView {
         }
 
         let icon = NSImageView(image: NSImage(
-            systemSymbolName: "folder", accessibilityDescription: nil
+            systemSymbolName: row.pinned ? "pin.fill" : "folder",
+            accessibilityDescription: nil
         )!)
         icon.contentTintColor = row.active
             ? InkDesignTokens.Color.textPrimary
@@ -126,22 +189,27 @@ private final class SessionRowView: NSView {
         let title = NSTextField(labelWithString: row.title)
         title.font = InkDesignTokens.Typography.bodyEmphasized
         title.textColor = InkDesignTokens.Color.textPrimary
-        title.lineBreakMode = .byTruncatingTail
+        title.lineBreakMode = .byTruncatingHead
 
         let subtitle = NSTextField(labelWithString: row.subtitle)
         subtitle.font = InkDesignTokens.Typography.label
         subtitle.textColor = InkDesignTokens.Color.textSecondary
+        subtitle.lineBreakMode = .byTruncatingTail
 
-        let keys = NSTextField(labelWithString: shortcut)
-        keys.font = InkDesignTokens.Typography.label
-        keys.textColor = InkDesignTokens.Color.textSecondary
+        closeButton.isBordered = false
+        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "移除项目")?
+            .withSymbolConfiguration(.init(pointSize: 8, weight: .bold))
+        closeButton.contentTintColor = InkDesignTokens.Color.textSecondary
+        closeButton.target = self
+        closeButton.action = #selector(removeAction)
+        closeButton.isHidden = true
 
         let textStack = NSStackView(views: [title, subtitle])
         textStack.orientation = .vertical
         textStack.alignment = .leading
         textStack.spacing = 1
 
-        let hStack = NSStackView(views: [icon, textStack, NSView(), keys])
+        let hStack = NSStackView(views: [icon, textStack, NSView(), closeButton])
         hStack.orientation = .horizontal
         hStack.alignment = .centerY
         hStack.spacing = InkDesignTokens.Spacing.xs
@@ -155,24 +223,79 @@ private final class SessionRowView: NSView {
             hStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: sp.xs),
             hStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -sp.xs),
         ])
+
+        addTrackingArea(NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self
+        ))
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("代码构建") }
 
+    override func mouseEntered(with event: NSEvent) { closeButton.isHidden = false }
+    override func mouseExited(with event: NSEvent) { closeButton.isHidden = true }
+
+    // 点击选中放到 mouseUp，给拖拽让路。
     override func mouseDown(with event: NSEvent) {
-        onClick?()
+        mouseDownPoint = event.locationInWindow
+        didDrag = false
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if !didDrag { onClick?() }
+        mouseDownPoint = nil
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let start = mouseDownPoint, !didDrag,
+              abs(event.locationInWindow.y - start.y) > 4 else { return }
+        didDrag = true
+
+        let item = NSPasteboardItem()
+        item.setString("\(index)", forType: SidebarViewController.dragType)
+        let dragItem = NSDraggingItem(pasteboardWriter: item)
+        let snapshot = snapshotImage()
+        dragItem.setDraggingFrame(bounds, contents: snapshot)
+        beginDraggingSession(with: [dragItem], event: event, source: self)
+    }
+
+    private func snapshotImage() -> NSImage {
+        guard let rep = bitmapImageRepForCachingDisplay(in: bounds) else {
+            return NSImage(size: bounds.size)
+        }
+        cacheDisplay(in: bounds, to: rep)
+        let image = NSImage(size: bounds.size)
+        image.addRepresentation(rep)
+        return image
+    }
+
+    nonisolated func draggingSession(
+        _ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext
+    ) -> NSDragOperation {
+        context == .withinApplication ? .move : []
     }
 
     override func rightMouseDown(with event: NSEvent) {
         let menu = NSMenu()
-        let item = NSMenuItem(title: "移除项目", action: #selector(removeAction), keyEquivalent: "")
-        item.target = self
-        menu.addItem(item)
+        let pin = NSMenuItem(
+            title: pinned ? "取消置顶" : "置顶",
+            action: #selector(pinAction), keyEquivalent: ""
+        )
+        pin.target = self
+        menu.addItem(pin)
+        let note = NSMenuItem(title: "编辑备注…", action: #selector(noteAction), keyEquivalent: "")
+        note.target = self
+        menu.addItem(note)
+        menu.addItem(.separator())
+        let remove = NSMenuItem(title: "移除项目", action: #selector(removeAction), keyEquivalent: "")
+        remove.target = self
+        menu.addItem(remove)
         NSMenu.popUpContextMenu(menu, with: event, for: self)
     }
 
-    @objc private func removeAction() {
-        onRemove?()
-    }
+    @objc private func removeAction() { onRemove?() }
+    @objc private func pinAction() { onTogglePin?() }
+    @objc private func noteAction() { onEditNote?() }
 }
