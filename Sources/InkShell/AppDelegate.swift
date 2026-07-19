@@ -31,7 +31,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
         appMenu.addItem(
-            withTitle: "退出 ink",
+            withTitle: "退出 Ink",
             action: #selector(NSApplication.terminate(_:)),
             keyEquivalent: "q"
         )
