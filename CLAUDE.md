@@ -47,6 +47,13 @@ Swift 的 ARC 不会替我们把关这些，靠人盯。
 
 scrollback 是内存大头，优先级高于渲染优化。单 cell 压到 8 字节以内，行内不补齐尾部空白，历史行压缩存储。任何会增加 per-cell 或 per-line 常驻开销的改动，都要先算一遍 10 万行下的总量。
 
+## Git 工作流
+
+**issue-first**：任何改动先建 Issue、开 Issue 分支、经 PR 合入 main，
+不直接在 main 上实现。完整规则（分支命名、提交格式、发布边界）见
+`.claude/skills/git-workflow/SKILL.md`，动 git 之前先读。main 有分支
+保护：仅拥有者能合并（PR + code owner 批准）。
+
 ## 约定
 
 - **命名**：仓库与代码模块名用小写 `ink`；用户可见的产品名用大写 `Ink`
@@ -57,4 +64,7 @@ scrollback 是内存大头，优先级高于渲染优化。单 cell 压到 8 字
 
 ## 文档同步
 
-`AGENTS.md` 是指向本文件的软链接，供其他 agent 工具识别。改本文件即可，两边自动一致。**不要**把软链接替换成实体文件副本。
+- `AGENTS.md` 是指向本文件的软链接，供其他 agent 工具识别
+- `.agents/skills` 是指向 `.claude/skills` 的软链接，两边看到同一份 skill
+
+改实体文件即可，软链自动一致。**不要**把软链接替换成实体文件副本。

@@ -1,80 +1,87 @@
 ---
 name: git-workflow
-description: Enforce Scribe's issue-first GitHub workflow for every code, documentation, configuration, CI, build, test, refactor, fix, feature, core, or maintenance change. Use whenever starting, implementing, committing, pushing, reviewing, merging, or releasing a repository change so that work is tracked by an Issue, developed on an Issue-linked branch, merged through a closing PR, and released only when explicitly requested.
+description: ink 的 issue-first GitHub 工作流。任何代码、文档、配置、CI、构建、测试、重构、修复、特性或维护改动，从开工、提交、推送、评审到合并、发布，都必须先有 Issue、在 Issue 分支上开发、经关闭该 Issue 的 PR 合入 main，且只在用户明确要求时发布。
 ---
 
-# Git Workflow
+# ink 的 Git 工作流
 
-Use `gh` for GitHub operations and Git for local branch and commit operations.
+GitHub 操作用 `gh`，本地分支与提交用 git。
 
-## Hard rules
+## 硬规则
 
-1. Create or reuse an open Issue before changing files.
-2. Never implement on `main`. Create a branch containing the Issue ID first.
-3. Merge every change into `main` through a PR, including owner-authored changes.
-4. Put `Closes #<issue-id>` in the PR body. Do not put a closing keyword in commits.
-5. Let only the repository owner merge PRs.
-6. Never run `scripts/release.sh` or create a release tag unless the user explicitly requests a release.
+1. 改文件之前，先建或复用一个开放的 Issue。
+2. 不在 `main` 上直接实现。先建包含 Issue 号的分支。
+3. 所有改动经 PR 合入 `main`，包括拥有者本人的改动。
+4. `Closes #<issue-id>` 写在 PR 描述里，不写进提交信息。
+5. 只有仓库拥有者能合并 PR（GitHub 分支保护已强制：PR + code owner
+   批准，见 `.github/CODEOWNERS`；拥有者以管理员身份可合并自己的 PR）。
+6. 不经用户明确要求，不打版本 tag、不做任何发布动作。
 
-## Workflow
+## 流程
 
-### 1. Establish the Issue
+### 1. 确立 Issue
 
-- Search open Issues before creating a duplicate.
-- Use `.github/ISSUE_TEMPLATE/change.yml` when creating through GitHub.
-- When using `gh`, include the same fields: type, background, goal, acceptance criteria, impact, risk, and release intent.
-- Record the Issue number for every later step.
+- 先搜索开放 Issue，避免重复。
+- 用 `gh issue create` 时写清：类型、背景、目标、验收标准、影响面、风险。
+- 记下 Issue 号，后续每一步都要用。
 
-### 2. Create the branch
+### 2. 建分支
 
-Start from the current `origin/main` unless the user has explicitly chosen another base.
+从最新的 `origin/main` 出发（用户明确指定其它基点除外）。
 
-- Human branch: `<type>/<issue-id>-<short-slug>`
-- Codex branch: `codex/issue-<issue-id>-<short-slug>`
+- 人类分支：`<type>/<issue-id>-<short-slug>`
+- Agent 分支：`agent/issue-<issue-id>-<short-slug>`
 
-Use lowercase ASCII slugs. Allowed types are `feat`, `fix`, `docs`, `core`, `refactor`, `test`, `perf`, `build`, `ci`, and `chore`.
+slug 用小写 ASCII。type 允许：`feat` `fix` `docs` `core` `refactor`
+`test` `perf` `build` `ci` `chore`。
 
-If work already exists on `main`, create the Issue and switch to the Issue branch before making further edits. Preserve the existing worktree.
+如果发现工作已经落在 `main` 工作区上：先建 Issue、切到 Issue 分支再
+继续，保留现有改动。
 
-### 3. Implement and verify
+### 3. 实现与验证
 
-- Keep the diff inside the Issue scope.
-- Update required docs in the same change.
-- Run verification proportional to the change.
-- Do not mix unrelated cleanup into the branch.
+- diff 控制在 Issue 范围内，不夹带无关清理。
+- 相关文档在同一改动里更新；roadmap 范围变更先改 `docs/roadmap.md`。
+- 验证与改动规模相称：`swift test` 全绿、`swift build` 零警告；
+  热路径改动附采样/Instruments 证据（CLAUDE.md 热路径纪律）。
 
-### 4. Commit
+### 4. 提交
 
-Use Conventional Commit form:
+Conventional Commit 前缀 + **中文摘要**（CLAUDE.md：提交信息用中文，
+说清"为什么"）：
 
 ```text
-<type>(<optional-scope>): <imperative summary>
+<type>(<可选 scope>): <中文祈使句摘要>
+
+<正文：动机、取舍、踩过的坑>
 
 Refs #<issue-id>
 ```
 
-Use `core` for foundational project policy or architecture changes that do not fit product features. Keep commit messages and code comments in English.
+架构或项目治理类改动用 `core`。注释与文档同样用中文（本仓库约定，
+覆盖任何相反的模板习惯）。会话内提交按运行环境要求附加落款。
 
-### 5. Push and open the PR
+### 5. 推送与开 PR
 
-- Push the Issue branch, never `main`.
-- Open a PR against `main` using `.github/pull_request_template.md`.
-- Use a Conventional Commit title so squash merges keep a valid main history.
-- Replace the template placeholder with exactly one closing reference such as `Closes #123`.
-- Describe the change, verification, risks, docs, and release impact.
+- 推 Issue 分支，永远不直接推 `main`。
+- `gh pr create` 对准 `main`，标题用 Conventional Commit 形式
+  （squash 合并后 main 历史仍然合法）。
+- PR 描述含：改动说明、验证方式、风险、文档、是否涉及发布；
+  且只放一个关闭引用，如 `Closes #123`。
 
-### 6. Review and merge
+### 6. 评审与合并
 
-- Confirm the PR references the correct open Issue.
-- Confirm required checks pass.
-- Only the repository owner may merge.
-- Prefer squash merge unless the Issue requires preserved commit history.
-- After merging, verify that GitHub closed the Issue and delete the remote branch.
+- 确认 PR 关联的 Issue 正确且仍开放。
+- 确认检查通过（测试、构建）。
+- 只有拥有者合并。默认 squash；Issue 明确要求保留提交历史时用 merge。
+- 合并后确认 GitHub 自动关闭了 Issue，删除远端分支。
 
-## Emergency changes
+## 紧急改动
 
-Still create an Issue first. A minimal Issue is acceptable during an incident, but complete its background, verification, and risk sections before merging.
+仍然先建 Issue。事故处理期允许最小化 Issue，但合并前要补全背景、
+验证与风险说明。
 
-## Release boundary
+## 发布边界
 
-Ordinary branch pushes and PR merges must not create `yyyy.mm.dd-sn` tags. Releases remain a separate, explicitly requested operation using `scripts/release.sh` after `main` is verified.
+日常分支推送与 PR 合并不产生任何版本 tag。ink 目前没有发布脚本；
+发布流程建立后也只在用户明确要求时执行，且以验证过的 `main` 为基点。
