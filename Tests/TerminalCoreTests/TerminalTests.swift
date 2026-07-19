@@ -197,6 +197,16 @@ struct TerminalSemanticTests {
         #expect(term.grid.info(ofRow: 1).semantic == SemanticMark.output.rawValue)
     }
 
+    @Test("DSR 光标位置查询有应答——TUI 探测卡死的根源")
+    func deviceStatusReport() {
+        var (parser, term) = makeTerminal()
+        feed("ab\u{1B}[6n", &parser, &term)
+        #expect(term.takeResponses() == Array("\u{1B}[1;3R".utf8))
+        #expect(term.takeResponses().isEmpty) // 取走即清空
+        feed("\u{1B}[c", &parser, &term)
+        #expect(!term.takeResponses().isEmpty) // DA1 有回音即可
+    }
+
     @Test("RIS 全量重置")
     func fullReset() {
         var (parser, term) = makeTerminal()

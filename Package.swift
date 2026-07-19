@@ -21,10 +21,17 @@ let package = Package(
         .target(
             name: "InkDesign"
         ),
-        // 外壳 UI：窗口、侧边栏、标签、终端视图。
+        // 终端内容区：NSView + CAMetalLayer 自绘，glyph atlas 渲染。
+        .target(
+            name: "InkTerminalView",
+            dependencies: ["TerminalCore", "InkDesign"],
+            // swift build 不编译 .metal，以源码进 bundle、TerminalRenderer 启动时编译。
+            resources: [.copy("Shaders.metal")]
+        ),
+        // 外壳 UI：窗口、侧边栏、标签。
         .target(
             name: "InkShell",
-            dependencies: ["InkDesign", "TerminalCore", "InkPTY"]
+            dependencies: ["InkDesign", "TerminalCore", "InkPTY", "InkTerminalView"]
         ),
         // 可执行入口。
         .executableTarget(
@@ -34,6 +41,10 @@ let package = Package(
         .testTarget(
             name: "TerminalCoreTests",
             dependencies: ["TerminalCore"]
+        ),
+        .testTarget(
+            name: "InkTerminalViewTests",
+            dependencies: ["InkTerminalView"]
         ),
     ]
 )
