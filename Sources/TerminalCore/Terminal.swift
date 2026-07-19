@@ -65,14 +65,146 @@ public struct Terminal: Sendable {
     // MARK: - 对外入口
 
     /// 尺寸变更。滚动区域重置为整屏（xterm 行为）。
+    /// 主屏走 reflow（历史行按新宽度重折）；备用屏直接裁剪——vim 等
+    /// 全屏应用收到 SIGWINCH 自己重画，reflow 反而画蛇添足。
     /// 喂字节的入口在调用方：`parser.feed(data, handler: &terminal)`，
     /// Parser 的词法状态跨 read 边界，必须由外部持有。
     public mutating func resize(to newSize: TerminalSize) {
-        grid.resize(to: newSize)
+        guard newSize != grid.size else { return }
         savedPrimaryGrid?.resize(to: newSize)
-        scrollTop = 0
-        scrollBottom = newSize.rows - 1
-        pendingWrap = false
+        defer {
+            scrollTop = 0
+            scrollBottom = newSize.rows - 1
+            pendingWrap = false
+        }
+        if modes.alternateScreen {
+            grid.resize(to: newSize)
+        } else {
+            reflow(to: newSize)
+        }
+    }
+
+    // MARK: - Reflow
+
+    /// 把 scrollback + 屏上行按 `wrapped` 位拼回逻辑行，按新列宽重切，
+    /// 尾部 `rows` 行回屏幕、其余入 scrollback，光标按逻辑偏移映射。
+    /// 流式处理：一次只持有一条逻辑行，不整体物化十万行。
+    private mutating func reflow(to newSize: TerminalSize) {
+        let oldGrid = grid
+        let oldSb = scrollback
+        let sbCount = oldSb.count
+        let totalRows = sbCount + oldGrid.size.rows
+        let cursorAbs = sbCount + oldGrid.cursorRow
+        let newCols = newSize.columns
+        let newRows = newSize.rows
+
+        var newSb = ScrollbackBuffer(capacity: oldSb.capacity)
+        // 尾部滑窗：最后 newRows 行留给屏幕，更早的滑入 scrollback。
+        var tailCells: [[Cell]] = []
+        var tailInfo: [RowInfo] = []
+        var emitted = 0
+        var newCursor: (abs: Int, col: Int)?
+
+        func emitRow(_ cells: [Cell], _ info: RowInfo) {
+            if tailCells.count == newRows {
+                let cells = tailCells.removeFirst()
+                let info = tailInfo.removeFirst()
+                newSb.append(ScrollbackLine(trimming: cells[...], info: info))
+            }
+            tailCells.append(cells)
+            tailInfo.append(info)
+            emitted += 1
+        }
+
+        func sourceRow(_ abs: Int) -> ([Cell], RowInfo) {
+            if abs < sbCount {
+                let line = oldSb[abs]
+                return (line.cells, line.info)
+            }
+            let r = abs - sbCount
+            var cells = Array(oldGrid.row(r))
+            while let last = cells.last, last.isBlank {
+                cells.removeLast()
+            }
+            return (cells, oldGrid.info(ofRow: r))
+        }
+
+        // 屏幕底部光标以下的全空行只是留白，不是内容——参与 reflow 会把
+        // 真内容顶进 scrollback。从尾巴往前掐掉它们（光标行必须保留）。
+        var effectiveTotal = totalRows
+        while effectiveTotal - 1 > cursorAbs, effectiveTotal - 1 >= sbCount {
+            let r = effectiveTotal - 1 - sbCount
+            let rowIsEmpty = oldGrid.row(r).allSatisfy(\.isBlank)
+                && !oldGrid.info(ofRow: r).isWrapped
+            guard rowIsEmpty else { break }
+            effectiveTotal -= 1
+        }
+
+        var abs = 0
+        while abs < effectiveTotal {
+            // 聚合一条逻辑行：本行 + 后续所有带 wrapped 位的行。
+            var (cells, headInfo) = sourceRow(abs)
+            var cursorOffset: Int? = abs == cursorAbs ? oldGrid.cursorCol : nil
+            var next = abs + 1
+            while next < effectiveTotal {
+                let nextInfo = next < sbCount
+                    ? oldSb[next].info
+                    : oldGrid.info(ofRow: next - sbCount)
+                guard nextInfo.isWrapped else { break }
+                if next == cursorAbs {
+                    cursorOffset = cells.count + oldGrid.cursorCol
+                }
+                let (more, _) = sourceRow(next)
+                cells += more
+                next += 1
+            }
+
+            // 按新宽度切块。
+            let semantic = headInfo.semantic
+            var start = 0
+            var isFirst = true
+            var lastChunkStart = 0
+            repeat {
+                var end = min(start + newCols, cells.count)
+                // 断点落在宽字符尾格：整个宽字符挪到下一行。
+                if end < cells.count, cells[end].attr & Cell.Attr.wideTrailing != 0 {
+                    end -= 1
+                }
+                let chunk = Array(cells[start..<end])
+                let flags: UInt8 = isFirst ? headInfo.flags & ~RowInfo.wrapped : RowInfo.wrapped
+                if let offset = cursorOffset, offset >= start, offset < end {
+                    newCursor = (emitted, offset - start)
+                }
+                lastChunkStart = start
+                emitRow(chunk, RowInfo(flags: flags, semantic: semantic))
+                isFirst = false
+                start = end
+            } while start < cells.count
+            // 光标悬在行尾（裁掉的空白区）：贴到最后一块的末尾。
+            if let offset = cursorOffset, newCursor == nil {
+                newCursor = (emitted - 1, min(offset - lastChunkStart, newCols - 1))
+            }
+
+            abs = next
+        }
+
+        // 尾部回屏幕。
+        var newGrid = Grid(size: newSize)
+        for (i, cells) in tailCells.enumerated() {
+            for (c, cell) in cells.enumerated() where c < newCols {
+                newGrid[i, c] = cell
+            }
+            newGrid.setInfo(tailInfo[i], forRow: i)
+        }
+        // 溢出行数（含被环形容量挤掉的），光标映射用它而不是 newSb.count。
+        let overflow = emitted - tailCells.count
+        if let cursor = newCursor {
+            newGrid.cursorRow = max(0, min(cursor.abs - overflow, newRows - 1))
+            newGrid.cursorCol = max(0, min(cursor.col, newCols - 1))
+        }
+        grid = newGrid
+        scrollback = newSb
+        savedCursor = nil
     }
 
     // MARK: - TerminalActionHandler：打印
