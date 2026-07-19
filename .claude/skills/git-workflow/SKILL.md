@@ -84,5 +84,7 @@ Refs #<issue-id>
 
 ## 发布边界
 
-日常分支推送与 PR 合并不产生任何版本 tag。ink 目前没有发布脚本；
-发布流程建立后也只在用户明确要求时执行，且以验证过的 `main` 为基点。
+日常分支推送与 PR 合并不产生任何版本 tag。只有用户明确要求发布时，仓库拥有者
+才能运行 `scripts/tag-release.sh` 创建并推送 `vYYYY.MM.DD-N` 标签。序号当天
+从 1 开始递增，标签必须落在最新 `origin/main`；不要手工运行 `git tag`。
+完整规则与流水线见 `docs/release.md`。

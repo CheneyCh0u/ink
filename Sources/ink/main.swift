@@ -6,7 +6,8 @@ import InkShell
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
-if let iconURL = Bundle.module.url(forResource: "AppIcon", withExtension: "icns"),
+if let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns")
+    ?? Bundle.module.url(forResource: "AppIcon", withExtension: "icns"),
    let icon = NSImage(contentsOf: iconURL) {
     app.applicationIconImage = icon
 }

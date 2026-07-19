@@ -1,0 +1,97 @@
+name: macOS Release
+
+on:
+  push:
+    tags:
+      - "v[0-9][0-9][0-9][0-9].[0-9][0-9].[0-9][0-9]-*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    name: Build universal macOS app
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout tagged commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate release tag and owner
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          TRIGGER_ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+
+          pattern='^v([0-9]{4})\.([0-9]{2})\.([0-9]{2})-([1-9][0-9]*)$'
+          if [[ ! "$RELEASE_TAG" =~ $pattern ]]; then
+            echo "Invalid release tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+
+          release_date="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+          release_sequence="${BASH_REMATCH[4]}"
+          parsed_date="$(date -j -f "%Y.%m.%d" "$release_date" "+%Y.%m.%d" 2>/dev/null || true)"
+          if [[ "$parsed_date" != "$release_date" ]]; then
+            echo "Invalid calendar date in tag: $release_date" >&2
+            exit 1
+          fi
+
+          trigger_actor_lower="$(printf '%s' "$TRIGGER_ACTOR" | tr '[:upper:]' '[:lower:]')"
+          repository_owner_lower="$(printf '%s' "$REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          if [[ "$trigger_actor_lower" != "$repository_owner_lower" ]]; then
+            echo "Only repository owner $REPOSITORY_OWNER may trigger a release" >&2
+            exit 1
+          fi
+
+          git fetch origin main --tags
+
+          if (( release_sequence > 1 )); then
+            previous_tag="v${release_date}-$((release_sequence - 1))"
+            if ! git rev-parse --verify --quiet "refs/tags/$previous_tag" >/dev/null; then
+              echo "Missing previous release tag: $previous_tag" >&2
+              exit 1
+            fi
+          fi
+
+          tag_commit="$(git rev-list -n 1 "$GITHUB_REF")"
+          if ! git merge-base --is-ancestor "$tag_commit" origin/main; then
+            echo "Release tag must point to a commit on main" >&2
+            exit 1
+          fi
+
+      - name: Test
+        run: swift test
+
+      - name: Package Ink.app
+        run: scripts/package-app.sh "$GITHUB_REF_NAME" dist
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ink-${{ github.ref_name }}
+          path: |
+            dist/Ink-${{ github.ref_name }}.zip
+            dist/Ink-${{ github.ref_name }}.zip.sha256
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/Ink-${GITHUB_REF_NAME}.zip" \
+            "dist/Ink-${GITHUB_REF_NAME}.zip.sha256" \
+            --verify-tag \
+            --title "Ink $GITHUB_REF_NAME" \
+            --generate-notes
