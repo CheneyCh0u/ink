@@ -1,0 +1,498 @@
+/// 终端语义层：消费 `Parser` 的动作，维护 grid、scrollback、光标与模式。
+///
+/// 纯 Swift 值类型，不依赖任何 UI——VT 兼容性全部在这里用单元测试验证
+/// （CLAUDE.md 分层纪律）。
+public struct Terminal: TerminalActionHandler, Sendable {
+
+    // MARK: - 状态
+
+    public struct Modes: Sendable, Equatable {
+        /// DECAWM（?7）：到行尾自动折行。
+        public var autowrap = true
+        /// DECTCEM（?25）：光标可见。
+        public var showCursor = true
+        /// DECCKM（?1）：方向键发 SS3 前缀（vim 等全屏应用开启）。
+        public var applicationCursorKeys = false
+        /// DECOM（?6）：光标定位相对滚动区域。
+        public var originMode = false
+        /// xterm 2004：bracketed paste。输入侧（任务 #11）读它决定是否加包裹。
+        public var bracketedPaste = false
+        /// 备用屏激活中（?1049 / ?47 / ?1047）。
+        public var alternateScreen = false
+    }
+
+    public private(set) var grid: Grid
+    public private(set) var scrollback: ScrollbackBuffer
+    public private(set) var colorTable = ColorTable()
+    public private(set) var modes = Modes()
+    /// OSC 0 / 2 设置的窗口标题。
+    public private(set) var title = ""
+    /// OSC 133 当前段落语义，新行产生时自动继承（详见任务 #8）。
+    public private(set) var currentSemantic: SemanticMark = .none
+
+    private var currentAttr = Cell.Attr.default
+    /// 延迟折行：写满最后一列后光标停在原地，下一个可打印字符才真正折行。
+    /// vttest 会验这个行为，少了它满屏输出会多出空行。
+    private var pendingWrap = false
+    private var scrollTop = 0
+    private var scrollBottom: Int
+    private var savedCursor: (row: Int, col: Int, attr: UInt32)?
+    /// 备用屏切换时保存的主屏。备用屏不入 scrollback。
+    private var savedPrimaryGrid: Grid?
+
+    public init(size: TerminalSize, scrollbackCapacity: Int = 100_000) {
+        self.grid = Grid(size: size)
+        self.scrollback = ScrollbackBuffer(capacity: scrollbackCapacity)
+        self.scrollBottom = size.rows - 1
+    }
+
+    // MARK: - 对外入口
+
+    /// 尺寸变更。滚动区域重置为整屏（xterm 行为）。
+    /// 喂字节的入口在调用方：`parser.feed(data, handler: &terminal)`，
+    /// Parser 的词法状态跨 read 边界，必须由外部持有。
+    public mutating func resize(to newSize: TerminalSize) {
+        grid.resize(to: newSize)
+        savedPrimaryGrid?.resize(to: newSize)
+        scrollTop = 0
+        scrollBottom = newSize.rows - 1
+        pendingWrap = false
+    }
+
+    // MARK: - TerminalActionHandler：打印
+
+    public mutating func print(_ scalar: UInt32) {
+        // TODO(#7)：宽度全部按 1 处理。东亚全角 / emoji / 组合字符是任务 #7，
+        // 会在这里接 scalarWidth 并写 wideLeading/Trailing 双格。
+        if pendingWrap {
+            pendingWrap = false
+            carriageReturn()
+            lineFeed(markWrapped: true)
+        }
+        grid[grid.cursorRow, grid.cursorCol] = Cell(scalar: scalar, attr: currentAttr)
+        if grid.cursorCol + 1 < grid.size.columns {
+            grid.cursorCol += 1
+        } else if modes.autowrap {
+            pendingWrap = true
+        }
+    }
+
+    // MARK: - TerminalActionHandler：C0
+
+    public mutating func execute(_ control: UInt8) {
+        switch control {
+        case 0x0A, 0x0B, 0x0C: // LF VT FF
+            lineFeed()
+        case 0x0D:
+            carriageReturn()
+        case 0x08:
+            if grid.cursorCol > 0 { grid.cursorCol -= 1 }
+            pendingWrap = false
+        case 0x09:
+            // 固定 8 列制表位。HTS/TBC 自定义制表位极少被用到，需要时再加。
+            let next = (grid.cursorCol / 8 + 1) * 8
+            grid.cursorCol = min(next, grid.size.columns - 1)
+        default:
+            break // BEL 等交给外壳层关心，核心不管
+        }
+    }
+
+    // MARK: - TerminalActionHandler：CSI
+
+    public mutating func csiDispatch(
+        prefix: UInt8,
+        params: ArraySlice<UInt16>,
+        intermediates: ArraySlice<UInt8>,
+        final: UInt8
+    ) {
+        @inline(__always)
+        func param(_ i: Int, default def: Int = 1) -> Int {
+            let base = params.startIndex + i
+            guard base < params.endIndex, params[base] != 0 else { return def }
+            return Int(params[base])
+        }
+
+        if prefix == UInt8(ascii: "?") {
+            decPrivateMode(params: params, set: final == UInt8(ascii: "h"))
+            return
+        }
+        guard prefix == 0, intermediates.isEmpty else { return } // 带修饰的序列暂不支持
+
+        switch final {
+        case UInt8(ascii: "A"): moveCursor(rowDelta: -param(0), colDelta: 0)
+        case UInt8(ascii: "B"): moveCursor(rowDelta: param(0), colDelta: 0)
+        case UInt8(ascii: "C"): moveCursor(rowDelta: 0, colDelta: param(0))
+        case UInt8(ascii: "D"): moveCursor(rowDelta: 0, colDelta: -param(0))
+        case UInt8(ascii: "E"): carriageReturn(); moveCursor(rowDelta: param(0), colDelta: 0)
+        case UInt8(ascii: "F"): carriageReturn(); moveCursor(rowDelta: -param(0), colDelta: 0)
+        case UInt8(ascii: "G"), UInt8(ascii: "`"):
+            grid.cursorCol = clampCol(param(0) - 1)
+            pendingWrap = false
+        case UInt8(ascii: "d"):
+            grid.cursorRow = clampRow(originOffset + param(0) - 1)
+            pendingWrap = false
+        case UInt8(ascii: "H"), UInt8(ascii: "f"):
+            grid.cursorRow = clampRow(originOffset + param(0) - 1)
+            grid.cursorCol = clampCol(param(1) - 1)
+            pendingWrap = false
+        case UInt8(ascii: "J"): eraseDisplay(mode: param(0, default: 0))
+        case UInt8(ascii: "K"): eraseLine(mode: param(0, default: 0))
+        case UInt8(ascii: "L"): insertLines(param(0))
+        case UInt8(ascii: "M"): deleteLines(param(0))
+        case UInt8(ascii: "@"): insertChars(param(0))
+        case UInt8(ascii: "P"): deleteChars(param(0))
+        case UInt8(ascii: "X"): eraseChars(param(0))
+        case UInt8(ascii: "S"):
+            for _ in 0..<param(0) { scrollRegionUp() }
+        case UInt8(ascii: "T"):
+            for _ in 0..<param(0) { grid.scrollDown(top: scrollTop, bottom: scrollBottom) }
+        case UInt8(ascii: "r"):
+            setScrollRegion(top: param(0) - 1, bottom: param(1, default: grid.size.rows) - 1)
+        case UInt8(ascii: "m"):
+            selectGraphicRendition(params)
+        case UInt8(ascii: "s"):
+            savedCursor = (grid.cursorRow, grid.cursorCol, currentAttr)
+        case UInt8(ascii: "u"):
+            restoreCursor()
+        default:
+            break // 未实现的序列静默忽略——终端的传统美德
+        }
+    }
+
+    // MARK: - TerminalActionHandler：ESC
+
+    public mutating func escDispatch(intermediate: UInt8, final: UInt8) {
+        guard intermediate == 0 else { return } // ESC ( B 等字符集指定：忽略
+        switch final {
+        case UInt8(ascii: "7"):
+            savedCursor = (grid.cursorRow, grid.cursorCol, currentAttr)
+        case UInt8(ascii: "8"):
+            restoreCursor()
+        case UInt8(ascii: "D"): // IND
+            lineFeed()
+        case UInt8(ascii: "E"): // NEL
+            carriageReturn()
+            lineFeed()
+        case UInt8(ascii: "M"): // RI：区域顶再上移即区域下滚
+            if grid.cursorRow == scrollTop {
+                grid.scrollDown(top: scrollTop, bottom: scrollBottom)
+            } else if grid.cursorRow > 0 {
+                grid.cursorRow -= 1
+            }
+        case UInt8(ascii: "c"): // RIS 全量重置
+            let size = grid.size
+            let capacity = scrollback.capacity
+            self = Terminal(size: size, scrollbackCapacity: capacity)
+        default:
+            break
+        }
+    }
+
+    // MARK: - TerminalActionHandler：OSC
+
+    public mutating func oscDispatch(_ bytes: ArraySlice<UInt8>) {
+        // 形如 "Ps;Pt"。载荷可能是 UTF-8（窗口标题带中文）。
+        guard let sep = bytes.firstIndex(of: UInt8(ascii: ";")) else { return }
+        guard let code = Int(String(decoding: bytes[..<sep], as: UTF8.self)) else { return }
+        let payload = bytes[(sep + 1)...]
+
+        switch code {
+        case 0, 2:
+            title = String(decoding: payload, as: UTF8.self)
+        case 133:
+            // 语义标记（任务 #8 细化）：A 提示符 / B 命令 / C 输出 / D 结束。
+            switch payload.first.map({ Character(UnicodeScalar($0)) }) {
+            case "A": currentSemantic = .prompt
+            case "B": currentSemantic = .command
+            case "C": currentSemantic = .output
+            case "D": currentSemantic = .none
+            default: break
+            }
+            stampSemantic()
+        default:
+            break // OSC 8 超链接、52 剪贴板是 P1（roadmap）
+        }
+    }
+
+    // MARK: - 行为
+
+    private mutating func lineFeed(markWrapped: Bool = false) {
+        if grid.cursorRow == scrollBottom {
+            scrollRegionUp()
+        } else if grid.cursorRow < grid.size.rows - 1 {
+            grid.cursorRow += 1
+        }
+        if markWrapped {
+            var info = grid.info(ofRow: grid.cursorRow)
+            info.flags |= RowInfo.wrapped
+            grid.setInfo(info, forRow: grid.cursorRow)
+        }
+        stampSemantic()
+    }
+
+    private mutating func carriageReturn() {
+        grid.cursorCol = 0
+        pendingWrap = false
+    }
+
+    /// 区域上滚一行；只有主屏整屏滚动才把滚出的行送进 scrollback。
+    private mutating func scrollRegionUp() {
+        let evicted = grid.scrollUp(top: scrollTop, bottom: scrollBottom)
+        if !modes.alternateScreen, scrollTop == 0, scrollBottom == grid.size.rows - 1 {
+            scrollback.append(evicted)
+        }
+    }
+
+    private mutating func restoreCursor() {
+        guard let saved = savedCursor else { return }
+        grid.cursorRow = clampRow(saved.row)
+        grid.cursorCol = clampCol(saved.col)
+        currentAttr = saved.attr
+        pendingWrap = false
+    }
+
+    private mutating func setScrollRegion(top: Int, bottom: Int) {
+        let t = max(0, top)
+        let b = min(grid.size.rows - 1, bottom)
+        guard b > t else { return } // 非法区域忽略
+        scrollTop = t
+        scrollBottom = b
+        grid.cursorRow = modes.originMode ? scrollTop : 0
+        grid.cursorCol = 0
+        pendingWrap = false
+    }
+
+    private var originOffset: Int { modes.originMode ? scrollTop : 0 }
+
+    private func clampRow(_ row: Int) -> Int {
+        modes.originMode
+            ? min(max(row, scrollTop), scrollBottom)
+            : min(max(row, 0), grid.size.rows - 1)
+    }
+
+    private func clampCol(_ col: Int) -> Int {
+        min(max(col, 0), grid.size.columns - 1)
+    }
+
+    private mutating func moveCursor(rowDelta: Int, colDelta: Int) {
+        grid.cursorRow = clampRow(grid.cursorRow + rowDelta)
+        grid.cursorCol = clampCol(grid.cursorCol + colDelta)
+        pendingWrap = false
+    }
+
+    private mutating func stampSemantic() {
+        var info = grid.info(ofRow: grid.cursorRow)
+        info.semantic = currentSemantic.rawValue
+        grid.setInfo(info, forRow: grid.cursorRow)
+    }
+
+    // MARK: - 擦除与编辑
+
+    private mutating func eraseDisplay(mode: Int) {
+        switch mode {
+        case 0:
+            eraseLine(mode: 0)
+            for r in (grid.cursorRow + 1)..<grid.size.rows { grid.clearRow(r) }
+        case 1:
+            eraseLine(mode: 1)
+            for r in 0..<grid.cursorRow { grid.clearRow(r) }
+        case 2:
+            grid.clearAll()
+        case 3:
+            scrollback.removeAll() // xterm 扩展：连历史一起清
+        default:
+            break
+        }
+        pendingWrap = false
+    }
+
+    private mutating func eraseLine(mode: Int) {
+        let row = grid.cursorRow
+        let range: Range<Int>
+        switch mode {
+        case 0: range = grid.cursorCol..<grid.size.columns
+        case 1: range = 0..<(grid.cursorCol + 1)
+        case 2: range = 0..<grid.size.columns
+        default: return
+        }
+        for c in range { grid[row, c] = .blank }
+        pendingWrap = false
+    }
+
+    private mutating func insertLines(_ n: Int) {
+        guard (scrollTop...scrollBottom).contains(grid.cursorRow) else { return }
+        for _ in 0..<min(n, scrollBottom - grid.cursorRow + 1) {
+            grid.scrollDown(top: grid.cursorRow, bottom: scrollBottom)
+        }
+        carriageReturn()
+    }
+
+    private mutating func deleteLines(_ n: Int) {
+        guard (scrollTop...scrollBottom).contains(grid.cursorRow) else { return }
+        for _ in 0..<min(n, scrollBottom - grid.cursorRow + 1) {
+            _ = grid.scrollUp(top: grid.cursorRow, bottom: scrollBottom)
+        }
+        carriageReturn()
+    }
+
+    private mutating func insertChars(_ n: Int) {
+        let row = grid.cursorRow
+        let cols = grid.size.columns
+        let n = min(n, cols - grid.cursorCol)
+        var c = cols - 1
+        while c >= grid.cursorCol + n {
+            grid[row, c] = grid[row, c - n]
+            c -= 1
+        }
+        for c in grid.cursorCol..<(grid.cursorCol + n) { grid[row, c] = .blank }
+    }
+
+    private mutating func deleteChars(_ n: Int) {
+        let row = grid.cursorRow
+        let cols = grid.size.columns
+        let n = min(n, cols - grid.cursorCol)
+        for c in grid.cursorCol..<(cols - n) {
+            grid[row, c] = grid[row, c + n]
+        }
+        for c in (cols - n)..<cols { grid[row, c] = .blank }
+    }
+
+    private mutating func eraseChars(_ n: Int) {
+        let row = grid.cursorRow
+        let end = min(grid.cursorCol + n, grid.size.columns)
+        for c in grid.cursorCol..<end { grid[row, c] = .blank }
+    }
+
+    // MARK: - DEC 私有模式
+
+    private mutating func decPrivateMode(params: ArraySlice<UInt16>, set: Bool) {
+        for p in params {
+            switch p {
+            case 1: modes.applicationCursorKeys = set
+            case 6:
+                modes.originMode = set
+                grid.cursorRow = set ? scrollTop : 0
+                grid.cursorCol = 0
+            case 7: modes.autowrap = set
+            case 25: modes.showCursor = set
+            case 47, 1047:
+                switchAlternateScreen(to: set, saveCursor: false)
+            case 1049:
+                switchAlternateScreen(to: set, saveCursor: true)
+            case 2004: modes.bracketedPaste = set
+            default:
+                break // 鼠标上报（1000/1002/1006）在任务 #11 接
+            }
+        }
+    }
+
+    /// 备用屏：vim / less 进出的机制。备用屏没有 scrollback，退出时主屏原样恢复。
+    private mutating func switchAlternateScreen(to enter: Bool, saveCursor: Bool) {
+        guard enter != modes.alternateScreen else { return }
+        if enter {
+            if saveCursor {
+                savedCursor = (grid.cursorRow, grid.cursorCol, currentAttr)
+            }
+            savedPrimaryGrid = grid
+            grid = Grid(size: grid.size)
+            modes.alternateScreen = true
+        } else {
+            if let primary = savedPrimaryGrid {
+                grid = primary
+                savedPrimaryGrid = nil
+            }
+            modes.alternateScreen = false
+            if saveCursor {
+                restoreCursor()
+            }
+        }
+        scrollTop = 0
+        scrollBottom = grid.size.rows - 1
+        pendingWrap = false
+    }
+
+    // MARK: - SGR
+
+    private mutating func selectGraphicRendition(_ params: ArraySlice<UInt16>) {
+        var i = params.startIndex
+        if params.isEmpty {
+            currentAttr = Cell.Attr.default
+            return
+        }
+        while i < params.endIndex {
+            let p = params[i]
+            switch p {
+            case 0: currentAttr = Cell.Attr.default
+            case 1: currentAttr |= Cell.Attr.bold
+            case 2: currentAttr |= Cell.Attr.faint
+            case 3: currentAttr |= Cell.Attr.italic
+            case 4: currentAttr |= Cell.Attr.underline
+            case 5: currentAttr |= Cell.Attr.blink
+            case 7: currentAttr |= Cell.Attr.inverse
+            case 8: currentAttr |= Cell.Attr.hidden
+            case 9: currentAttr |= Cell.Attr.strikethrough
+            case 21, 22: currentAttr &= ~(Cell.Attr.bold | Cell.Attr.faint)
+            case 23: currentAttr &= ~Cell.Attr.italic
+            case 24: currentAttr &= ~Cell.Attr.underline
+            case 25: currentAttr &= ~Cell.Attr.blink
+            case 27: currentAttr &= ~Cell.Attr.inverse
+            case 28: currentAttr &= ~Cell.Attr.hidden
+            case 29: currentAttr &= ~Cell.Attr.strikethrough
+            case 30...37: setForeground(UInt32(p - 30))
+            case 39: setForeground(Cell.Attr.colorDefault)
+            case 40...47: setBackground(UInt32(p - 40))
+            case 49: setBackground(Cell.Attr.colorDefault)
+            case 90...97: setForeground(UInt32(p - 90 + 8))
+            case 100...107: setBackground(UInt32(p - 100 + 8))
+            case 38, 48:
+                let (color, consumed) = parseExtendedColor(params, from: i)
+                if let color {
+                    p == 38 ? setForeground(color) : setBackground(color)
+                }
+                i = params.index(i, offsetBy: consumed)
+                continue
+            default:
+                break
+            }
+            i = params.index(after: i)
+        }
+    }
+
+    /// `38;5;n` / `38;2;r;g;b`，返回（编码色，消费的参数个数）。
+    private mutating func parseExtendedColor(
+        _ params: ArraySlice<UInt16>, from i: ArraySlice<UInt16>.Index
+    ) -> (UInt32?, Int) {
+        let next = params.index(after: i)
+        guard next < params.endIndex else { return (nil, 1) }
+        switch params[next] {
+        case 5:
+            let idx = params.index(next, offsetBy: 1)
+            guard idx < params.endIndex else { return (nil, 2) }
+            return (UInt32(min(params[idx], 255)), 3)
+        case 2:
+            let r = params.index(next, offsetBy: 1)
+            let g = params.index(next, offsetBy: 2)
+            let b = params.index(next, offsetBy: 3)
+            guard b < params.endIndex else { return (nil, 2) }
+            let encoded = colorTable.encode(
+                red: UInt8(min(params[r], 255)),
+                green: UInt8(min(params[g], 255)),
+                blue: UInt8(min(params[b], 255))
+            )
+            return (encoded, 5)
+        default:
+            return (nil, 2)
+        }
+    }
+
+    @inline(__always)
+    private mutating func setForeground(_ color: UInt32) {
+        currentAttr = (currentAttr & ~Cell.Attr.colorMask) | (color & Cell.Attr.colorMask)
+    }
+
+    @inline(__always)
+    private mutating func setBackground(_ color: UInt32) {
+        currentAttr = (currentAttr & ~(Cell.Attr.colorMask << Cell.Attr.bgShift))
+            | ((color & Cell.Attr.colorMask) << Cell.Attr.bgShift)
+    }
+}

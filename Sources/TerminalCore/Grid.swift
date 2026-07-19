@@ -54,21 +54,51 @@ public struct Grid: Sendable {
         for i in rowInfo.indices { rowInfo[i] = .none }
     }
 
-    /// 向上滚一行：第 0 行滚出（返回给调用方送 scrollback），其余整体上移，
-    /// 底行清空。整块 memmove，不逐 cell 拷。
+    /// 向上滚一行：整屏滚动的便捷入口。
     @discardableResult
     public mutating func scrollUp() -> ScrollbackLine {
-        let evicted = ScrollbackLine(trimming: row(0), info: rowInfo[0])
+        scrollUp(top: 0, bottom: size.rows - 1)
+    }
+
+    /// 区域内向上滚一行（`top`/`bottom` 均含）：顶行滚出返回（是否入
+    /// scrollback 由调用方定——只有主屏整屏滚动才入库），区域整体上移，
+    /// 底行清空。整块 memmove，不逐 cell 拷。
+    @discardableResult
+    public mutating func scrollUp(top: Int, bottom: Int) -> ScrollbackLine {
+        let evicted = ScrollbackLine(trimming: row(top), info: rowInfo[top])
         let cols = size.columns
-        cells.withUnsafeMutableBufferPointer { buf in
-            buf.baseAddress!.update(from: buf.baseAddress! + cols, count: cols * (size.rows - 1))
+        if bottom > top {
+            cells.withUnsafeMutableBufferPointer { buf in
+                (buf.baseAddress! + top * cols)
+                    .update(from: buf.baseAddress! + (top + 1) * cols, count: cols * (bottom - top))
+            }
+            for r in top..<bottom { rowInfo[r] = rowInfo[r + 1] }
         }
-        for i in ((size.rows - 1) * cols)..<(size.rows * cols) {
-            cells[i] = .blank
-        }
-        rowInfo.removeFirst()
-        rowInfo.append(.none)
+        clearRow(bottom)
         return evicted
+    }
+
+    /// 区域内向下滚一行：底行丢弃，区域整体下移，顶行清空。RI / SD / IL 用。
+    public mutating func scrollDown(top: Int, bottom: Int) {
+        let cols = size.columns
+        if bottom > top {
+            cells.withUnsafeMutableBufferPointer { buf in
+                // 区间重叠且向后搬——手动从尾往头拷，等价 memmove 语义。
+                let src = buf.baseAddress! + top * cols
+                let dst = buf.baseAddress! + (top + 1) * cols
+                var i = cols * (bottom - top) - 1
+                while i >= 0 {
+                    dst[i] = src[i]
+                    i -= 1
+                }
+            }
+            var r = bottom
+            while r > top {
+                rowInfo[r] = rowInfo[r - 1]
+                r -= 1
+            }
+        }
+        clearRow(top)
     }
 
     // MARK: - resize
