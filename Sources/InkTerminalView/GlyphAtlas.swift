@@ -35,7 +35,9 @@ final class GlyphAtlas {
 
     private static let textureSize = 2048
     let monoTexture: MTLTexture
-    let colorTexture: MTLTexture
+    /// 彩色图集懒分配：BGRA 2048² 常驻 16MB，而多数会话一个 emoji 都没有。
+    private(set) var colorTexture: MTLTexture?
+    private let device: MTLDevice
 
     private let slotWidth: Int
     private let slotHeight: Int
@@ -71,16 +73,19 @@ final class GlyphAtlas {
             pixelFormat: .r8Unorm,
             width: Self.textureSize, height: Self.textureSize, mipmapped: false
         )
-        let colorDesc = MTLTextureDescriptor.texture2DDescriptor(
+        guard let mono = device.makeTexture(descriptor: monoDesc) else { return nil }
+        monoTexture = mono
+        self.device = device
+    }
+
+    private func ensureColorTexture() -> MTLTexture? {
+        if let colorTexture { return colorTexture }
+        let desc = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .bgra8Unorm,
             width: Self.textureSize, height: Self.textureSize, mipmapped: false
         )
-        guard
-            let mono = device.makeTexture(descriptor: monoDesc),
-            let color = device.makeTexture(descriptor: colorDesc)
-        else { return nil }
-        monoTexture = mono
-        colorTexture = color
+        colorTexture = device.makeTexture(descriptor: desc)
+        return colorTexture
     }
 
     // MARK: - 查询
@@ -139,7 +144,7 @@ final class GlyphAtlas {
         let slotY = (slot / slotColumns) * slotHeight
 
         guard let bitmap = drawLine(line, isColor: isColor) else { return nil }
-        let texture = isColor ? colorTexture : monoTexture
+        guard let texture = isColor ? ensureColorTexture() : monoTexture else { return nil }
         texture.replace(
             region: MTLRegionMake2D(slotX, slotY, slotWidth, slotHeight),
             mipmapLevel: 0,

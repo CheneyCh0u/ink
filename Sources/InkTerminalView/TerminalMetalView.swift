@@ -85,6 +85,9 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         let layer = CAMetalLayer()
         layer.pixelFormat = .bgra8Unorm
         layer.framebufferOnly = true
+        // 全窗口 drawable 一块 ~16MB（2.5K@2x），默认三块。脏帧驱动下
+        // 两块够用，省一块的常驻。
+        layer.maximumDrawableCount = 2
         return layer
     }
 
