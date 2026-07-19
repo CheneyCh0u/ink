@@ -101,6 +101,13 @@ final class GlyphAtlas {
     // MARK: - 栅格化
 
     private func rasterize(text: String, bold: Bool, italic: Bool) -> Entry? {
+        // 块元素不走字体：字形按 em box 设计，与 cell（含行距）不重合，
+        // 拼接的像素画会错位漏缝。程序化按 cell 精确填充。
+        if text.unicodeScalars.count == 1,
+           let scalar = text.unicodeScalars.first?.value,
+           BlockElements.contains(scalar) {
+            return rasterizeBlockElement(scalar)
+        }
         let font: NSFont =
             switch (bold, italic) {
             case (false, false): fonts.regular
@@ -164,6 +171,40 @@ final class GlyphAtlas {
             isColor: isColor
         )
         return entry
+    }
+
+    private func rasterizeBlockElement(_ scalar: UInt32) -> Entry? {
+        if monoNext >= slotCapacity {
+            entries.removeAll(keepingCapacity: true)
+            monoNext = 0
+            colorNext = 0
+        }
+        let slot = monoNext
+        let slotX = (slot % slotColumns) * slotWidth
+        let slotY = (slot / slotColumns) * slotHeight
+
+        var bitmap = [UInt8](repeating: 0, count: slotWidth * slotHeight)
+        BlockElements.render(
+            scalar,
+            width: Int(cellWidth), height: slotHeight,
+            into: &bitmap, bytesPerRow: slotWidth
+        )
+        monoTexture.replace(
+            region: MTLRegionMake2D(slotX, slotY, slotWidth, slotHeight),
+            mipmapLevel: 0,
+            withBytes: bitmap,
+            bytesPerRow: slotWidth
+        )
+        monoNext += 1
+
+        let tex = Float(Self.textureSize)
+        return Entry(
+            uvRect: SIMD4(
+                Float(slotX) / tex, Float(slotY) / tex,
+                Float(slotWidth) / tex, Float(slotHeight) / tex
+            ),
+            isColor: false
+        )
     }
 
     /// 把 CTLine 画进槽位大小的位图。返回行主序像素（顶行在前，可直接进纹理）。

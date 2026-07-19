@@ -40,7 +40,9 @@ let package = Package(
         // 可执行入口。
         .executableTarget(
             name: "ink",
-            dependencies: ["InkShell"]
+            dependencies: ["InkShell"],
+            // SwiftPM 运行时用同一份 icns 设置 Dock 图标；正式 .app 打包也复用它。
+            resources: [.copy("Resources/AppIcon.icns")]
         ),
         // 内存基准：灌 10 万行实测 footprint，M6 验收用（docs/perf.md）。
         .executableTarget(

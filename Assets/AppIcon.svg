@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="ink 雾白墨滴应用图标">
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#faf5eb"/>
+      <stop offset="0.58" stop-color="#ebe4d9"/>
+      <stop offset="1" stop-color="#d7cfc3"/>
+    </linearGradient>
+    <linearGradient id="drop" x1="0.18" y1="0.12" x2="0.82" y2="0.92">
+      <stop offset="0" stop-color="#34464c"/>
+      <stop offset="0.62" stop-color="#1f2d32"/>
+      <stop offset="1" stop-color="#11191c"/>
+    </linearGradient>
+    <clipPath id="icon-shape">
+      <rect x="32" y="32" width="960" height="960" rx="220"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#icon-shape)">
+    <rect width="1024" height="1024" fill="url(#background)"/>
+    <circle cx="864" cy="180" r="300" fill="#58b6c9" opacity="0.13"/>
+    <ellipse cx="216" cy="72" rx="424" ry="304" fill="#fff" opacity="0.26"/>
+    <ellipse cx="512" cy="864" rx="252" ry="48" fill="#6b6258" opacity="0.18"/>
+
+    <path
+      d="M512 140C420 288 272 452 272 612c0 160 108 280 240 280s240-120 240-280c0-160-148-324-240-472Z"
+      fill="url(#drop)"
+    />
+    <path
+      d="M404 488l116 100-116 100"
+      fill="none"
+      stroke="#f6f0e6"
+      stroke-width="56"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <path
+      d="M568 688h116"
+      fill="none"
+      stroke="#58b6c9"
+      stroke-width="56"
+      stroke-linecap="round"
+    />
+    <path
+      d="M408 332c40-56 72-100 104-152"
+      fill="none"
+      stroke="#fff"
+      stroke-width="28"
+      stroke-linecap="round"
+      opacity="0.12"
+    />
+  </g>
+
+  <rect
+    x="34"
+    y="34"
+    width="956"
+    height="956"
+    rx="218"
+    fill="none"
+    stroke="#302b25"
+    stroke-width="4"
+    opacity="0.11"
+  />
+</svg>
