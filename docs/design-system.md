@@ -38,7 +38,8 @@ Reduce Transparency 开启或测试快照。
 | `terminal` | `#FDFDFD` | `#111314` | 终端内容区 |
 | `sidebarFallback` | `#EFEAE2` / 78% | `#262421` / 86% | 侧栏材质降级色 |
 | `elevated` | 白 / 88% | 白 / 5% | 浮层与提升态 |
-| `selected` | `#D9D2C8` / 68% | 白 / 8.5% | 选中项目 |
+| `selected` | 白 / 72% | 白 / 8.5% | 侧边栏选中行（白色高光浮在材质上；暖褐色在真机叠壁纸透光会发闷，弃用） |
+| `pill` | 黑 / 5.5% | 白 / 7.5% | 标签 pill 活动态 |
 | `textPrimary` | `#303238` | `#E2E3DF` | 主文字 |
 | `textSecondary` | `#777A80` | `#92969C` | 次级文字 |
 | `separator` | `#70737A` / 22% | 白 / 8% | 发丝分隔线 |

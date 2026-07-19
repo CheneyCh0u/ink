@@ -37,10 +37,11 @@ public final class PTYSession: @unchecked Sendable {
     // MARK: - 生命周期
 
     /// 启动登录 shell。shell 取 `$SHELL`，回退 `/bin/zsh`。
+    /// `workingDirectory` 非空时子进程先 chdir 再 exec（项目会话在项目目录打开）。
     ///
     /// `argv[0]` 带前导 `-`：zsh 只有识别到自己是 login shell 才会读
     /// `.zprofile`，用户的 PATH 和环境全在里面。
-    public func start(columns: Int, rows: Int) throws {
+    public func start(columns: Int, rows: Int, workingDirectory: String? = nil) throws {
         precondition(masterFD < 0, "PTYSession 只能 start 一次")
 
         let shellPath = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
@@ -68,12 +69,15 @@ public final class PTYSession: @unchecked Sendable {
         }
         cEnvp[envPairs.count] = nil
 
+        let cCwd = workingDirectory.map { strdup($0) }
+
         defer {
             free(cShell)
             for i in 0...1 { free(cArgv[i]) }
             cArgv.deallocate()
             for i in 0...envPairs.count { free(cEnvp[i]) }
             cEnvp.deallocate()
+            if let cCwd { free(cCwd) }
         }
 
         var size = winsize(
@@ -89,7 +93,10 @@ public final class PTYSession: @unchecked Sendable {
         case -1:
             throw SpawnError(message: "forkpty 失败：errno \(errno)")
         case 0:
-            // 子进程。此处起只允许 async-signal-safe 调用。
+            // 子进程。此处起只允许 async-signal-safe 调用（chdir 在列）。
+            if let cCwd {
+                chdir(cCwd)
+            }
             execve(cShell, cArgv, cEnvp)
             _exit(127)
         default:
@@ -104,6 +111,22 @@ public final class PTYSession: @unchecked Sendable {
     public func terminate() {
         if childPID > 0 {
             kill(childPID, SIGHUP)
+        }
+    }
+
+    /// PTY 前台进程组组长的进程名（"zsh"、"vim"…），标签标题用。
+    /// tcgetpgrp + sysctl 两次系统调用，无需 shell 配合。
+    public func foregroundProcessName() -> String? {
+        guard masterFD >= 0 else { return nil }
+        let pgid = tcgetpgrp(masterFD)
+        guard pgid > 0 else { return nil }
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pgid]
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return nil }
+        return withUnsafeBytes(of: info.kp_proc.p_comm) { raw in
+            guard let base = raw.bindMemory(to: CChar.self).baseAddress else { return nil }
+            return String(cString: base)
         }
     }
 

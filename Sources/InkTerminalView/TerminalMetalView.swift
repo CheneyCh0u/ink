@@ -60,6 +60,17 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         return layer
     }
 
+    /// 切换会话时清掉视图侧的瞬态（滚动位置、选区、预编辑）。
+    /// 这些状态属于"这块玻璃"而不是会话，切走就没有意义了。
+    public func resetTransientState() {
+        scrollOffset = 0
+        scrollAccumulator = 0
+        selection = nil
+        selectionAnchor = nil
+        markedText = ""
+        markDirty()
+    }
+
     public func markDirty() {
         dirty = true
         // 有输出时让光标立即实心，观感跟系统终端一致。
