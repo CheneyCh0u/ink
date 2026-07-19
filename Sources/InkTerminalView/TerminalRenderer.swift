@@ -51,7 +51,8 @@ final class TerminalRenderer {
         guard
             let device = MTLCreateSystemDefaultDevice(),
             let queue = device.makeCommandQueue(),
-            let shaderURL = Bundle.module.url(forResource: "Shaders", withExtension: "metal"),
+            let shaderURL = Bundle.main.url(forResource: "Shaders", withExtension: "metal")
+                ?? Bundle.module.url(forResource: "Shaders", withExtension: "metal"),
             let shaderSource = try? String(contentsOf: shaderURL, encoding: .utf8)
         else { return nil }
         let library: MTLLibrary

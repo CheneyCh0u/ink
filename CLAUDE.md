@@ -54,6 +54,10 @@ scrollback 是内存大头，优先级高于渲染优化。单 cell 压到 8 字
 `.claude/skills/git-workflow/SKILL.md`，动 git 之前先读。main 有分支
 保护：仅拥有者能合并（PR + code owner 批准）。
 
+发布使用 `vYYYY.MM.DD-N` 标签，只能由仓库拥有者通过
+`scripts/tag-release.sh` 创建。完整权限、递增和流水线规则见
+`docs/release.md`。
+
 ## 约定
 
 - **命名**：仓库与代码模块名用小写 `ink`；用户可见的产品名用大写 `Ink`
