@@ -8,7 +8,7 @@ import InkDesign
 /// 帧驱动是 `CADisplayLink`（macOS 14+ 的 NSView API，自动跟随窗口所在
 /// 显示器的刷新率），只有脏帧才真正编码渲染——空闲时 GPU 零负载。
 @MainActor
-public final class TerminalMetalView: NSView, NSMenuItemValidation {
+public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurrency NSTextInputClient {
 
     /// 用户输入字节流（键盘编码后），外部接 PTY。
     public var onInput: ((Data) -> Void)?
@@ -29,6 +29,11 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation {
     private var scrollAccumulator: CGFloat = 0
     private var selectionAnchor: TextPosition?
     private var selection: SelectionRange?
+
+    // 输入法预编辑（拼音）。提交前只存在于视图层，不进终端。
+    private var markedText = ""
+    /// interpretKeyEvents 期间暂存的原始事件，doCommandBySelector 兜底编码用。
+    private var pendingKeyEvent: NSEvent?
 
     private var metalLayer: CAMetalLayer { layer as! CAMetalLayer }
 
@@ -137,7 +142,8 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation {
         scrollOffset = min(scrollOffset, terminal.scrollback.count)
         renderer.render(
             terminal: terminal, into: metalLayer, cursorOn: cursorOn,
-            scrollOffset: scrollOffset, selection: selection
+            scrollOffset: scrollOffset, selection: selection,
+            preedit: markedText.isEmpty ? nil : markedText
         )
     }
 
@@ -242,10 +248,23 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation {
             selection = nil
             markDirty()
         }
-        if let data = Self.encode(event: event) {
+        // ⌃ 组合键（⌃C 等）直发终端，不给输入法机会。
+        if event.modifierFlags.contains(.control), markedText.isEmpty {
+            if let data = Self.encode(event: event) { onInput?(data) }
+            return
+        }
+        // 其余全部路过输入法：中文拼音在这里被 IME 截走变成
+        // setMarkedText / insertText；未被消费的走 doCommandBySelector 兜底。
+        pendingKeyEvent = event
+        interpretKeyEvents([event])
+        pendingKeyEvent = nil
+    }
+
+    public override func doCommand(by selector: Selector) {
+        // IME 未消费的按键（回车、退格、方向键、⌃C…）：用暂存的原始事件
+        // 按终端语义编码，不走 AppKit 的文本编辑命令。
+        if let event = pendingKeyEvent, let data = Self.encode(event: event) {
             onInput?(data)
-        } else {
-            super.keyDown(with: event)
         }
     }
 
@@ -258,6 +277,76 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation {
     public func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(copy(_:)) { return selection != nil }
         return true
+    }
+
+    // MARK: - NSTextInputClient（中文输入法）
+
+    public func insertText(_ string: Any, replacementRange: NSRange) {
+        let text = Self.plainString(string)
+        if !markedText.isEmpty {
+            markedText = ""
+            markDirty()
+        }
+        guard !text.isEmpty else { return }
+        onInput?(Data(text.utf8))
+    }
+
+    public func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        markedText = Self.plainString(string)
+        markDirty()
+    }
+
+    public func unmarkText() {
+        markedText = ""
+        markDirty()
+    }
+
+    public func hasMarkedText() -> Bool { !markedText.isEmpty }
+
+    public func markedRange() -> NSRange {
+        markedText.isEmpty
+            ? NSRange(location: NSNotFound, length: 0)
+            : NSRange(location: 0, length: markedText.utf16.count)
+    }
+
+    public func selectedRange() -> NSRange {
+        NSRange(location: markedText.utf16.count, length: 0)
+    }
+
+    public func attributedSubstring(
+        forProposedRange range: NSRange, actualRange: NSRangePointer?
+    ) -> NSAttributedString? { nil }
+
+    public func validAttributesForMarkedText() -> [NSAttributedString.Key] {
+        [.underlineStyle, .markedClauseSegment]
+    }
+
+    public func characterIndex(for point: NSPoint) -> Int { 0 }
+
+    /// 候选窗定位：预编辑起点所在 cell 的屏幕矩形。
+    public func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
+        guard let renderer, let terminal = terminalProvider?(), let window else { return .zero }
+        let cell = renderer.cellSizePoints
+        let inset = InkDesignTokens.Spacing.sm
+        let rect = NSRect(
+            x: inset + CGFloat(terminal.grid.cursorCol) * cell.width,
+            y: inset + CGFloat(terminal.grid.cursorRow + 1) * cell.height,
+            width: cell.width,
+            height: cell.height
+        )
+        // isFlipped 视图：先转到窗口坐标（y 朝上），再转屏幕。
+        let windowRect = convert(NSRect(
+            x: rect.minX, y: rect.minY - cell.height, width: rect.width, height: rect.height
+        ), to: nil)
+        return window.convertToScreen(windowRect)
+    }
+
+    private static func plainString(_ string: Any) -> String {
+        switch string {
+        case let s as String: s
+        case let a as NSAttributedString: a.string
+        default: ""
+        }
     }
 
     /// 键 → 终端字节。完整的功能键矩阵与 Option-as-Meta 是任务 #11；

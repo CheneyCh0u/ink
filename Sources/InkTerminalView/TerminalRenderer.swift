@@ -138,21 +138,26 @@ final class TerminalRenderer {
         into layer: CAMetalLayer,
         cursorOn: Bool,
         scrollOffset: Int = 0,
-        selection: SelectionRange? = nil
+        selection: SelectionRange? = nil,
+        preedit: String? = nil
     ) {
         let grid = terminal.grid
-        let maxInstances = grid.size.columns * grid.size.rows + 1
+        // 预编辑最长占一行，多留一行的量。
+        let maxInstances = grid.size.columns * (grid.size.rows + 1) + 2
         ensureBuffers(capacity: maxInstances)
 
         inflight.wait()
         bufferIndex = (bufferIndex + 1) % instanceBuffers.count
         let buffer = instanceBuffers[bufferIndex]
 
-        let count = buildInstances(
-            terminal: terminal, cursorOn: cursorOn,
+        var count = buildInstances(
+            terminal: terminal, cursorOn: cursorOn && preedit == nil,
             scrollOffset: scrollOffset, selection: selection?.normalized,
             into: buffer
         )
+        if let preedit, !preedit.isEmpty, scrollOffset == 0 {
+            count = appendPreedit(preedit, terminal: terminal, into: buffer, from: count)
+        }
 
         guard
             let drawable = layer.nextDrawable(),
@@ -298,6 +303,55 @@ final class TerminalRenderer {
             }
         }
         return count
+    }
+
+    // MARK: - 预编辑（输入法 marked text）
+
+    /// 拼音预编辑覆盖在光标行上：下划线样式 + 末尾块光标。
+    /// 只画不改 grid——预编辑是 UI 状态，提交（insertText）才进终端。
+    private func appendPreedit(
+        _ text: String, terminal: Terminal, into buffer: MTLBuffer, from start: Int
+    ) -> Int {
+        let grid = terminal.grid
+        let cols = grid.size.columns
+        let output = buffer.contents().bindMemory(to: CellInstance.self, capacity: bufferCapacity)
+        var count = start
+        var col = grid.cursorCol
+        let row = grid.cursorRow
+
+        for character in text {
+            guard col < cols, count < bufferCapacity - 1 else { break }
+            let width = CharWidth.width(of: character.unicodeScalars.first?.value ?? 0x20)
+            var flags = CellInstance.underline
+            if width == 2 { flags |= CellInstance.wide }
+            var uv = SIMD4<Float>.zero
+            if let entry = atlas.entry(for: String(character), bold: false, italic: false) {
+                flags |= CellInstance.hasGlyph
+                if entry.isColor { flags |= CellInstance.colorGlyph }
+                uv = entry.uvRect
+                if width != 2 { uv.z /= 2 }
+            }
+            output[count] = CellInstance(
+                gridPos: SIMD2(Float(col), Float(row)),
+                uvRect: uv, fg: defaultFG, bg: defaultBG, flags: flags
+            )
+            count += 1
+            col += max(1, width)
+        }
+        // 预编辑末尾的插入点。
+        if col < cols, count < bufferCapacity {
+            output[count] = CellInstance(
+                gridPos: SIMD2(Float(col), Float(row)),
+                uvRect: .zero, fg: defaultBG, bg: cursorColor, flags: 0
+            )
+            count += 1
+        }
+        return count
+    }
+
+    /// 预编辑占用的显示宽度（列数），候选窗定位用。
+    func preeditColumns(_ text: String) -> Int {
+        text.reduce(0) { $0 + max(1, CharWidth.width(of: $1.unicodeScalars.first?.value ?? 0x20)) }
     }
 
     private func glyphText(for cell: Cell, clusterTable: ClusterTable) -> String {
