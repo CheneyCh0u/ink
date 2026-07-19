@@ -54,11 +54,12 @@ jobs:
             exit 1
           fi
 
-          git fetch origin main --tags
+          git fetch origin main
 
           if (( release_sequence > 1 )); then
             previous_tag="v${release_date}-$((release_sequence - 1))"
-            if ! git rev-parse --verify --quiet "refs/tags/$previous_tag" >/dev/null; then
+            if ! git ls-remote --exit-code --tags origin \
+              "refs/tags/$previous_tag" >/dev/null; then
               echo "Missing previous release tag: $previous_tag" >&2
               exit 1
             fi
