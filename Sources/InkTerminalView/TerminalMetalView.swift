@@ -24,6 +24,16 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         didSet { if fontSize != oldValue { rebuildRenderer() } }
     }
 
+    /// 等宽字体族。nil = 系统 SF Mono；名字无效静默回退。
+    public var fontFamily: String? {
+        didSet { if fontFamily != oldValue { rebuildRenderer() } }
+    }
+
+    /// 行高倍数（1.0 = 字体原生行高）。
+    public var lineHeightMultiplier: CGFloat = 1.2 {
+        didSet { if lineHeightMultiplier != oldValue { rebuildRenderer() } }
+    }
+
     public var cursorStyle: TerminalCursorStyle = .block {
         didSet {
             renderer?.cursorStyle = cursorStyle
@@ -145,8 +155,10 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     private func rebuildRenderer() {
         guard let window else { return }
         let scale = window.backingScaleFactor
+        let font = fontFamily.flatMap { NSFont(name: $0, size: fontSize) }
+            ?? InkDesignTokens.Typography.terminal(size: fontSize)
         guard let renderer = TerminalRenderer(
-            font: InkDesignTokens.Typography.terminal(size: fontSize), scale: scale
+            font: font, scale: scale, lineHeightMultiplier: lineHeightMultiplier
         ) else { return }
         renderer.cursorStyle = cursorStyle
         renderer.apply(palette: .current(for: effectiveAppearance))

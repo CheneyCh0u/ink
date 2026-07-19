@@ -59,6 +59,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func applyConfig(_ config: InkConfig) {
+        terminalView.fontFamily = config.fontFamily
+        terminalView.lineHeightMultiplier = CGFloat(config.lineHeight)
         terminalView.fontSize = CGFloat(config.fontSize)
         terminalView.cursorStyle =
             switch config.cursorStyle {
