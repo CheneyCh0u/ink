@@ -41,6 +41,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
         )
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
+        window.titlebarSeparatorStyle = .none
         window.backgroundColor = InkDesignTokens.Color.canvas
         window.minSize = NSSize(width: 520, height: 320)
         self.init(window: window)
@@ -136,11 +137,16 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
         ])
         contentVC.view = contentRoot
 
-        let sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebarVC)
+        // 不用 sidebarWithViewController：macOS 26 会把它渲染成带圆角的
+        // 浮动面板，与窗口脱节。普通 split item 配合侧栏自己的系统材质，
+        // 才能让雾面背景从标题栏贯穿到底部。
+        let sidebarItem = NSSplitViewItem(viewController: sidebarVC)
         sidebarItem.minimumThickness = 200
         sidebarItem.maximumThickness = 320
+        sidebarItem.canCollapse = true
         sidebarItem.holdingPriority = NSLayoutConstraint.Priority(261)
         self.sidebarItem = sidebarItem
+        splitVC.splitView.dividerStyle = .thin
         splitVC.addSplitViewItem(sidebarItem)
         let contentItem = NSSplitViewItem(viewController: contentVC)
         contentItem.holdingPriority = NSLayoutConstraint.Priority(250)
@@ -475,6 +481,12 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
 @MainActor
 final class ShellSplitViewController: NSSplitViewController {
     var onLayoutChange: (() -> Void)?
+
+    /// 普通 split item 不走系统的 sidebar 外观，但仍保留相同的折叠行为。
+    override func toggleSidebar(_ sender: Any?) {
+        guard let sidebar = splitViewItems.first, sidebar.canCollapse else { return }
+        sidebar.animator().isCollapsed.toggle()
+    }
 
     override func splitViewDidResizeSubviews(_ notification: Notification) {
         onLayoutChange?()
