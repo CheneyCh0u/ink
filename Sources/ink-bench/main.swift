@@ -50,6 +50,22 @@ let scenarios: [Scenario] = [
 
 print("每场景 \(lineCount) 行，\(columns) 列终端\n")
 
+// Reflow 代价：10 万行灌满后改列宽（拖拽窗口的每一档都会付一次）。
+do {
+    var parser = Parser()
+    var terminal = Terminal(
+        size: TerminalSize(columns: columns, rows: 50),
+        scrollbackCapacity: lineCount
+    )
+    for i in 0..<lineCount {
+        parser.feed(Array("drwxr-xr-x  14 cheney staff line-\(i % 1000)\r\n".utf8), handler: &terminal)
+    }
+    let clock = ContinuousClock()
+    let narrow = clock.measure { terminal.resize(to: TerminalSize(columns: 120, rows: 50)) }
+    let widen = clock.measure { terminal.resize(to: TerminalSize(columns: 200, rows: 50)) }
+    print("Reflow 10 万行：变窄 \(narrow)  变宽 \(widen)\n")
+}
+
 for scenario in scenarios {
     var parser = Parser()
     var terminal = Terminal(

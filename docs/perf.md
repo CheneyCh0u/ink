@@ -50,6 +50,12 @@ Terminal → scrollback，10 万行 × 200 列）。
 是不可再压的部分，任何 Metal 终端同理。指标出发点（不为 scrollback
 和渲染无谓买单）已达成。
 
+## Reflow
+
+10 万行满载下改列宽：**29ms**（变窄与变宽相当）。流式实现——按
+`wrapped` 位拼逻辑行、重切、尾部回屏，一次只持有一条逻辑行，无整体
+物化。拖拽窗口每档列宽变化付一次，交互无感。
+
 ## 未完成项
 
 - **120fps 稳定性**：需要 Instruments（Metal System Trace / Time
