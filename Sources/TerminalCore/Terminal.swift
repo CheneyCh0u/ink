@@ -19,6 +19,16 @@ public struct Terminal: TerminalActionHandler, Sendable {
         public var bracketedPaste = false
         /// 备用屏激活中（?1049 / ?47 / ?1047）。
         public var alternateScreen = false
+        /// 鼠标上报级别（?1000 点击 / ?1002 拖拽 / ?1003 全部移动）。
+        public var mouseMode: MouseMode = .none
+        /// ?1006：SGR 鼠标编码（现代应用都请求它，无 223 列限制）。
+        public var sgrMouse = false
+        /// ?1007：备用屏内滚轮转方向键（less / vim 无鼠标模式也能滚）。
+        public var alternateScroll = true
+    }
+
+    public enum MouseMode: Sendable, Equatable {
+        case none, click, drag, any
     }
 
     public private(set) var grid: Grid
@@ -125,7 +135,8 @@ public struct Terminal: TerminalActionHandler, Sendable {
 
     /// 组合标记 / 变体选择符 / ZWJ 后续码点并进光标前一个格的簇。
     private mutating func appendToPreviousCell(_ scalar: UInt32) {
-        guard var (row, col) = previousCellPosition() else { return } // 行首孤立组合符：丢
+        guard let (row, c) = previousCellPosition() else { return } // 行首孤立组合符：丢
+        var col = c
         if grid[row, col].attr & Cell.Attr.wideTrailing != 0 {
             col -= 1 // 落在宽字符尾格上，退回首格
         }
@@ -489,9 +500,14 @@ public struct Terminal: TerminalActionHandler, Sendable {
                 switchAlternateScreen(to: set, saveCursor: false)
             case 1049:
                 switchAlternateScreen(to: set, saveCursor: true)
+            case 1000: modes.mouseMode = set ? .click : .none
+            case 1002: modes.mouseMode = set ? .drag : .none
+            case 1003: modes.mouseMode = set ? .any : .none
+            case 1006: modes.sgrMouse = set
+            case 1007: modes.alternateScroll = set
             case 2004: modes.bracketedPaste = set
             default:
-                break // 鼠标上报（1000/1002/1006）在任务 #11 接
+                break
             }
         }
     }
