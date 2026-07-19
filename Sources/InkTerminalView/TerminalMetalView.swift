@@ -17,6 +17,34 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     /// 每帧取终端状态。用 pull 模式解耦：视图不持有会话。
     public var terminalProvider: (() -> Terminal)?
 
+    // MARK: - 配置项（外壳从 InkConfig 映射进来）
+
+    /// 终端字号。变更即重建渲染器与 atlas。
+    public var fontSize: CGFloat = 14 {
+        didSet { if fontSize != oldValue { rebuildRenderer() } }
+    }
+
+    public var cursorStyle: TerminalCursorStyle = .block {
+        didSet {
+            renderer?.cursorStyle = cursorStyle
+            markDirty()
+        }
+    }
+
+    /// 关闭后光标恒亮。
+    public var cursorBlinkEnabled = true {
+        didSet {
+            cursorOn = true
+            markDirty()
+        }
+    }
+
+    /// ⌥ 键作 Meta（发 ESC 前缀）还是留给系统输入重音字符。
+    public var optionAsMeta = true
+
+    /// 松开鼠标即把选区写进剪贴板。
+    public var copyOnSelect = false
+
     private var renderer: TerminalRenderer?
     private var displayLink: CADisplayLink?
     private var dirty = true
@@ -115,8 +143,9 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         guard let window else { return }
         let scale = window.backingScaleFactor
         guard let renderer = TerminalRenderer(
-            font: InkDesignTokens.Typography.terminal(), scale: scale
+            font: InkDesignTokens.Typography.terminal(size: fontSize), scale: scale
         ) else { return }
+        renderer.cursorStyle = cursorStyle
         renderer.apply(palette: .current(for: effectiveAppearance))
         self.renderer = renderer
         metalLayer.device = renderer.device
@@ -146,7 +175,7 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     @objc private func frameTick() {
         // 光标闪烁：600ms 翻转。除此之外没有脏数据就直接跳过，GPU 不动。
         let now = CACurrentMediaTime()
-        if now - lastBlinkFlip > 0.6 {
+        if cursorBlinkEnabled, now - lastBlinkFlip > 0.6 {
             cursorOn.toggle()
             lastBlinkFlip = now
             dirty = true
@@ -296,6 +325,9 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     public override func mouseUp(with event: NSEvent) {
         if reportMouse(event, action: .release, button: 0) { return }
         selectionAnchor = nil
+        if copyOnSelect, selection != nil {
+            copy(nil)
+        }
     }
 
     public override func rightMouseDown(with event: NSEvent) {
@@ -337,8 +369,8 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
             return
         }
         // Option-as-Meta：⌥b/⌥f 这类发 ESC 前缀（shell 里跳词）。只拦普通
-        // 字符键，⌥方向键留给编码器出 CSI 1;3 系列。可配置是任务 #13。
-        if event.modifierFlags.contains(.option), markedText.isEmpty,
+        // 字符键，⌥方向键留给编码器出 CSI 1;3 系列。
+        if optionAsMeta, event.modifierFlags.contains(.option), markedText.isEmpty,
            let base = event.charactersIgnoringModifiers,
            let first = base.unicodeScalars.first, first.value < 0x80, first.value >= 0x20 {
             onInput?(Data("\u{1B}\(base)".utf8))

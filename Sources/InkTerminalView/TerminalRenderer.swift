@@ -37,6 +37,8 @@ final class TerminalRenderer {
 
     private let contentInset: CGFloat
     let scale: CGFloat
+    /// 光标形状，配置系统驱动。
+    var cursorStyle: TerminalCursorStyle = .block
 
     /// 视图坐标（point）下的 cell 尺寸，鼠标命中用。
     var cellSizePoints: CGSize {
@@ -176,7 +178,8 @@ final class TerminalRenderer {
         var uniforms = Uniforms(
             viewportSize: SIMD2(Float(layer.drawableSize.width), Float(layer.drawableSize.height)),
             cellSize: SIMD2(Float(atlas.cellWidth), Float(atlas.cellHeight)),
-            origin: SIMD2(Float(contentInset), Float(contentInset))
+            origin: SIMD2(Float(contentInset), Float(contentInset)),
+            cursorColor: cursorColor
         )
 
         guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {
@@ -186,6 +189,7 @@ final class TerminalRenderer {
         if count > 0 {
             encoder.setRenderPipelineState(pipeline)
             encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
+            encoder.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
             encoder.setVertexBuffer(buffer, offset: 0, index: 1)
             encoder.setFragmentTexture(atlas.monoTexture, index: 0)
             encoder.setFragmentTexture(atlas.colorTexture, index: 1)
@@ -259,7 +263,9 @@ final class TerminalRenderer {
                 if isSelected {
                     bg = selectionColor
                 }
-                if isCursorCell {
+                // 块光标反色整格；bar / underline 保持原色，flag 交给
+                // fragment 画细条。
+                if isCursorCell, cursorStyle == .block {
                     bg = cursorColor
                     fg = defaultBG
                 }
@@ -279,6 +285,10 @@ final class TerminalRenderer {
                 if attr & Cell.Attr.wideLeading != 0 { flags |= CellInstance.wide }
                 if decorations & Cell.Attr.underline != 0 { flags |= CellInstance.underline }
                 if decorations & Cell.Attr.strikethrough != 0 { flags |= CellInstance.strikethrough }
+                if isCursorCell {
+                    if cursorStyle == .bar { flags |= CellInstance.cursorBar }
+                    if cursorStyle == .underline { flags |= CellInstance.cursorUnderline }
+                }
 
                 if hasGlyph {
                     let text = glyphText(for: cell, clusterTable: terminal.clusterTable)

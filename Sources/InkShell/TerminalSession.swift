@@ -19,8 +19,8 @@ public final class TerminalSession {
     private var parser = Parser()
     private let workingDirectory: String?
 
-    public init(size: TerminalSize, workingDirectory: String? = nil) {
-        terminal = Terminal(size: size)
+    public init(size: TerminalSize, workingDirectory: String? = nil, scrollbackLines: Int = 100_000) {
+        terminal = Terminal(size: size, scrollbackCapacity: scrollbackLines)
         self.workingDirectory = workingDirectory
     }
 
