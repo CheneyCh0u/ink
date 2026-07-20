@@ -30,6 +30,7 @@ final class SettingsViewController: NSViewController {
     private let lineHeightControl = NumericSettingControl(
         value: 1.2, range: 0.8...2, increment: 0.05, decimals: 2, suffix: "×"
     )
+    private let themePopUp = NSPopUpButton()
     private let cursorControl = NSSegmentedControl()
     private let cursorBlinkSwitch = NSSwitch()
     private let optionMetaSwitch = NSSwitch()
@@ -148,6 +149,11 @@ final class SettingsViewController: NSViewController {
         content.addArrangedSubview(makeSection(
             title: "终端",
             rows: [
+                makeRow(
+                    title: "配色",
+                    detail: "每套主题会随界面模式自动切换浅色或深色版本。",
+                    control: themePopUp
+                ),
                 makeRow(title: "字体", detail: "只列出系统中可用的等宽字体。", control: fontCombo),
                 makeRow(title: "字号", detail: nil, control: fontSizeControl),
                 makeRow(title: "行高", detail: "调整字符行之间的呼吸感。", control: lineHeightControl),
@@ -326,6 +332,12 @@ final class SettingsViewController: NSViewController {
         fontCombo.target = self
         fontCombo.action = #selector(controlChanged)
 
+        themePopUp.removeAllItems()
+        themePopUp.addItems(withTitles: InkTerminalTheme.allCases.map(\.displayName))
+        themePopUp.target = self
+        themePopUp.action = #selector(controlChanged)
+        themePopUp.setAccessibilityLabel("终端配色")
+
         for number in [windowWidthControl, windowHeightControl, fontSizeControl, lineHeightControl, scrollbackControl] {
             number.onChange = { [weak self] in self?.controlChanged() }
         }
@@ -374,6 +386,8 @@ final class SettingsViewController: NSViewController {
         }
         fontSizeControl.value = config.fontSize
         lineHeightControl.value = config.lineHeight
+        let themeIndex = InkConfig.TerminalTheme.allCases.firstIndex(of: config.terminalTheme) ?? 0
+        themePopUp.selectItem(at: themeIndex)
         cursorControl.selectedSegment = switch config.cursorStyle {
         case .block: 0
         case .bar: 1
@@ -400,6 +414,10 @@ final class SettingsViewController: NSViewController {
             : selectedFamily
         config.fontSize = fontSizeControl.value
         config.lineHeight = lineHeightControl.value
+        let themes = InkConfig.TerminalTheme.allCases
+        config.terminalTheme = themes.indices.contains(themePopUp.indexOfSelectedItem)
+            ? themes[themePopUp.indexOfSelectedItem]
+            : .neutral
         config.cursorStyle = [.block, .bar, .underline][max(0, cursorControl.selectedSegment)]
         config.cursorBlink = cursorBlinkSwitch.state == .on
         config.optionAsMeta = optionMetaSwitch.state == .on
@@ -415,7 +433,8 @@ final class SettingsViewController: NSViewController {
         preview.update(
             family: config.fontFamily,
             size: CGFloat(config.fontSize),
-            lineHeight: CGFloat(config.lineHeight)
+            lineHeight: CGFloat(config.lineHeight),
+            theme: InkTerminalTheme(rawValue: config.terminalTheme.rawValue) ?? .neutral
         )
     }
 
@@ -580,12 +599,17 @@ private final class NumericSettingControl: NSView, NSTextFieldDelegate {
 @MainActor
 private final class TerminalSettingsPreview: NSView {
     private let text = NSTextField(wrappingLabelWithString: "")
+    private var family: String?
+    private var size: CGFloat = 14
+    private var lineHeight: CGFloat = 1.2
+    private var theme: InkTerminalTheme = .neutral
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.cornerRadius = InkDesignTokens.Radius.control
         layer?.cornerCurve = .continuous
+        setAccessibilityLabel("终端配色预览")
         text.translatesAutoresizingMaskIntoConstraints = false
         addSubview(text)
         NSLayoutConstraint.activate([
@@ -594,43 +618,64 @@ private final class TerminalSettingsPreview: NSView {
             text.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -InkDesignTokens.Spacing.md),
             text.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
-        updateBackground()
+        render()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("代码构建") }
 
-    func update(family: String?, size: CGFloat, lineHeight: CGFloat) {
+    func update(
+        family: String?,
+        size: CGFloat,
+        lineHeight: CGFloat,
+        theme: InkTerminalTheme
+    ) {
+        self.family = family
+        self.size = size
+        self.lineHeight = lineHeight
+        self.theme = theme
+        render()
+    }
+
+    private func render() {
         let manager = NSFontManager.shared
         let font = family.flatMap {
             manager.font(withFamily: $0, traits: [.fixedPitchFontMask], weight: 5, size: size)
         } ?? InkDesignTokens.Typography.terminal(size: size)
+        let palette = theme.palette(for: effectiveAppearance)
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = lineHeight
-        let sample = NSMutableAttributedString(
-            string: "~/work/ink  main\n❯ echo \"你好，ink\"\n你好，ink",
-            attributes: [
-                .font: font,
-                .foregroundColor: InkDesignTokens.Color.textPrimary,
-                .paragraphStyle: paragraph,
-            ]
-        )
-        sample.addAttribute(
-            .foregroundColor,
-            value: InkDesignTokens.Color.accent,
-            range: NSRange(location: 17, length: 1)
-        )
+        let base: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .paragraphStyle: paragraph,
+        ]
+        let sample = NSMutableAttributedString(string: "")
+
+        func append(_ value: String, color: InkTerminalPalette.TerminalColor) {
+            var attributes = base
+            attributes[.foregroundColor] = color.nsColor
+            sample.append(NSAttributedString(string: value, attributes: attributes))
+        }
+
+        append("~/work/code/ink  ", color: palette.ansi[8])
+        append("main\n", color: palette.ansi[4])
+        append("✔ ", color: palette.ansi[2])
+        append("Build complete ", color: palette.defaultForeground)
+        append("0.42s\n", color: palette.ansi[8])
+        append("→ ", color: palette.ansi[4])
+        append("Open ", color: palette.defaultForeground)
+        append("Sources/InkShell/MainWindowController.swift\n", color: palette.ansi[6])
+        append("! ", color: palette.ansi[3])
+        append("1 failed  ", color: palette.ansi[1])
+        append("◆ ", color: palette.ansi[5])
+        append("Claude Code is ready\n", color: palette.defaultForeground)
+        append("❯ echo \"你好，Ink\"", color: palette.defaultForeground)
         text.attributedStringValue = sample
+        layer?.backgroundColor = palette.defaultBackground.nsColor.cgColor
     }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        updateBackground()
-    }
-
-    private func updateBackground() {
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer?.backgroundColor = InkDesignTokens.Color.terminal.cgColor
-        }
+        render()
     }
 }

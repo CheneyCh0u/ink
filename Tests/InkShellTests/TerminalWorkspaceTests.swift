@@ -183,6 +183,23 @@ struct TerminalWorkspaceTests {
         #expect(workspace.paneContainer(for: secondPane.id) != nil)
     }
 
+    @Test("配色热更新应用到已有 pane")
+    func themeHotReloadUpdatesExistingPane() throws {
+        let pane = makePane()
+        let tab = TerminalTab(initialPane: pane)
+        let workspace = TerminalWorkspaceViewController()
+        var config = InkConfig()
+        config.terminalTheme = .warm
+
+        workspace.show(tab: tab, config: config)
+        let terminalView = try #require(workspace.terminalView(for: pane.id))
+        #expect(terminalView.terminalTheme == .warm)
+
+        config.terminalTheme = .plum
+        workspace.apply(config: config)
+        #expect(terminalView.terminalTheme == .plum)
+    }
+
     private func makePane() -> TerminalPane {
         TerminalPane(session: TerminalSession(size: TerminalSize(columns: 80, rows: 24)))
     }
