@@ -76,10 +76,10 @@ expandedFooterConstraints = [
     newButton.centerYAnchor.constraint(equalTo: settingsButton.centerYAnchor),
 ]
 compactFooterConstraints = [
-    footerSeparator.bottomAnchor.constraint(equalTo: newButton.topAnchor, constant: -sp.xxs),
+    footerSeparator.bottomAnchor.constraint(equalTo: newButton.topAnchor, constant: -sp.xs),
     newButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.xs),
     newButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.xs),
-    newButton.bottomAnchor.constraint(equalTo: settingsButton.topAnchor, constant: -sp.xxs),
+    newButton.bottomAnchor.constraint(equalTo: settingsButton.topAnchor, constant: -sp.xs),
     settingsButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.xs),
     settingsButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.xs),
 ]
@@ -92,8 +92,8 @@ NSLayoutConstraint.deactivate(compact ? expandedFooterConstraints : compactFoote
 NSLayoutConstraint.activate(compact ? compactFooterConstraints : expandedFooterConstraints)
 newButton.alignment = .center
 settingsButton.alignment = .center
-newButton.contentLeadingInset = 0
-settingsButton.contentLeadingInset = 0
+newButton.imageHugsTitle = true
+settingsButton.imageHugsTitle = true
 ```
 
 - [ ] **Step 4: 验证目标测试与完整工程**
