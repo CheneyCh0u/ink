@@ -16,6 +16,8 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     public var onGridResize: ((TerminalSize) -> Void)?
     /// 每帧取终端状态。用 pull 模式解耦：视图不持有会话。
     public var terminalProvider: (() -> Terminal)?
+    /// 视图成为第一响应者，外壳据此更新当前 pane。
+    public var onFocus: (() -> Void)?
 
     // MARK: - 配置项（外壳从 InkConfig 映射进来）
 
@@ -366,6 +368,12 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     // MARK: - 键盘输入
 
     public override var acceptsFirstResponder: Bool { true }
+
+    public override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted { onFocus?() }
+        return accepted
+    }
 
     public override func keyDown(with event: NSEvent) {
         if event.modifierFlags.contains(.command) {
