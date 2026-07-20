@@ -18,6 +18,8 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     public var terminalProvider: (() -> Terminal)?
     /// 视图成为第一响应者，外壳据此更新当前 pane。
     public var onFocus: (() -> Void)?
+    /// 搜索控制器按需提供结果，避免视图长期共享数组导致增量更新触发全量 CoW。
+    public var searchResultsProvider: (() -> ([TerminalSearchMatch], Int?))?
 
     // MARK: - 配置项（外壳从 InkConfig 映射进来）
 
@@ -140,6 +142,7 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         markedText = ""
         searchResults.removeAll(keepingCapacity: false)
         currentSearchIndex = nil
+        searchResultsProvider = nil
         markDirty()
     }
 
@@ -268,9 +271,12 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         guard dirty, let renderer, let terminal = terminalProvider?() else { return }
         dirty = false
         scrollOffset = min(scrollOffset, terminal.scrollback.count)
+        let providedSearch = searchResultsProvider?()
+        let visibleSearchResults = providedSearch?.0 ?? searchResults
+        let visibleCurrentIndex = providedSearch?.1 ?? currentSearchIndex
         let searchHighlights = TerminalSearchHighlights.project(
-            matches: searchResults,
-            currentIndex: currentSearchIndex,
+            matches: visibleSearchResults,
+            currentIndex: visibleCurrentIndex,
             scrollbackCount: terminal.scrollback.count,
             gridRows: terminal.grid.size.rows,
             scrollOffset: scrollOffset,

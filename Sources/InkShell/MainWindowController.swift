@@ -583,7 +583,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
     /// Command-F 只在当前聚焦 pane 打开搜索；已有同 pane 搜索时回到输入框。
     @objc public func findInActivePane(_ sender: Any?) {
         guard !isShowingSettings else { return }
-        _ = workspaceVC.openSearchInActivePane()
+        _ = workspaceVC.openSearch(for: window?.firstResponder)
     }
 
     private func splitActivePane(direction: PaneSplitDirection) {
@@ -871,7 +871,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
             return !isShowingSettings && activeProject?.activeTab != nil
         }
         if action == #selector(findInActivePane(_:)) {
-            return !isShowingSettings && activeProject?.activeTab?.activePane != nil
+            return !isShowingSettings && workspaceVC.canOpenSearch(for: window?.firstResponder)
         }
         return true
     }

@@ -146,4 +146,16 @@ struct TerminalSearchTests {
         #expect(index.matches.isEmpty)
         #expect(index.lastUpdateKind == .none)
     }
+
+    @Test("长软折行的高频匹配保持正确坐标")
+    func frequentMatchesInLongWrappedLine() {
+        var (parser, terminal) = makeTerminal(columns: 10, rows: 5, scrollback: 200)
+        feed(String(repeating: "a", count: 1_000), &parser, &terminal)
+
+        let matches = TerminalSearchEngine.search(in: terminal, query: "a")
+
+        #expect(matches.count == 1_000)
+        #expect(matches.first?.range.start == TextPosition(line: 0, column: 0))
+        #expect(matches.last?.range.end == TextPosition(line: 99, column: 9))
+    }
 }

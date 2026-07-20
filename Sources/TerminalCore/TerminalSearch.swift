@@ -33,7 +33,7 @@ public enum TerminalSearchEngine {
             )
 
             let nextIsWrapped = lineIndex + 1 < terminal.totalLines
-                && (terminal.absoluteLine(lineIndex + 1)?.info.isWrapped ?? false)
+                && (terminal.absoluteLineInfo(lineIndex + 1)?.isWrapped ?? false)
             if !nextIsWrapped {
                 matches.append(contentsOf: logicalLine.matches(for: query))
                 logicalLine.removeAll(keepingCapacity: true)
@@ -63,6 +63,19 @@ public struct TerminalSearchIndex: Sendable {
     private var scrollbackCount = 0
 
     public init() {}
+
+    /// 全量重建或历史坐标整体平移必须放到后台；普通 grid/后缀刷新可原地完成。
+    public func requiresBackgroundUpdate(in terminal: Terminal, query newQuery: String) -> Bool {
+        if query != newQuery
+            || query == nil
+            || layoutRevision != terminal.searchLayoutRevision
+            || appendedLines > terminal.scrollback.totalAppendedLines {
+            return true
+        }
+        let appended = Int(terminal.scrollback.totalAppendedLines - appendedLines)
+        let evicted = max(0, scrollbackCount + appended - terminal.scrollback.count)
+        return evicted > 0
+    }
 
     @discardableResult
     public mutating func update(in terminal: Terminal, query newQuery: String) -> [TerminalSearchMatch] {
@@ -98,21 +111,26 @@ public struct TerminalSearchIndex: Sendable {
             in: terminal
         )
 
-        var prefix: [TerminalSearchMatch] = []
-        prefix.reserveCapacity(matches.count)
-        for match in matches {
-            var shifted = match.range
-            shifted.start.line -= evicted
-            shifted.end.line -= evicted
-            guard shifted.start.line >= 0, shifted.end.line < rescanStart else { continue }
-            prefix.append(TerminalSearchMatch(range: shifted))
+        if evicted == 0 {
+            let suffixStart = firstMatchEnding(atOrAfter: rescanStart)
+            matches.removeSubrange(suffixStart..<matches.endIndex)
+        } else {
+            var writeIndex = 0
+            for readIndex in matches.indices {
+                var shifted = matches[readIndex].range
+                shifted.start.line -= evicted
+                shifted.end.line -= evicted
+                guard shifted.start.line >= 0, shifted.end.line < rescanStart else { continue }
+                matches[writeIndex] = TerminalSearchMatch(range: shifted)
+                writeIndex += 1
+            }
+            matches.removeSubrange(writeIndex..<matches.endIndex)
         }
-        prefix.append(contentsOf: TerminalSearchEngine.search(
+        matches.append(contentsOf: TerminalSearchEngine.search(
             in: terminal,
             query: newQuery,
             fromLine: rescanStart
         ))
-        matches = prefix
         lastUpdateKind = .incremental
         remember(terminal: terminal, query: newQuery)
         return matches
@@ -141,6 +159,20 @@ public struct TerminalSearchIndex: Sendable {
             result -= 1
         }
         return result
+    }
+
+    private func firstMatchEnding(atOrAfter line: Int) -> Int {
+        var lower = matches.startIndex
+        var upper = matches.endIndex
+        while lower < upper {
+            let middle = lower + (upper - lower) / 2
+            if matches[middle].range.normalized.end.line < line {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+        return lower
     }
 }
 
@@ -203,11 +235,10 @@ private struct LogicalLine {
             guard result.location != NSNotFound, result.length > 0 else { break }
 
             let resultEnd = result.location + result.length
-            if let first = mappings.first(where: { $0.utf16Range.upperBound > result.location }),
-               let last = mappings.last(where: {
-                   $0.utf16Range.lowerBound < resultEnd
-                       && $0.utf16Range.lowerBound < searchableLength
-               }) {
+            if let firstIndex = firstMapping(containing: result.location),
+               let lastIndex = lastMapping(before: resultEnd) {
+                let first = mappings[firstIndex]
+                let last = mappings[lastIndex]
                 results.append(TerminalSearchMatch(range: SelectionRange(
                     start: first.start,
                     end: last.end
@@ -217,6 +248,34 @@ private struct LogicalLine {
         }
 
         return results
+    }
+
+    private func firstMapping(containing offset: Int) -> Int? {
+        var lower = mappings.startIndex
+        var upper = mappings.endIndex
+        while lower < upper {
+            let middle = lower + (upper - lower) / 2
+            if mappings[middle].utf16Range.upperBound <= offset {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+        return lower < mappings.endIndex ? lower : nil
+    }
+
+    private func lastMapping(before offset: Int) -> Int? {
+        var lower = mappings.startIndex
+        var upper = mappings.endIndex
+        while lower < upper {
+            let middle = lower + (upper - lower) / 2
+            if mappings[middle].utf16Range.lowerBound < offset {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+        return lower > mappings.startIndex ? lower - 1 : nil
     }
 
     mutating func removeAll(keepingCapacity: Bool) {

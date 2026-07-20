@@ -28,11 +28,28 @@ enum TerminalSearchHighlights {
         let viewportEnd = viewportStart + gridRows - 1
         var spans: [TerminalSearchHighlightSpan] = []
 
-        for (index, match) in matches.enumerated() {
+        var lower = matches.startIndex
+        var upper = matches.endIndex
+        while lower < upper {
+            let middle = lower + (upper - lower) / 2
+            if matches[middle].range.normalized.end.line < viewportStart {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+
+        var index = lower
+        while index < matches.endIndex {
+            let match = matches[index]
             let range = match.range.normalized
+            if range.start.line > viewportEnd { break }
             let firstLine = max(range.start.line, viewportStart)
             let lastLine = min(range.end.line, viewportEnd)
-            guard firstLine <= lastLine else { continue }
+            guard firstLine <= lastLine else {
+                index += 1
+                continue
+            }
 
             for line in firstLine...lastLine {
                 let lower = line == range.start.line ? range.start.column : 0
@@ -46,6 +63,7 @@ enum TerminalSearchHighlights {
                     isCurrent: index == currentIndex
                 ))
             }
+            index += 1
         }
         return spans
     }

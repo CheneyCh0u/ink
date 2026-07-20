@@ -67,6 +67,13 @@ extension Terminal {
         return (Array(grid.row(index - scrollback.count)), grid.info(ofRow: index - scrollback.count))
     }
 
+    /// 只读绝对行元数据，不为查询 wrapped 位物化整行 cell。
+    public func absoluteLineInfo(_ index: Int) -> RowInfo? {
+        guard index >= 0, index < totalLines else { return nil }
+        if index < scrollback.count { return scrollback[index].info }
+        return grid.info(ofRow: index - scrollback.count)
+    }
+
     /// 提取选区文本。软折行（wrapped）的相邻行拼接时不插换行——
     /// 复制一条被折成三行的长命令，粘出来是一行，这是 trim + wrapped 位
     /// 一路留到现在换来的。

@@ -151,6 +151,28 @@ final class TerminalWorkspaceViewController: NSViewController {
         return true
     }
 
+    func canOpenSearch(for responder: NSResponder?) -> Bool {
+        if let responder = responder as? TerminalMetalView {
+            return paneContainers.values.contains { $0.terminalView === responder }
+        }
+        return searchController?.searchBar.ownsResponder(responder) == true
+    }
+
+    @discardableResult
+    func openSearch(for responder: NSResponder?) -> Bool {
+        if searchController?.searchBar.ownsResponder(responder) == true {
+            searchController?.searchBar.focus()
+            return true
+        }
+        guard let terminalView = responder as? TerminalMetalView,
+              let paneID = paneContainers.first(where: {
+                  $0.value.terminalView === terminalView
+              })?.key
+        else { return false }
+        activate(paneID)
+        return openSearchInActivePane()
+    }
+
     func closeSearch(returnFocus: Bool = true) {
         guard let controller = searchController else { return }
         let paneID = activeSearchPaneID

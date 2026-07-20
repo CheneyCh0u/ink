@@ -16,6 +16,7 @@ final class TerminalSearchBarView: NSVisualEffectView, NSSearchFieldDelegate {
     private let closeButton = NSButton(frame: .zero)
 
     var resultText: String { resultLabel.stringValue }
+    var navigationEnabled: Bool { previousButton.isEnabled && nextButton.isEnabled }
 
     init() {
         super.init(frame: .zero)
@@ -74,6 +75,7 @@ final class TerminalSearchBarView: NSVisualEffectView, NSSearchFieldDelegate {
             resultLabel.widthAnchor.constraint(equalToConstant: 52),
             heightAnchor.constraint(equalToConstant: 34),
         ])
+        updateResultPosition(currentIndex: nil, total: 0)
     }
 
     @available(*, unavailable)
@@ -84,6 +86,11 @@ final class TerminalSearchBarView: NSVisualEffectView, NSSearchFieldDelegate {
     func focus() {
         window?.makeFirstResponder(searchField)
         searchField.currentEditor()?.selectAll(nil)
+    }
+
+    func ownsResponder(_ responder: NSResponder?) -> Bool {
+        guard let responder else { return false }
+        return responder === searchField || responder === searchField.currentEditor()
     }
 
     func updateResultPosition(currentIndex: Int?, total: Int) {

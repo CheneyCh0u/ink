@@ -8,6 +8,53 @@ import InkDesign
 // AppKit 系有同名类型，显式限定到 TerminalCore。
 private typealias ColorTable = TerminalCore.ColorTable
 
+private protocol SearchHighlightLookup {
+    mutating func beginRow(_ visualRow: Int)
+    mutating func kind(column: Int, isSelected: Bool) -> TerminalSearchHighlightKind
+}
+
+private struct NoSearchHighlightLookup: SearchHighlightLookup {
+    @inline(__always) mutating func beginRow(_ visualRow: Int) {}
+    @inline(__always) mutating func kind(
+        column: Int, isSelected: Bool
+    ) -> TerminalSearchHighlightKind { .none }
+}
+
+private struct SpanSearchHighlightLookup: SearchHighlightLookup {
+    let spans: [TerminalSearchHighlightSpan]
+    private var visualRow = 0
+    private var cursor = 0
+
+    init(spans: [TerminalSearchHighlightSpan]) {
+        self.spans = spans
+    }
+
+    @inline(__always)
+    mutating func beginRow(_ visualRow: Int) {
+        self.visualRow = visualRow
+        while cursor < spans.count, spans[cursor].visualRow < visualRow {
+            cursor += 1
+        }
+    }
+
+    @inline(__always)
+    mutating func kind(
+        column: Int, isSelected: Bool
+    ) -> TerminalSearchHighlightKind {
+        guard !isSelected else { return .none }
+        while cursor < spans.count,
+              spans[cursor].visualRow == visualRow,
+              spans[cursor].columns.upperBound < column {
+            cursor += 1
+        }
+        guard cursor < spans.count,
+              spans[cursor].visualRow == visualRow,
+              spans[cursor].columns.contains(column)
+        else { return .none }
+        return spans[cursor].isCurrent ? .current : .ordinary
+    }
+}
+
 /// Metal 在驱动自己的 completion queue 上调用完成回调，不能继承
 /// `TerminalRenderer` 的 MainActor 隔离。
 enum MetalCommandCompletion {
@@ -253,6 +300,35 @@ final class TerminalRenderer {
         searchHighlights: [TerminalSearchHighlightSpan],
         into buffer: MTLBuffer
     ) -> Int {
+        if searchHighlights.isEmpty {
+            var lookup = NoSearchHighlightLookup()
+            return buildInstances(
+                terminal: terminal,
+                cursorOn: cursorOn,
+                scrollOffset: scrollOffset,
+                selection: selection,
+                searchLookup: &lookup,
+                into: buffer
+            )
+        }
+        var lookup = SpanSearchHighlightLookup(spans: searchHighlights)
+        return buildInstances(
+            terminal: terminal,
+            cursorOn: cursorOn,
+            scrollOffset: scrollOffset,
+            selection: selection,
+            searchLookup: &lookup,
+            into: buffer
+        )
+    }
+
+    /// 泛型 lookup 让 Release 编译器为无搜索状态生成不含搜索判断的专用循环。
+    private func buildInstances<Lookup: SearchHighlightLookup>(
+        terminal: Terminal, cursorOn: Bool,
+        scrollOffset: Int, selection: SelectionRange?,
+        searchLookup: inout Lookup,
+        into buffer: MTLBuffer
+    ) -> Int {
         let grid = terminal.grid
         let cols = grid.size.columns
         let rows = grid.size.rows
@@ -265,14 +341,9 @@ final class TerminalRenderer {
         let cursorCol = grid.cursorCol
         // 翻看历史时不画光标——它属于屏上区域，回到底部才有意义。
         let drawCursor = cursorOn && terminal.modes.showCursor && offset == 0
-        var rowHighlightStart = 0
 
         for visualRow in 0..<rows {
-            while rowHighlightStart < searchHighlights.count,
-                  searchHighlights[rowHighlightStart].visualRow < visualRow {
-                rowHighlightStart += 1
-            }
-            var rowHighlightCursor = rowHighlightStart
+            searchLookup.beginRow(visualRow)
             let absLine = sbCount - offset + visualRow
             let fromScrollback = visualRow < offset
             let gridRow = visualRow - offset
@@ -292,21 +363,7 @@ final class TerminalRenderer {
                 let isCursorCell = drawCursor && gridRow == cursorRow
                     && (col == cursorCol || (col == cursorCol - 1 && attr & Cell.Attr.wideLeading != 0))
                 let isSelected = selection?.contains(line: absLine, column: col) ?? false
-                while rowHighlightCursor < searchHighlights.count,
-                      searchHighlights[rowHighlightCursor].visualRow == visualRow,
-                      searchHighlights[rowHighlightCursor].columns.upperBound < col {
-                    rowHighlightCursor += 1
-                }
-                let searchKind: TerminalSearchHighlightKind
-                if !isSelected,
-                   rowHighlightCursor < searchHighlights.count,
-                   searchHighlights[rowHighlightCursor].visualRow == visualRow,
-                   searchHighlights[rowHighlightCursor].columns.contains(col) {
-                    searchKind = searchHighlights[rowHighlightCursor].isCurrent
-                        ? .current : .ordinary
-                } else {
-                    searchKind = .none
-                }
+                let searchKind = searchLookup.kind(column: col, isSelected: isSelected)
 
                 var (fg, bg) = resolve(attr: attr, colorTable: terminal.colorTable)
                 switch searchKind {

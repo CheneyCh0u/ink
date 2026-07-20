@@ -9,8 +9,11 @@ struct TerminalSearchBarTests {
     func resultCount() {
         let bar = TerminalSearchBarView()
 
+        #expect(!bar.navigationEnabled)
+
         bar.updateResultPosition(currentIndex: 1, total: 4)
         #expect(bar.resultText == "2 / 4")
+        #expect(bar.navigationEnabled)
 
         bar.updateResultPosition(currentIndex: nil, total: 0)
         #expect(bar.resultText == "0 / 0")
