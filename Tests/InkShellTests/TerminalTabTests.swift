@@ -1,3 +1,4 @@
+import Foundation
 import TerminalCore
 import Testing
 @testable import InkShell
@@ -5,6 +6,22 @@ import Testing
 @Suite("终端标签")
 @MainActor
 struct TerminalTabTests {
+
+    @Test("关闭活动标签前面的后台标签时保持原活动标签")
+    func removingEarlierTabKeepsActiveTab() throws {
+        let first = TerminalTab(initialPane: makePane())
+        let active = TerminalTab(initialPane: makePane())
+        let last = TerminalTab(initialPane: makePane())
+        let project = Project(directory: URL(fileURLWithPath: "/tmp"))
+        project.tabs = [first, active, last]
+        project.activeTabIndex = 1
+
+        let removed = try #require(project.removeTab(at: 0))
+
+        #expect(removed === first)
+        #expect(project.activeTab === active)
+        #expect(project.activeTabIndex == 0)
+    }
 
     @Test("新标签以唯一 pane 作为活动 pane")
     func initialPaneIsActive() {

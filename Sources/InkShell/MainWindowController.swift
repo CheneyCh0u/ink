@@ -634,7 +634,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
                     refreshChrome()
                 } else {
                     tab.activePane?.session.detach()
-                    project.tabs.remove(at: tabIndex)
+                    _ = project.removeTab(at: tabIndex)
                     normalizeAfterTabRemoval()
                 }
                 return
@@ -643,8 +643,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
     }
 
     private func closeTab(at index: Int) {
-        guard let project = activeProject, project.tabs.indices.contains(index) else { return }
-        let tab = project.tabs.remove(at: index)
+        guard let project = activeProject,
+              let tab = project.removeTab(at: index) else { return }
         terminate(tab: tab)
         normalizeAfterTabRemoval()
     }
