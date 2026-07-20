@@ -151,8 +151,8 @@ final class SidebarViewController: NSViewController {
             rowStack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.xs),
             rowStack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.xs),
 
-            newButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.sm),
-            newButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.sm),
+            newButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.xs),
+            newButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.xs),
             newButton.heightAnchor.constraint(equalToConstant: InkDesignTokens.Sidebar.actionHeight),
             shortcutHint.centerYAnchor.constraint(equalTo: newButton.centerYAnchor),
             shortcutHint.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.md),
@@ -162,8 +162,8 @@ final class SidebarViewController: NSViewController {
             footerSeparator.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.sm),
             footerSeparator.bottomAnchor.constraint(equalTo: settingsButton.topAnchor, constant: -sp.xxs),
 
-            settingsButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.sm),
-            settingsButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.sm),
+            settingsButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.xs),
+            settingsButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.xs),
             settingsButton.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -sp.sm),
             settingsButton.heightAnchor.constraint(equalToConstant: InkDesignTokens.Sidebar.actionHeight),
             settingsShortcutHint.centerYAnchor.constraint(equalTo: settingsButton.centerYAnchor),
