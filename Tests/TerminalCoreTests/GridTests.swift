@@ -112,6 +112,24 @@ struct ScrollbackTests {
         #expect(buffer[2].cells[0].scalar == 69) // E
     }
 
+    @Test("分页快照在环覆盖后保持旧内容")
+    func pagedSnapshotIsolation() {
+        var buffer = ScrollbackBuffer(capacity: 300)
+        for i in 0..<300 {
+            buffer.append(ScrollbackLine(
+                cells: [Cell(scalar: UInt32(65 + i % 26))],
+                info: .none
+            ))
+        }
+        let snapshot = buffer
+
+        buffer.append(ScrollbackLine(cells: [Cell(scalar: 90)], info: .none))
+
+        #expect(snapshot[0].cell(at: 0).scalar == 65)
+        #expect(buffer[0].cell(at: 0).scalar == 66)
+        #expect(buffer[299].cell(at: 0).scalar == 90)
+    }
+
     @Test("纯 ASCII 默认属性行走 1 字节紧凑存储，读取等价")
     func asciiCompaction() {
         var grid = Grid(size: TerminalSize(columns: 80, rows: 1))

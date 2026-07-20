@@ -16,6 +16,7 @@ struct CellInstance {
     static let strikethrough: UInt32 = 1 << 4
     static let cursorBar: UInt32 = 1 << 5
     static let cursorUnderline: UInt32 = 1 << 6
+    static let currentSearchMatch: UInt32 = 1 << 7
 }
 
 /// 帧 uniform，与 Shaders.metal 的 `Uniforms` 一致（float4 对齐 16 字节，
@@ -25,6 +26,7 @@ struct Uniforms {
     var cellSize: SIMD2<Float>
     var origin: SIMD2<Float>
     var cursorColor: SIMD4<Float>
+    var searchEdgeColor: SIMD4<Float>
 }
 
 /// 光标形状。配置系统（[cursor] style）映射到这里。

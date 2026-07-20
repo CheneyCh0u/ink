@@ -9,6 +9,7 @@ struct Uniforms {
     float2 cellSize;     // 像素
     float2 origin;       // 内容区左上内边距，像素
     float4 cursorColor;  // bar / underline 光标叠加色
+    float4 searchEdgeColor; // 当前搜索结果的底边
 };
 
 // 与 CellInstance.swift 的内存布局严格一致。
@@ -27,6 +28,7 @@ constant uint FLAG_UNDERLINE   = 1 << 3;
 constant uint FLAG_STRIKE      = 1 << 4;
 constant uint FLAG_CURSOR_BAR   = 1 << 5; // 竖线光标：cell 左缘细条
 constant uint FLAG_CURSOR_UNDER = 1 << 6; // 下划线光标：cell 底缘横条
+constant uint FLAG_CURRENT_SEARCH = 1 << 7;
 
 struct VSOut {
     float4 position [[position]];
@@ -98,6 +100,12 @@ fragment float4 cell_fragment(
     }
     if (in.flags & FLAG_CURSOR_UNDER) {
         if (in.cellUV.y > 0.86) { color = float4(u.cursorColor.rgb, 1.0); }
+    }
+    if (in.flags & FLAG_CURRENT_SEARCH) {
+        // cellUV 按实际 cell 像素高换算，始终只画 1 个物理像素。
+        if (in.cellUV.y >= 1.0 - 1.0 / u.cellSize.y) {
+            color = float4(u.searchEdgeColor.rgb, 1.0);
+        }
     }
     return color;
 }

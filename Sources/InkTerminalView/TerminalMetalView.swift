@@ -18,6 +18,8 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     public var terminalProvider: (() -> Terminal)?
     /// 视图成为第一响应者，外壳据此更新当前 pane。
     public var onFocus: (() -> Void)?
+    /// 搜索控制器按需提供结果，避免视图长期共享数组导致增量更新触发全量 CoW。
+    public var searchResultsProvider: (() -> ([TerminalSearchMatch], Int?))?
 
     // MARK: - 配置项（外壳从 InkConfig 映射进来）
 
@@ -94,6 +96,11 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     private var scrollAccumulator: CGFloat = 0
     private var selectionAnchor: TextPosition?
     private var selection: SelectionRange?
+    private var searchResults: [TerminalSearchMatch] = []
+    private var currentSearchIndex: Int?
+
+    /// 仅供搜索定位测试读取；搜索和普通滚轮共用同一个历史视口。
+    var searchScrollOffset: Int { scrollOffset }
 
     // 输入法预编辑（拼音）。提交前只存在于视图层，不进终端。
     private var markedText = ""
@@ -133,7 +140,49 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         selection = nil
         selectionAnchor = nil
         markedText = ""
+        searchResults.removeAll(keepingCapacity: false)
+        currentSearchIndex = nil
+        searchResultsProvider = nil
         markDirty()
+    }
+
+    /// 更新当前 pane 的搜索结果，不改变终端视图尺寸与 PTY grid。
+    public func setSearchResults(_ results: [TerminalSearchMatch], currentIndex: Int?) {
+        searchResults = results
+        if let currentIndex, results.indices.contains(currentIndex) {
+            currentSearchIndex = currentIndex
+        } else {
+            currentSearchIndex = nil
+        }
+        markDirty()
+    }
+
+    /// 把指定结果滚到视口中部；靠近历史首尾时自然贴边。
+    public func revealSearchResult(_ result: TerminalSearchMatch) {
+        guard let terminal = terminalProvider?() else { return }
+        let range = result.range.normalized
+        let middleLine = (range.start.line + range.end.line) / 2
+        let rows = terminal.grid.size.rows
+        let desiredStart = middleLine - rows / 2
+        scrollOffset = max(0, min(
+            terminal.scrollback.count - desiredStart,
+            terminal.scrollback.count
+        ))
+        markDirty()
+    }
+
+    public func clearSearchResults() {
+        searchResults.removeAll(keepingCapacity: false)
+        currentSearchIndex = nil
+        markDirty()
+    }
+
+    /// 当前历史视口覆盖的绝对行范围，供首次搜索选择最近结果。
+    public func searchViewportLineRange(in terminal: Terminal) -> ClosedRange<Int> {
+        let offset = min(scrollOffset, terminal.scrollback.count)
+        let first = terminal.scrollback.count - offset
+        let last = min(terminal.totalLines - 1, first + terminal.grid.size.rows - 1)
+        return first...max(first, last)
     }
 
     public func markDirty() {
@@ -222,9 +271,21 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         guard dirty, let renderer, let terminal = terminalProvider?() else { return }
         dirty = false
         scrollOffset = min(scrollOffset, terminal.scrollback.count)
+        let providedSearch = searchResultsProvider?()
+        let visibleSearchResults = providedSearch?.0 ?? searchResults
+        let visibleCurrentIndex = providedSearch?.1 ?? currentSearchIndex
+        let searchHighlights = TerminalSearchHighlights.project(
+            matches: visibleSearchResults,
+            currentIndex: visibleCurrentIndex,
+            scrollbackCount: terminal.scrollback.count,
+            gridRows: terminal.grid.size.rows,
+            scrollOffset: scrollOffset,
+            columns: terminal.grid.size.columns
+        )
         renderer.render(
             terminal: terminal, into: metalLayer, cursorOn: cursorOn,
             scrollOffset: scrollOffset, selection: selection,
+            searchHighlights: searchHighlights,
             preedit: markedText.isEmpty ? nil : markedText
         )
     }

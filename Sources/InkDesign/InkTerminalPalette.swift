@@ -28,6 +28,8 @@ public struct InkTerminalPalette: Sendable, Equatable {
     public let cursor: TerminalColor
     /// 选区底色。渲染时按固定不透明度与背景混合，值本身是不带 alpha 的纯色。
     public let selection: TerminalColor
+    /// 搜索结果使用的强调色；普通与当前结果由渲染器采用不同混合强度。
+    public let searchHighlight: TerminalColor
 
     // MARK: - 内置两套
 
@@ -44,7 +46,8 @@ public struct InkTerminalPalette: Sendable, Equatable {
         defaultForeground: 0x303238,
         defaultBackground: 0xFDFDFD,
         cursor: 0x168FAF,
-        selection: 0xC3E0E8
+        selection: 0xC3E0E8,
+        searchHighlight: 0x168FAF
     )
 
     /// 深色：终端底 `#111314`。green / yellow / magenta / cyan 直接复用外壳深色
@@ -59,7 +62,8 @@ public struct InkTerminalPalette: Sendable, Equatable {
         defaultForeground: 0xE2E3DF,
         defaultBackground: 0x111314,
         cursor: 0x58B6C9,
-        selection: 0x2A4A54
+        selection: 0x2A4A54,
+        searchHighlight: 0x58B6C9
     )
 
     /// 按外观取对应快照。只在外观切换时调用，不进帧循环。
@@ -72,7 +76,8 @@ public struct InkTerminalPalette: Sendable, Equatable {
         defaultForeground: UInt32,
         defaultBackground: UInt32,
         cursor: UInt32,
-        selection: UInt32
+        selection: UInt32,
+        searchHighlight: UInt32
     ) {
         precondition(ansi.count == 16, "ANSI 调色板必须是 16 色")
         self.ansi = ansi.map(TerminalColor.init)
@@ -80,6 +85,7 @@ public struct InkTerminalPalette: Sendable, Equatable {
         self.defaultBackground = TerminalColor(defaultBackground)
         self.cursor = TerminalColor(cursor)
         self.selection = TerminalColor(selection)
+        self.searchHighlight = TerminalColor(searchHighlight)
     }
 }
 
