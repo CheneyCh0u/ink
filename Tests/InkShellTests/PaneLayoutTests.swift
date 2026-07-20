@@ -4,50 +4,113 @@ import Testing
 @Suite("终端分屏布局")
 struct PaneLayoutTests {
 
-    @Test("左右分屏把新 pane 放在右侧并设为接替焦点")
-    func splitLeftRight() {
+    @Test("向右分屏创建左右分组并聚焦新 pane")
+    func splitRight() {
         let original = PaneID()
         let created = PaneID()
         var layout = PaneLayout.leaf(original)
 
-        let changed = layout.split(target: original, newPane: created, axis: .leftRight)
+        let changed = layout.split(target: original, newPane: created, direction: .right)
 
         #expect(changed)
-        guard case let .split(_, axis, ratio, first, second) = layout else {
-            Issue.record("叶节点没有变成分支")
+        guard case let .group(_, axis, weights, children) = layout else {
+            Issue.record("叶节点没有变成分组")
             return
         }
         #expect(axis == .leftRight)
-        #expect(ratio == 0.5)
-        #expect(first == .leaf(original))
-        #expect(second == .leaf(created))
+        #expect(weights == [0.5, 0.5])
+        #expect(children == [.leaf(original), .leaf(created)])
     }
 
-    @Test("可以在嵌套布局中分割任意叶节点")
-    func splitNestedLeaf() {
+    @Test("左侧和上方分屏把新 pane 插在目标前面")
+    func leadingDirectionsInsertBeforeTarget() {
+        let original = PaneID()
+        let left = PaneID()
+        var horizontal = PaneLayout.leaf(original)
+        _ = horizontal.split(target: original, newPane: left, direction: .left)
+
+        let top = PaneID()
+        var vertical = PaneLayout.leaf(original)
+        _ = vertical.split(target: original, newPane: top, direction: .up)
+
+        guard case let .group(_, horizontalAxis, _, horizontalChildren) = horizontal,
+              case let .group(_, verticalAxis, _, verticalChildren) = vertical else {
+            Issue.record("没有形成四方向分组")
+            return
+        }
+        #expect(horizontalAxis == .leftRight)
+        #expect(horizontalChildren == [.leaf(left), .leaf(original)])
+        #expect(verticalAxis == .topBottom)
+        #expect(verticalChildren == [.leaf(top), .leaf(original)])
+    }
+
+    @Test("连续向下分屏复用同一个多子项分组")
+    func repeatedDownSplitsReuseGroup() {
+        let first = PaneID()
+        let second = PaneID()
+        let third = PaneID()
+        var layout = PaneLayout.leaf(first)
+        _ = layout.split(target: first, newPane: second, direction: .down)
+
+        let changed = layout.split(target: second, newPane: third, direction: .down)
+
+        #expect(changed)
+        guard case let .group(_, axis, weights, children) = layout else {
+            Issue.record("没有形成多子项分组")
+            return
+        }
+        #expect(axis == .topBottom)
+        #expect(weights == [0.5, 0.25, 0.25])
+        #expect(children == [.leaf(first), .leaf(second), .leaf(third)])
+    }
+
+    @Test("方向变化时嵌套分组")
+    func changingDirectionNestsGroup() {
         let left = PaneID()
         let right = PaneID()
         let bottom = PaneID()
         var layout = PaneLayout.leaf(left)
-        _ = layout.split(target: left, newPane: right, axis: .leftRight)
+        _ = layout.split(target: left, newPane: right, direction: .right)
 
-        let changed = layout.split(target: right, newPane: bottom, axis: .topBottom)
+        let changed = layout.split(target: right, newPane: bottom, direction: .down)
 
         #expect(changed)
         #expect(layout.contains(left))
         #expect(layout.contains(right))
         #expect(layout.contains(bottom))
         #expect(layout.paneCount == 3)
+        guard case let .group(_, .leftRight, _, children) = layout,
+              case .group(_, .topBottom, _, _) = children[1] else {
+            Issue.record("方向变化没有形成嵌套分组")
+            return
+        }
     }
 
-    @Test("关闭嵌套叶节点后提升兄弟子树")
+    @Test("关闭多子项分组中间 pane 后选择后一个 pane")
+    func removingMiddlePaneFocusesFollowingPane() throws {
+        let first = PaneID()
+        let middle = PaneID()
+        let last = PaneID()
+        var layout = PaneLayout.leaf(first)
+        _ = layout.split(target: first, newPane: middle, direction: .right)
+        _ = layout.split(target: middle, newPane: last, direction: .right)
+
+        let removal = try #require(layout.removing(middle))
+
+        #expect(removal.layout?.paneCount == 2)
+        #expect(removal.layout?.contains(first) == true)
+        #expect(removal.layout?.contains(last) == true)
+        #expect(removal.focusPaneID == last)
+    }
+
+    @Test("关闭嵌套叶节点后收拢分组")
     func removingNestedLeafPromotesSibling() throws {
         let left = PaneID()
         let top = PaneID()
         let bottom = PaneID()
         var layout = PaneLayout.leaf(left)
-        _ = layout.split(target: left, newPane: top, axis: .leftRight)
-        _ = layout.split(target: top, newPane: bottom, axis: .topBottom)
+        _ = layout.split(target: left, newPane: top, direction: .right)
+        _ = layout.split(target: top, newPane: bottom, direction: .down)
 
         let removal = try #require(layout.removing(top))
 
@@ -57,17 +120,17 @@ struct PaneLayoutTests {
         #expect(removal.focusPaneID == bottom)
     }
 
-    @Test("删除非末尾 pane 时选择分隔线另一侧最近的叶节点")
-    func removalFocusesNearestSiblingLeaf() throws {
+    @Test("删除末尾 pane 时选择前一个子树最末叶节点")
+    func removalFocusesPreviousSiblingLeaf() throws {
         let leftTop = PaneID()
         let leftBottom = PaneID()
         let right = PaneID()
         var layout = PaneLayout.leaf(leftTop)
-        _ = layout.split(target: leftTop, newPane: leftBottom, axis: .topBottom)
+        _ = layout.split(target: leftTop, newPane: leftBottom, direction: .down)
         let leftGroup = layout
-        layout = .split(
-            id: SplitID(), axis: .leftRight, ratio: 0.6,
-            first: leftGroup, second: .leaf(right)
+        layout = .group(
+            id: SplitID(), axis: .leftRight, weights: [0.6, 0.4],
+            children: [leftGroup, .leaf(right)]
         )
 
         let removal = try #require(layout.removing(right))
@@ -86,20 +149,36 @@ struct PaneLayoutTests {
         #expect(removal.focusPaneID == nil)
     }
 
-    @Test("拖动比例按 SplitID 更新并夹在有效范围")
-    func updateRatioBySplitID() {
+    @Test("权重按 SplitID 更新并归一化")
+    func updateWeightsBySplitID() {
         let splitID = SplitID()
-        var layout = PaneLayout.split(
-            id: splitID, axis: .leftRight, ratio: 0.5,
-            first: .leaf(PaneID()), second: .leaf(PaneID())
+        var layout = PaneLayout.group(
+            id: splitID, axis: .leftRight, weights: [0.5, 0.5],
+            children: [.leaf(PaneID()), .leaf(PaneID())]
         )
 
-        let changed = layout.updateRatio(for: splitID, to: 1.4)
+        let changed = layout.updateWeights(for: splitID, to: [1, 3])
+
         #expect(changed)
-        guard case let .split(_, _, ratio, _, _) = layout else {
-            Issue.record("布局不再是分支")
+        guard case let .group(_, _, weights, _) = layout else {
+            Issue.record("布局不再是分组")
             return
         }
-        #expect(ratio == 1)
+        #expect(weights == [0.25, 0.75])
+    }
+
+    @Test("拒绝数量不匹配或非正的权重")
+    func rejectsInvalidWeights() {
+        let splitID = SplitID()
+        var layout = PaneLayout.group(
+            id: splitID, axis: .leftRight, weights: [0.5, 0.5],
+            children: [.leaf(PaneID()), .leaf(PaneID())]
+        )
+
+        let acceptedMismatchedCount = layout.updateWeights(for: splitID, to: [1])
+        let acceptedZeroWeight = layout.updateWeights(for: splitID, to: [0, 1])
+
+        #expect(!acceptedMismatchedCount)
+        #expect(!acceptedZeroWeight)
     }
 }

@@ -543,11 +543,11 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
     }
 
     @objc public func splitRight(_ sender: Any?) {
-        splitActivePane(axis: .leftRight)
+        splitActivePane(direction: .right)
     }
 
     @objc public func splitDown(_ sender: Any?) {
-        splitActivePane(axis: .topBottom)
+        splitActivePane(direction: .down)
     }
 
     @objc public func closeActivePane(_ sender: Any?) {
@@ -566,7 +566,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         refreshChrome()
     }
 
-    private func splitActivePane(axis: PaneSplitAxis) {
+    private func splitActivePane(direction: PaneSplitDirection) {
         guard !isShowingSettings,
               let project = activeProject,
               let tab = project.activeTab,
@@ -575,7 +575,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         let currentSize = workspaceVC.currentGridSize(for: activePane.id)
             ?? activePane.session.terminal.grid.size
         let size: TerminalSize
-        switch axis {
+        switch direction.axis {
         case .leftRight:
             guard currentSize.columns >= 20 else { NSSound.beep(); return }
             size = TerminalSize(columns: currentSize.columns / 2, rows: currentSize.rows)
@@ -586,7 +586,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         let workingDirectory = activePane.session.foregroundWorkingDirectory
             ?? project.directory.path
         guard let pane = startPane(size: size, workingDirectory: workingDirectory) else { return }
-        guard tab.insertPane(pane, splitting: activePane.id, axis: axis) else {
+        guard tab.insertPane(pane, splitting: activePane.id, direction: direction) else {
             pane.session.detach()
             pane.session.terminate()
             return

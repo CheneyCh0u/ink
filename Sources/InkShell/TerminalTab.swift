@@ -42,10 +42,10 @@ final class TerminalTab {
     func insertPane(
         _ pane: TerminalPane,
         splitting target: PaneID,
-        axis: PaneSplitAxis
+        direction: PaneSplitDirection
     ) -> Bool {
         guard panes[pane.id] == nil,
-              layout.split(target: target, newPane: pane.id, axis: axis) else {
+              layout.split(target: target, newPane: pane.id, direction: direction) else {
             return false
         }
         panes[pane.id] = pane
@@ -72,7 +72,7 @@ final class TerminalTab {
     }
 
     @discardableResult
-    func updateSplitRatio(_ splitID: SplitID, ratio: Double) -> Bool {
-        layout.updateRatio(for: splitID, to: ratio)
+    func updateSplitWeights(_ splitID: SplitID, weights: [Double]) -> Bool {
+        layout.updateWeights(for: splitID, to: weights)
     }
 }

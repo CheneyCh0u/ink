@@ -8,14 +8,66 @@ import Testing
 @MainActor
 struct TerminalWorkspaceTests {
 
+    @Test("连续向下分屏并重建时每个 pane 都有可见高度")
+    func repeatedTopBottomSplitsKeepEveryPaneVisible() throws {
+        let first = makePane()
+        let tab = TerminalTab(initialPane: first)
+        let workspace = TerminalWorkspaceViewController()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+            styleMask: [.titled, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentViewController = workspace
+        window.orderFront(nil)
+        workspace.view.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
+
+        workspace.show(tab: tab, config: InkConfig())
+        workspace.view.layoutSubtreeIfNeeded()
+
+        var target = first
+        for _ in 0..<4 {
+            let created = makePane()
+            _ = tab.insertPane(created, splitting: target.id, direction: .down)
+            #expect(
+                splitWeights(in: tab.layout).allSatisfy { $0 > 0 && $0 < 1 },
+                "插入 pane 后权重不应塌缩"
+            )
+            workspace.show(tab: tab, config: InkConfig())
+            #expect(
+                splitWeights(in: tab.layout).allSatisfy { $0 > 0 && $0 < 1 },
+                "show 后、layout 前权重不应塌缩"
+            )
+            workspace.view.layoutSubtreeIfNeeded()
+            #expect(
+                splitWeights(in: tab.layout).allSatisfy { $0 > 0 && $0 < 1 },
+                "首次 layout 后权重不应塌缩"
+            )
+            target = created
+        }
+
+        let splitView = try #require(
+            allSubviews(in: workspace.view).compactMap { $0 as? WorkspaceSplitView }.first
+        )
+        #expect(workspace.view.frame.height > 1)
+        #expect(splitView.frame.height > 1)
+        #expect(splitView.subviews.count == 5)
+        #expect(splitWeights(in: tab.layout).allSatisfy { $0 > 0 && $0 < 1 })
+        for pane in tab.allPanes {
+            let paneView = try #require(workspace.paneContainer(for: pane.id))
+            #expect(paneView.frame.height > 1)
+        }
+    }
+
     @Test("递归布局创建左右与上下两种 NSSplitView")
     func buildsNestedSplitViews() {
         let first = makePane()
         let second = makePane()
         let third = makePane()
         let tab = TerminalTab(initialPane: first)
-        _ = tab.insertPane(second, splitting: first.id, axis: .leftRight)
-        _ = tab.insertPane(third, splitting: second.id, axis: .topBottom)
+        _ = tab.insertPane(second, splitting: first.id, direction: .right)
+        _ = tab.insertPane(third, splitting: second.id, direction: .down)
         let workspace = TerminalWorkspaceViewController()
         workspace.view.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
 
@@ -33,7 +85,7 @@ struct TerminalWorkspaceTests {
         let first = makePane()
         let second = makePane()
         let tab = TerminalTab(initialPane: first)
-        _ = tab.insertPane(second, splitting: first.id, axis: .leftRight)
+        _ = tab.insertPane(second, splitting: first.id, direction: .right)
         let workspace = TerminalWorkspaceViewController()
 
         workspace.show(tab: tab, config: InkConfig())
@@ -72,5 +124,14 @@ struct TerminalWorkspaceTests {
 
     private func allSubviews(in view: NSView) -> [NSView] {
         view.subviews.flatMap { [$0] + allSubviews(in: $0) }
+    }
+
+    private func splitWeights(in layout: PaneLayout) -> [Double] {
+        switch layout {
+        case .leaf:
+            []
+        case let .group(_, _, weights, children):
+            weights + children.flatMap(splitWeights)
+        }
     }
 }

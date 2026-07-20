@@ -40,7 +40,7 @@ struct TerminalTabTests {
         let created = makePane()
         let tab = TerminalTab(initialPane: original)
 
-        let inserted = tab.insertPane(created, splitting: original.id, axis: .leftRight)
+        let inserted = tab.insertPane(created, splitting: original.id, direction: .right)
 
         #expect(inserted)
         #expect(tab.paneCount == 2)
@@ -54,7 +54,7 @@ struct TerminalTabTests {
         let original = makePane()
         let created = makePane()
         let tab = TerminalTab(initialPane: original)
-        _ = tab.insertPane(created, splitting: original.id, axis: .leftRight)
+        _ = tab.insertPane(created, splitting: original.id, direction: .right)
 
         let removed = tab.removePane(created.id)
 
@@ -68,7 +68,7 @@ struct TerminalTabTests {
         let original = makePane()
         let created = makePane()
         let tab = TerminalTab(initialPane: original)
-        _ = tab.insertPane(created, splitting: original.id, axis: .topBottom)
+        _ = tab.insertPane(created, splitting: original.id, direction: .down)
 
         let removed = tab.removePane(original.id)
 
