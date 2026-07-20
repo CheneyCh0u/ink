@@ -41,6 +41,8 @@ final class WorkspaceSplitContainerView: NSView {
 }
 ```
 
+容器覆盖 `isFlipped` 并返回 `true`。横向分组的子视图按从左到右排列，纵向分组按从上到下排列，布局树中的 `.up` 和 `.down` 因而与屏幕方向一致。
+
 容器只管理直接子视图，不知道 `PaneID`、PTY 或终端配置。`TerminalWorkspaceViewController` 继续递归构建布局树，并把每个分组的子节点加入对应容器。方向变化时形成嵌套容器，同方向 pane 仍位于一个多子项容器中。
 
 容器不持有模型对象。拖动完成后，它通过 `SplitID` 和归一化权重通知工作区，由工作区写回当前 `TerminalTab`。
