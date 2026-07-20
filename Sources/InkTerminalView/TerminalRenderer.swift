@@ -145,6 +145,14 @@ final class TerminalRenderer {
         )
     }
 
+    /// 指定网格完整可见时，终端视图在 point 坐标下需要的最小尺寸。
+    func viewportSize(columns: Int, rows: Int) -> CGSize {
+        CGSize(
+            width: (CGFloat(columns) * atlas.cellWidth + contentInset * 2 + 1) / scale,
+            height: (CGFloat(rows) * atlas.cellHeight + contentInset * 2 + 1) / scale
+        )
+    }
+
     // MARK: - 渲染
 
     func render(

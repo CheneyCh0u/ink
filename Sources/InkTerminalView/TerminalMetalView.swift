@@ -67,6 +67,28 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     /// 当前按视图尺寸算出的格数（布局未就绪时为 nil）。
     public var currentGridSize: TerminalSize? { lastGridSize }
 
+    /// 保证指定列数与行数完整可见所需的视图尺寸（point）。
+    public func minimumViewportSize(columns: Int, rows: Int) -> CGSize {
+        if let renderer {
+            return renderer.viewportSize(columns: columns, rows: rows)
+        }
+
+        // 尚未进窗口时 renderer 还不存在，用同一套字体度量提前给布局提供约束。
+        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+        let font = fontFamily.flatMap { NSFont(name: $0, size: fontSize) }
+            ?? InkDesignTokens.Typography.terminal(size: fontSize)
+        let advance = ("0" as NSString).size(withAttributes: [.font: font]).width
+        let cellWidth = ceil(advance * scale) / scale
+        let naturalHeight = ceil(NSLayoutManager().defaultLineHeight(for: font) * scale)
+        let cellHeight = ceil(naturalHeight * max(0.8, lineHeightMultiplier)) / scale
+        let inset = InkDesignTokens.Spacing.sm * 2
+        let pixelSafety = 1 / scale
+        return CGSize(
+            width: CGFloat(columns) * cellWidth + inset + pixelSafety,
+            height: CGFloat(rows) * cellHeight + inset + pixelSafety
+        )
+    }
+
     // 滚动与选区。offset 单位是行，0 = 跟住底部。
     private var scrollOffset = 0
     private var scrollAccumulator: CGFloat = 0

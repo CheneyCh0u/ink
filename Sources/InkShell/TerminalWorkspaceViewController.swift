@@ -4,12 +4,16 @@ import InkTerminalView
 import TerminalCore
 
 @MainActor
-final class TerminalPaneContainerView: NSView {
+final class TerminalPaneContainerView: NSView, WorkspaceSplitMinimumSizing {
     let paneID: PaneID
     let terminalView: TerminalMetalView
 
     var isActive = false {
         didSet { updateBorder() }
+    }
+
+    var minimumSplitSize: NSSize {
+        terminalView.minimumViewportSize(columns: 10, rows: 3)
     }
 
     init(paneID: PaneID, terminalView: TerminalMetalView) {

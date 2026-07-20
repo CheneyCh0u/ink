@@ -1,4 +1,5 @@
 import AppKit
+import InkTerminalView
 import Testing
 @testable import InkShell
 
@@ -110,6 +111,52 @@ struct WorkspaceSplitContainerViewTests {
         #expect(second.frame.height >= 48)
     }
 
+    @Test("大字号终端拖动后仍保留十列三行")
+    func dragPreservesMinimumGridAtLargeFont() {
+        let container = WorkspaceSplitContainerView(
+            splitID: SplitID(), axis: .leftRight, weights: [0.5, 0.5]
+        )
+        container.frame = NSRect(x: 0, y: 0, width: 1_600, height: 700)
+        let first = terminalPane(fontSize: 72)
+        let second = terminalPane(fontSize: 72)
+        container.addPaneSubview(first)
+        container.addPaneSubview(second)
+        container.layoutSubtreeIfNeeded()
+
+        #expect(container.beginDividerDrag(at: NSPoint(x: 800, y: 350)))
+        container.updateDividerDrag(to: NSPoint(x: 0, y: 350))
+        container.layoutSubtreeIfNeeded()
+
+        #expect(first.frame.width + 0.001 >= first.minimumSplitSize.width)
+        #expect(second.frame.width + 0.001 >= second.minimumSplitSize.width)
+        #expect(first.minimumSplitSize.width > 80)
+        #expect(first.minimumSplitSize.height > 48)
+    }
+
+    @Test("嵌套子树的最小尺寸会递归约束外层 divider")
+    func dragPreservesNestedSubtreeMinimum() {
+        let nested = WorkspaceSplitContainerView(
+            splitID: SplitID(), axis: .leftRight, weights: [0.5, 0.5]
+        )
+        nested.addPaneSubview(FixedMinimumView(width: 250, height: 60))
+        nested.addPaneSubview(FixedMinimumView(width: 250, height: 60))
+
+        let root = WorkspaceSplitContainerView(
+            splitID: SplitID(), axis: .leftRight, weights: [0.5, 0.5]
+        )
+        root.frame = NSRect(x: 0, y: 0, width: 800, height: 400)
+        root.addPaneSubview(nested)
+        root.addPaneSubview(FixedMinimumView(width: 100, height: 60))
+        root.layoutSubtreeIfNeeded()
+
+        #expect(root.beginDividerDrag(at: NSPoint(x: 400, y: 200)))
+        root.updateDividerDrag(to: NSPoint(x: 0, y: 200))
+        root.layoutSubtreeIfNeeded()
+
+        #expect(nested.frame.width >= 501)
+        #expect(root.subviews[1].frame.width >= 100)
+    }
+
     @Test("分隔线命中区域外不开始拖动")
     func dragRequiresDividerHit() {
         let container = WorkspaceSplitContainerView(
@@ -138,5 +185,27 @@ struct WorkspaceSplitContainerViewTests {
         )
 
         #expect(container.hitTest(pointInsideSecondPane) === container)
+    }
+
+    private func terminalPane(fontSize: CGFloat) -> TerminalPaneContainerView {
+        let terminalView = TerminalMetalView(frame: .zero)
+        terminalView.fontSize = fontSize
+        terminalView.lineHeightMultiplier = 1.2
+        return TerminalPaneContainerView(paneID: PaneID(), terminalView: terminalView)
+    }
+}
+
+@MainActor
+private final class FixedMinimumView: NSView, WorkspaceSplitMinimumSizing {
+    let minimumSplitSize: NSSize
+
+    init(width: CGFloat, height: CGFloat) {
+        minimumSplitSize = NSSize(width: width, height: height)
+        super.init(frame: .zero)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("代码构建，不支持 nib")
     }
 }
