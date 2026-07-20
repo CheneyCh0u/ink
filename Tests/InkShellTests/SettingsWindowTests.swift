@@ -1,4 +1,5 @@
 import AppKit
+import InkDesign
 import Testing
 @testable import InkShell
 
@@ -64,7 +65,16 @@ struct SettingsWindowTests {
         }
         let panelFrames = panels.map { $0.convert($0.bounds, to: contentView) }
         let reference = try #require(panelFrames.first)
+        let scrollView = try #require(ancestor(of: panels[0], as: NSScrollView.self))
+        let expectedWidth = min(
+            InkDesignTokens.Settings.contentWidth,
+            scrollView.contentView.bounds.width - InkDesignTokens.Spacing.xl * 2
+        )
 
+        #expect(
+            abs(reference.width - expectedWidth) < 0.5,
+            "设置内容列宽度 \(reference.width)，应占满可用宽度 \(expectedWidth)"
+        )
         for (title, frame) in zip(sectionTitles.dropFirst(), panelFrames.dropFirst()) {
             #expect(
                 abs(frame.minX - reference.minX) < 0.5,
@@ -80,6 +90,15 @@ struct SettingsWindowTests {
 
     private func allSubviews(in view: NSView) -> [NSView] {
         view.subviews.flatMap { [$0] + allSubviews(in: $0) }
+    }
+
+    private func ancestor<T: NSView>(of view: NSView, as type: T.Type) -> T? {
+        var candidate = view.superview
+        while let current = candidate {
+            if let match = current as? T { return match }
+            candidate = current.superview
+        }
+        return nil
     }
 
     /// 驱动主 RunLoop 让异步布局（含 AppKit 显示周期的窗口适配 pass）跑完。

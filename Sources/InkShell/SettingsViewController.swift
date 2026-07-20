@@ -188,10 +188,15 @@ final class SettingsViewController: NSViewController {
         }
 
         scroll.documentView = document
+        let preferredContentWidth = content.widthAnchor.constraint(
+            equalToConstant: InkDesignTokens.Settings.contentWidth
+        )
+        preferredContentWidth.priority = .defaultHigh
         NSLayoutConstraint.activate([
             content.topAnchor.constraint(equalTo: document.topAnchor, constant: InkDesignTokens.Spacing.xl),
             content.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -InkDesignTokens.Spacing.xl),
             content.centerXAnchor.constraint(equalTo: document.centerXAnchor),
+            preferredContentWidth,
             content.widthAnchor.constraint(
                 lessThanOrEqualToConstant: InkDesignTokens.Settings.contentWidth
             ),
