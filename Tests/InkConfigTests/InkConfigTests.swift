@@ -91,6 +91,9 @@ struct InkConfigTests {
         [font]
         size = 16
 
+        [terminal]
+        theme = "pine"
+
         [cursor]
         style = "underline"
         blink = false
@@ -104,6 +107,7 @@ struct InkConfigTests {
 
         let config = InkConfig.load(from: file)
         #expect(config.fontSize == 16)
+        #expect(config.terminalTheme == .pine)
         #expect(config.cursorStyle == .underline)
         #expect(config.cursorBlink == false)
         #expect(config.optionAsMeta == false)
@@ -135,6 +139,7 @@ struct InkConfigTests {
         config.fontFamily = "Menlo"
         config.fontSize = 16
         config.lineHeight = 1.35
+        config.terminalTheme = .warm
         config.cursorStyle = .bar
         config.cursorBlink = false
         config.optionAsMeta = false
@@ -147,5 +152,19 @@ struct InkConfigTests {
         #expect(text.contains(#"future_option = "keep""#))
         #expect(text.contains("size = 16 # 保留行尾注释"))
         #expect(InkConfig.load(from: file) == config)
+    }
+
+    @Test("未知终端主题回退为中性炭")
+    func invalidTerminalThemeUsesDefault() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ink-theme-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent("config.toml")
+        try """
+        [terminal]
+        theme = "missing"
+        """.write(to: file, atomically: true, encoding: .utf8)
+
+        #expect(InkConfig.load(from: file).terminalTheme == .neutral)
     }
 }

@@ -38,6 +38,14 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         didSet { if lineHeightMultiplier != oldValue { rebuildRenderer() } }
     }
 
+    /// 终端配色家族。切换时只更新 renderer 的调色板 uniform，不重建 glyph atlas。
+    public var terminalTheme: InkTerminalTheme = .neutral {
+        didSet {
+            guard terminalTheme != oldValue else { return }
+            applyCurrentPalette()
+        }
+    }
+
     public var cursorStyle: TerminalCursorStyle = .block {
         didSet {
             renderer?.cursorStyle = cursorStyle
@@ -216,8 +224,7 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
 
     public override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        renderer?.apply(palette: .current(for: effectiveAppearance))
-        dirty = true
+        applyCurrentPalette()
     }
 
     public override func layout() {
@@ -234,12 +241,17 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
             font: font, scale: scale, lineHeightMultiplier: lineHeightMultiplier
         ) else { return }
         renderer.cursorStyle = cursorStyle
-        renderer.apply(palette: .current(for: effectiveAppearance))
+        renderer.apply(palette: terminalTheme.palette(for: effectiveAppearance))
         self.renderer = renderer
         metalLayer.device = renderer.device
         lastGridSize = nil
         updateDrawableSize()
         dirty = true
+    }
+
+    private func applyCurrentPalette() {
+        renderer?.apply(palette: terminalTheme.palette(for: effectiveAppearance))
+        markDirty()
     }
 
     private func updateDrawableSize() {

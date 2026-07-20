@@ -70,7 +70,7 @@ let package = Package(
         ),
         .testTarget(
             name: "InkShellTests",
-            dependencies: ["InkShell", "InkDesign"]
+            dependencies: ["InkShell", "InkConfig", "InkDesign"]
         ),
     ]
 )

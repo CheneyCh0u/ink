@@ -8,6 +8,9 @@ import Foundation
 /// size = 14.0
 /// line_height = 1.2
 ///
+/// [terminal]
+/// theme = "neutral"     # warm | graphite | pine | plum | neutral
+///
 /// [appearance]
 /// mode = "system"       # system | light | dark
 ///
@@ -46,6 +49,10 @@ public struct InkConfig: Equatable, Sendable {
         case block, bar, underline
     }
 
+    public enum TerminalTheme: String, CaseIterable, Sendable {
+        case warm, graphite, pine, plum, neutral
+    }
+
     public var appearanceMode: AppearanceMode = .system
     public var startupSidebarMode: SidebarMode = .expanded
     public var rememberWindowFrame = true
@@ -56,6 +63,8 @@ public struct InkConfig: Equatable, Sendable {
     public var fontSize: Double = 14
     /// 行高倍数。SF Mono 原生行距紧凑，1.2 接近 JetBrains Mono 的呼吸感。
     public var lineHeight: Double = 1.2
+    /// 终端配色家族；浅色或深色变体跟随界面外观。
+    public var terminalTheme: TerminalTheme = .neutral
     public var cursorStyle: CursorStyle = .block
     public var cursorBlink = true
     public var optionAsMeta = true
@@ -104,6 +113,10 @@ public struct InkConfig: Equatable, Sendable {
         if let lh = values.double("font.line_height"), (0.8...2.0).contains(lh) {
             config.lineHeight = lh
         }
+        if let theme = values.string("terminal.theme"),
+           let parsed = TerminalTheme(rawValue: theme) {
+            config.terminalTheme = parsed
+        }
         if let style = values.string("cursor.style"), let parsed = CursorStyle(rawValue: style) {
             config.cursorStyle = parsed
         }
@@ -144,6 +157,7 @@ public struct InkConfig: Equatable, Sendable {
             ("font.family", quote(fontFamily ?? "")),
             ("font.size", format(fontSize)),
             ("font.line_height", format(lineHeight)),
+            ("terminal.theme", quote(terminalTheme.rawValue)),
             ("cursor.style", quote(cursorStyle.rawValue)),
             ("cursor.blink", cursorBlink ? "true" : "false"),
             ("input.option_as_meta", optionAsMeta ? "true" : "false"),
