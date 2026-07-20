@@ -66,6 +66,45 @@ do {
     print("Reflow 10 万行：变窄 \(narrow)  变宽 \(widen)\n")
 }
 
+// 搜索代价：100 个固定命中，随后追加一个新命中，最后释放瞬态缓存。
+do {
+    var parser = Parser()
+    var terminal = Terminal(
+        size: TerminalSize(columns: columns, rows: 50),
+        scrollbackCapacity: lineCount
+    )
+    for i in 0..<lineCount {
+        let marker = i % 1_000 == 0 ? " search-needle" : ""
+        parser.feed(
+            Array("build output line \(i)\(marker)\r\n".utf8),
+            handler: &terminal
+        )
+    }
+
+    let clock = ContinuousClock()
+    let beforeSearch = footprintBytes()
+    var index = TerminalSearchIndex()
+    let full = clock.measure {
+        index.update(in: terminal, query: "search-needle")
+    }
+    let fullCount = index.matches.count
+    let cachedFootprint = footprintBytes()
+
+    parser.feed(Array("search-needle incremental\r\n".utf8), handler: &terminal)
+    let incremental = clock.measure {
+        index.update(in: terminal, query: "search-needle")
+    }
+    let incrementalCount = index.matches.count
+    let clear = clock.measure { index.clear() }
+    let clearedFootprint = footprintBytes()
+
+    print("Search 10 万行")
+    print("  首次扫描 \(full)  命中 \(fullCount)")
+    print("  单行增量 \(incremental)  命中 \(incrementalCount)")
+    print("  结果缓存 \(mb(cachedFootprint - beforeSearch))  清理 \(clear)")
+    print("  清理后相对搜索前 \(mb(clearedFootprint - beforeSearch))\n")
+}
+
 for scenario in scenarios {
     var parser = Parser()
     var terminal = Terminal(
