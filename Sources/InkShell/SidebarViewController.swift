@@ -151,8 +151,8 @@ final class SidebarViewController: NSViewController {
             rowStack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.xs),
             rowStack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.xs),
 
-            newButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.sm),
-            newButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.sm),
+            newButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.xs),
+            newButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.xs),
             newButton.heightAnchor.constraint(equalToConstant: InkDesignTokens.Sidebar.actionHeight),
             shortcutHint.centerYAnchor.constraint(equalTo: newButton.centerYAnchor),
             shortcutHint.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.md),
@@ -162,8 +162,8 @@ final class SidebarViewController: NSViewController {
             footerSeparator.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.sm),
             footerSeparator.bottomAnchor.constraint(equalTo: settingsButton.topAnchor, constant: -sp.xxs),
 
-            settingsButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.sm),
-            settingsButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.sm),
+            settingsButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.xs),
+            settingsButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.xs),
             settingsButton.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -sp.sm),
             settingsButton.heightAnchor.constraint(equalToConstant: InkDesignTokens.Sidebar.actionHeight),
             settingsShortcutHint.centerYAnchor.constraint(equalTo: settingsButton.centerYAnchor),
@@ -210,11 +210,13 @@ final class SidebarViewController: NSViewController {
         newButton.title = compact ? "" : "新建项目"
         newButton.imagePosition = compact ? .imageOnly : .imageLeading
         newButton.alignment = compact ? .center : .left
+        newButton.contentLeadingInset = compact ? 0 : InkDesignTokens.Spacing.xs
         newButton.toolTip = compact ? "新建项目" : nil
         newButton.setAccessibilityLabel("新建项目")
         settingsButton.title = compact ? "" : "设置"
         settingsButton.imagePosition = compact ? .imageOnly : .imageLeading
         settingsButton.alignment = compact ? .center : .left
+        settingsButton.contentLeadingInset = compact ? 0 : InkDesignTokens.Spacing.xs
         settingsButton.toolTip = compact ? "设置" : nil
         settingsButton.setAccessibilityLabel("设置")
     }
@@ -545,13 +547,22 @@ private final class ProjectLabelIndicator: NSView {
 private final class SidebarActionButton: NSButton {
 
     private var hovered = false
+    var contentLeadingInset: CGFloat {
+        get { (cell as? SidebarActionButtonCell)?.contentLeadingInset ?? 0 }
+        set {
+            (cell as? SidebarActionButtonCell)?.contentLeadingInset = newValue
+            needsDisplay = true
+        }
+    }
     var isSelectedState = false {
         didSet { updateLayerColor() }
     }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+        cell = SidebarActionButtonCell()
         wantsLayer = true
+        contentLeadingInset = InkDesignTokens.Spacing.xs
         updateLayerColor()
         addTrackingArea(NSTrackingArea(
             rect: .zero,
@@ -589,5 +600,19 @@ private final class SidebarActionButton: NSButton {
                     nil
                 }
         }
+    }
+}
+
+@MainActor
+private final class SidebarActionButtonCell: NSButtonCell {
+    var contentLeadingInset: CGFloat = 0
+
+    override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
+        var contentFrame = cellFrame
+        contentFrame.size.width = max(0, contentFrame.width - contentLeadingInset)
+        if controlView.userInterfaceLayoutDirection == .leftToRight {
+            contentFrame.origin.x += contentLeadingInset
+        }
+        super.draw(withFrame: contentFrame, in: controlView)
     }
 }
