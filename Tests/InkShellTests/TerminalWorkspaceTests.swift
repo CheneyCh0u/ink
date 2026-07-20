@@ -45,11 +45,15 @@ struct TerminalWorkspaceTests {
         workspace.show(tab: tab, config: InkConfig())
         workspace.view.layoutSubtreeIfNeeded()
         let splitView = try #require(
-            allSubviews(in: workspace.view).compactMap { $0 as? WorkspaceSplitView }.first
+            allSubviews(in: workspace.view)
+                .compactMap { $0 as? WorkspaceSplitContainerView }
+                .first
         )
 
-        splitView.setPosition(200, ofDividerAt: 0)
-        splitView.onFinishTracking?()
+        let dividerPoint = NSPoint(x: splitView.subviews[0].frame.maxX, y: 100)
+        #expect(splitView.beginDividerDrag(at: dividerPoint))
+        splitView.updateDividerDrag(to: NSPoint(x: 200, y: 100))
+        splitView.endDividerDrag()
 
         guard case let .group(_, _, weights, _) = tab.layout else {
             Issue.record("拖动后布局不再是分组")
@@ -91,15 +95,23 @@ struct TerminalWorkspaceTests {
                 "show 后、layout 前权重不应塌缩"
             )
             workspace.view.layoutSubtreeIfNeeded()
+            for splitView in allSubviews(in: workspace.view).compactMap({
+                $0 as? WorkspaceSplitContainerView
+            }) {
+                splitView.needsLayout = true
+                splitView.layoutSubtreeIfNeeded()
+            }
             #expect(
                 splitWeights(in: tab.layout).allSatisfy { $0 > 0 && $0 < 1 },
-                "首次 layout 后权重不应塌缩"
+                "连续 layout 后权重不应塌缩"
             )
             target = created
         }
 
         let splitView = try #require(
-            allSubviews(in: workspace.view).compactMap { $0 as? WorkspaceSplitView }.first
+            allSubviews(in: workspace.view)
+                .compactMap { $0 as? WorkspaceSplitContainerView }
+                .first
         )
         #expect(workspace.view.frame.height > 1)
         #expect(splitView.frame.height > 1)
@@ -111,7 +123,7 @@ struct TerminalWorkspaceTests {
         }
     }
 
-    @Test("递归布局创建左右与上下两种 NSSplitView")
+    @Test("递归布局创建左右与上下两种分屏容器")
     func buildsNestedSplitViews() {
         let first = makePane()
         let second = makePane()
@@ -125,10 +137,12 @@ struct TerminalWorkspaceTests {
         workspace.show(tab: tab, config: InkConfig())
         workspace.view.layoutSubtreeIfNeeded()
 
-        let splitViews = allSubviews(in: workspace.view).compactMap { $0 as? WorkspaceSplitView }
+        let splitViews = allSubviews(in: workspace.view).compactMap {
+            $0 as? WorkspaceSplitContainerView
+        }
         #expect(splitViews.count == 2)
-        #expect(splitViews.contains { $0.isVertical })
-        #expect(splitViews.contains { !$0.isVertical })
+        #expect(splitViews.contains { $0.axis == .leftRight })
+        #expect(splitViews.contains { $0.axis == .topBottom })
     }
 
     @Test("只有活动 pane 显示焦点边框")

@@ -44,53 +44,6 @@ final class TerminalPaneContainerView: NSView {
     }
 }
 
-/// 保存分组标识和权重，首次拿到有效 frame 后恢复所有 divider 位置。
-@MainActor
-final class WorkspaceSplitView: NSSplitView {
-    let splitID: SplitID
-    let modelWeights: [Double]
-    var onFinishTracking: (() -> Void)?
-    private var appliedInitialWeights = false
-
-    init(splitID: SplitID, weights: [Double]) {
-        self.splitID = splitID
-        modelWeights = weights
-        super.init(frame: .zero)
-        dividerStyle = .thin
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("代码构建，不支持 nib")
-    }
-
-    override func layout() {
-        super.layout()
-        guard !appliedInitialWeights,
-              subviews.count == modelWeights.count,
-              subviews.count > 1 else { return }
-        let length = isVertical ? bounds.width : bounds.height
-        let available = length - dividerThickness * CGFloat(subviews.count - 1)
-        guard available > 1 else { return }
-        appliedInitialWeights = true
-        var origin: CGFloat = 0
-        for index in subviews.indices {
-            let childLength = index == subviews.count - 1
-                ? length - origin
-                : available * CGFloat(modelWeights[index])
-            subviews[index].frame = isVertical
-                ? NSRect(x: origin, y: 0, width: childLength, height: bounds.height)
-                : NSRect(x: 0, y: origin, width: bounds.width, height: childLength)
-            origin += childLength + dividerThickness
-        }
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        super.mouseDown(with: event)
-        onFinishTracking?()
-    }
-}
-
 /// 当前标签的可见终端工作区。后台标签只保留 TerminalTab，不保留 Metal 视图。
 @MainActor
 final class TerminalWorkspaceViewController: NSViewController {
@@ -162,20 +115,6 @@ final class TerminalWorkspaceViewController: NSViewController {
         }
     }
 
-    private func commitWeights(from splitView: WorkspaceSplitView) {
-        guard splitView.subviews.count > 1 else { return }
-        let length = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
-        let available = length
-            - splitView.dividerThickness * CGFloat(splitView.subviews.count - 1)
-        guard available > 1 else { return }
-        let weights = splitView.subviews.map { subview in
-            Double((splitView.isVertical ? subview.frame.width : subview.frame.height) / available)
-        }
-        guard weights.allSatisfy({ $0.isFinite && $0 > 0 }) else { return }
-        _ = currentTab?.updateSplitWeights(splitView.splitID, weights: weights)
-        onWeightsChange?(splitView.splitID, weights)
-    }
-
     private func makeView(
         for layout: PaneLayout,
         tab: TerminalTab,
@@ -204,14 +143,15 @@ final class TerminalWorkspaceViewController: NSViewController {
             return container
 
         case let .group(id, axis, weights, children):
-            let splitView = WorkspaceSplitView(splitID: id, weights: weights)
-            splitView.isVertical = axis == .leftRight
+            let splitView = WorkspaceSplitContainerView(
+                splitID: id, axis: axis, weights: weights
+            )
             for child in children {
-                splitView.addArrangedSubview(makeView(for: child, tab: tab, config: config))
+                splitView.addPaneSubview(makeView(for: child, tab: tab, config: config))
             }
-            splitView.onFinishTracking = { [weak self, weak splitView] in
-                guard let splitView else { return }
-                self?.commitWeights(from: splitView)
+            splitView.onWeightsChange = { [weak self] splitID, weights in
+                _ = self?.currentTab?.updateSplitWeights(splitID, weights: weights)
+                self?.onWeightsChange?(splitID, weights)
             }
             return splitView
         }
