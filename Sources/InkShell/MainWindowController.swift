@@ -19,22 +19,18 @@ enum SidebarDisplayMode: Equatable {
     }
 }
 
-/// 主窗口：项目侧边栏 + 会话标签栏 + 终端内容区。
+/// 主窗口：项目侧边栏 + 标签栏 + 可递归分屏的终端内容区。
 ///
-/// 结构：侧边栏列**项目**（持久化的目录），标签栏列**当前项目的会话**。
-/// 新会话在项目目录里启动。
-///
-/// 内存纪律的关键选择：**所有会话共享一个 `TerminalMetalView`**。切换只是
-/// 换 provider 指针——一块 Metal layer、一份 glyph atlas。会话状态
-/// （grid、scrollback）在各自 `TerminalSession` 里，是纯数据。
+/// 结构：侧边栏列项目，标签栏列当前项目的标签，每个标签包含一个或多个 pane。
+/// 只有当前标签创建 Metal 视图，后台标签只保留 PTY、grid 与 scrollback。
 @MainActor
-public final class MainWindowController: NSWindowController, NSWindowDelegate {
+public final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation {
 
     private let splitVC = ShellSplitViewController()
     private var sidebarItem: NSSplitViewItem?
     private let sidebarVC = SidebarViewController()
     private let tabBar = TabBarView()
-    private let terminalView = TerminalMetalView(frame: .zero)
+    private let workspaceVC = TerminalWorkspaceViewController()
     private let contentRoot = NSView()
     private let terminalWorkspace = NSView()
     private lazy var settingsVC = SettingsViewController(config: config)
@@ -48,6 +44,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     private var sidebarMode: SidebarDisplayMode = .expanded
     private var isShowingSettings = false
     private var isSettingsViewInstalled = false
+    private var splitShortcutState = SplitShortcutState()
+    private var splitShortcutMonitor: Any?
 
     private var activeProject: Project? {
         projects.indices.contains(activeProjectIndex) ? projects[activeProjectIndex] : nil
@@ -80,6 +78,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.delegate = self
         loadProjects()
         buildContent()
+        installSplitShortcutMonitor()
         applyConfig(config)
         // 配置热重载：~/.config/ink/config.toml 保存即生效。
         configWatcher = ConfigWatcher { [weak self] fresh in
@@ -104,18 +103,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
             case .light: NSAppearance(named: .aqua)
             case .dark: NSAppearance(named: .darkAqua)
             }
-        terminalView.fontFamily = config.fontFamily
-        terminalView.lineHeightMultiplier = CGFloat(config.lineHeight)
-        terminalView.fontSize = CGFloat(config.fontSize)
-        terminalView.cursorStyle =
-            switch config.cursorStyle {
-            case .block: .block
-            case .bar: .bar
-            case .underline: .underline
-            }
-        terminalView.cursorBlinkEnabled = config.cursorBlink
-        terminalView.optionAsMeta = config.optionAsMeta
-        terminalView.copyOnSelect = config.copyOnSelect
+        workspaceVC.apply(config: config)
         if config.rememberWindowFrame {
             window?.setFrameAutosaveName("InkMainWindow")
         } else {
@@ -166,12 +154,13 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
         hairline.boxType = .separator
         terminalWorkspace.translatesAutoresizingMaskIntoConstraints = false
         tabBar.translatesAutoresizingMaskIntoConstraints = false
-        terminalView.translatesAutoresizingMaskIntoConstraints = false
+        let workspaceView = workspaceVC.view
+        workspaceView.translatesAutoresizingMaskIntoConstraints = false
         hairline.translatesAutoresizingMaskIntoConstraints = false
         contentRoot.addSubview(terminalWorkspace)
         terminalWorkspace.addSubview(tabBar)
         terminalWorkspace.addSubview(hairline)
-        terminalWorkspace.addSubview(terminalView)
+        terminalWorkspace.addSubview(workspaceView)
         NSLayoutConstraint.activate([
             terminalWorkspace.topAnchor.constraint(equalTo: contentRoot.topAnchor),
             terminalWorkspace.leadingAnchor.constraint(equalTo: contentRoot.leadingAnchor),
@@ -185,10 +174,10 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
             hairline.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
             hairline.leadingAnchor.constraint(equalTo: terminalWorkspace.leadingAnchor),
             hairline.trailingAnchor.constraint(equalTo: terminalWorkspace.trailingAnchor),
-            terminalView.topAnchor.constraint(equalTo: hairline.bottomAnchor),
-            terminalView.leadingAnchor.constraint(equalTo: terminalWorkspace.leadingAnchor),
-            terminalView.trailingAnchor.constraint(equalTo: terminalWorkspace.trailingAnchor),
-            terminalView.bottomAnchor.constraint(equalTo: terminalWorkspace.bottomAnchor),
+            workspaceView.topAnchor.constraint(equalTo: hairline.bottomAnchor),
+            workspaceView.leadingAnchor.constraint(equalTo: terminalWorkspace.leadingAnchor),
+            workspaceView.trailingAnchor.constraint(equalTo: terminalWorkspace.trailingAnchor),
+            workspaceView.bottomAnchor.constraint(equalTo: terminalWorkspace.bottomAnchor),
         ])
         contentVC.view = contentRoot
 
@@ -224,16 +213,14 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
 
         // 事件接线。
-        tabBar.onSelect = { [weak self] in self?.selectSession(at: $0) }
+        tabBar.onSelect = { [weak self] in self?.selectTab(at: $0) }
         tabBar.onClose = { [weak self] index in
-            guard let self, let project = self.activeProject,
-                  project.sessions.indices.contains(index) else { return }
-            project.sessions[index].terminate() // 退出回调里走 removeSession
+            self?.closeTab(at: index)
         }
         tabBar.onRename = { [weak self] index, name in
             guard let self, let project = self.activeProject,
-                  project.sessions.indices.contains(index) else { return }
-            project.sessions[index].customName = name
+                  project.tabs.indices.contains(index) else { return }
+            project.tabs[index].customName = name
             self.refreshChrome()
         }
         tabBar.onNewTab = { [weak self] in self?.newSession(nil) }
@@ -252,20 +239,12 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
         settingsVC.onDone = { [weak self] in self?.hideSettings() }
         settingsVC.onOpenConfig = { [weak self] in self?.openConfigFile() }
         settingsVC.onReset = { [weak self] in self?.saveConfig(InkConfig()) }
+        workspaceVC.onActivatePane = { [weak self] _ in self?.refreshChrome() }
 
-        terminalView.onGridResize = { [weak self] size in
-            guard let self else { return }
-            if let session = self.activeProject?.activeSession {
-                session.resize(to: size)
-            } else if !self.firstSessionScheduled {
-                // 首会话推迟到布局稳定（见 M4 的首启修正）。
-                self.firstSessionScheduled = true
-                DispatchQueue.main.async { [weak self] in
-                    self?.newSession(nil)
-                }
-            }
+        if activeProject?.tabs.isEmpty ?? true, !firstSessionScheduled {
+            firstSessionScheduled = true
+            DispatchQueue.main.async { [weak self] in self?.newSession(nil) }
         }
-        window.makeFirstResponder(terminalView)
     }
 
     private func saveConfig(_ fresh: InkConfig) {
@@ -292,6 +271,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     @objc public func showSettings(_ sender: Any?) {
         guard !isShowingSettings else { return }
+        cancelSplitShortcut()
         installSettingsViewIfNeeded()
         isShowingSettings = true
         sidebarVC.isSettingsSelected = true
@@ -323,7 +303,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
         sidebarVC.isSettingsSelected = false
         settingsVC.view.isHidden = true
         terminalWorkspace.isHidden = false
-        window?.makeFirstResponder(terminalView)
+        workspaceVC.focusActivePane()
         refreshChrome()
     }
 
@@ -452,16 +432,16 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
         hideSettings()
         activeProjectIndex = index
         persistProjects()
-        if let project = activeProject, project.sessions.isEmpty {
-            newSession(nil) // 空项目：选中即开首个会话
+        if let project = activeProject, project.tabs.isEmpty {
+            newSession(nil) // 空项目：选中即开首个标签
         } else {
-            attachActiveSession()
+            attachActiveTab()
         }
         refreshChrome()
     }
 
     @objc public func selectSessionMenu(_ sender: NSMenuItem) {
-        selectSession(at: sender.tag)
+        selectTab(at: sender.tag)
     }
 
     @objc public func removeCurrentProject(_ sender: Any?) {
@@ -530,12 +510,11 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     func removeProject(at index: Int) {
         guard projects.indices.contains(index) else { return }
         let project = projects[index]
-        // 先解除回调再终止，避免 onExit 重入 removeSession 的列表管理。
-        for session in project.sessions {
-            session.detach()
-            session.terminate()
+        // 先解除回调再终止，避免 onExit 重入标签与布局管理。
+        for tab in project.tabs {
+            terminate(tab: tab)
         }
-        project.sessions.removeAll()
+        project.tabs.removeAll()
         projects.remove(at: index)
 
         // 项目删光了回到默认 ~，和首启一致，窗口不空转。
@@ -549,122 +528,273 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
         selectProject(at: activeProjectIndex)
     }
 
-    // MARK: - 会话操作
+    // MARK: - 标签与 pane 操作
 
     @objc public func newSession(_ sender: Any?) {
         guard let project = activeProject,
-              let size = terminalView.currentGridSize else { return }
+              let pane = startPane(
+                size: TerminalSize(columns: 80, rows: 24),
+                workingDirectory: project.directory.path
+              ) else { return }
+        project.tabs.append(TerminalTab(initialPane: pane))
+        project.activeTabIndex = project.tabs.count - 1
+        attachActiveTab()
+        refreshChrome()
+    }
+
+    /// 兼容旧 selector；关闭语义已改为当前 pane。
+    @objc public func closeSession(_ sender: Any?) {
+        closeActivePane(sender)
+    }
+
+    @objc public func splitLeft(_ sender: Any?) {
+        splitActivePane(direction: .left)
+    }
+
+    @objc public func splitRight(_ sender: Any?) {
+        splitActivePane(direction: .right)
+    }
+
+    @objc public func splitUp(_ sender: Any?) {
+        splitActivePane(direction: .up)
+    }
+
+    @objc public func splitDown(_ sender: Any?) {
+        splitActivePane(direction: .down)
+    }
+
+    @objc public func closeActivePane(_ sender: Any?) {
+        guard !isShowingSettings,
+              let project = activeProject,
+              let tab = project.activeTab else { return }
+        if tab.paneCount == 1 {
+            closeTab(at: project.activeTabIndex)
+            return
+        }
+        let paneID = tab.activePaneID
+        guard let pane = tab.removePane(paneID) else { return }
+        pane.session.detach()
+        pane.session.terminate()
+        attachActiveTab()
+        refreshChrome()
+    }
+
+    private func splitActivePane(direction: PaneSplitDirection) {
+        guard !isShowingSettings,
+              let project = activeProject,
+              let tab = project.activeTab,
+              let activePane = tab.activePane else { return }
+
+        let currentSize = workspaceVC.currentGridSize(for: activePane.id)
+            ?? activePane.session.terminal.grid.size
+        let size: TerminalSize
+        switch direction.axis {
+        case .leftRight:
+            guard currentSize.columns >= 20 else { NSSound.beep(); return }
+            size = TerminalSize(columns: currentSize.columns / 2, rows: currentSize.rows)
+        case .topBottom:
+            guard currentSize.rows >= 6 else { NSSound.beep(); return }
+            size = TerminalSize(columns: currentSize.columns, rows: currentSize.rows / 2)
+        }
+        let workingDirectory = activePane.session.foregroundWorkingDirectory
+            ?? project.directory.path
+        guard let pane = startPane(size: size, workingDirectory: workingDirectory) else { return }
+        guard tab.insertPane(pane, splitting: activePane.id, direction: direction) else {
+            pane.session.detach()
+            pane.session.terminate()
+            return
+        }
+        attachActiveTab()
+        refreshChrome()
+    }
+
+    private func installSplitShortcutMonitor() {
+        splitShortcutMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.keyDown, .keyUp, .flagsChanged]
+        ) { @MainActor [weak self] event in
+            self?.handleSplitShortcut(event) ?? event
+        }
+    }
+
+    private func handleSplitShortcut(_ event: NSEvent) -> NSEvent? {
+        guard event.window === window else {
+            _ = splitShortcutState.handleKeyEvent(.contextLost)
+            return event
+        }
+
+        guard !isShowingSettings,
+              window?.firstResponder is TerminalMetalView else {
+            _ = splitShortcutState.handleKeyEvent(.contextLost)
+            return event
+        }
+
+        let keyEvent: SplitShortcutKeyEvent
+        switch event.type {
+        case .keyDown:
+            keyEvent = .keyDown(
+                keyCode: event.keyCode,
+                isRepeat: event.isARepeat,
+                commandDown: event.modifierFlags.contains(.command)
+            )
+        case .keyUp:
+            keyEvent = .keyUp(keyCode: event.keyCode)
+        case .flagsChanged:
+            keyEvent = .flagsChanged(
+                commandDown: event.modifierFlags.contains(.command)
+            )
+        default:
+            return event
+        }
+        return applySplitShortcutDecision(
+            splitShortcutState.handleKeyEvent(keyEvent), event: event
+        )
+    }
+
+    private func applySplitShortcutDecision(
+        _ decision: SplitShortcutDecision,
+        event: NSEvent
+    ) -> NSEvent? {
+        switch decision {
+        case .passThrough:
+            return event
+        case .consume:
+            return nil
+        case let .split(direction):
+            splitActivePane(direction: direction)
+            return nil
+        }
+    }
+
+    private func cancelSplitShortcut() {
+        _ = splitShortcutState.handle(.cancel)
+    }
+
+    private func startPane(size: TerminalSize, workingDirectory: String) -> TerminalPane? {
         let session = TerminalSession(
             size: size,
-            workingDirectory: project.directory.path,
+            workingDirectory: workingDirectory,
             scrollbackLines: config.scrollbackLines
         )
-        session.onUpdate = { [weak self] in
-            self?.terminalView.markDirty()
-            self?.refreshChromeIfNeeded()
+        let pane = TerminalPane(session: session)
+        session.onUpdate = { [weak self, weak pane] in
+            guard let self, let pane else { return }
+            self.workspaceVC.markDirty(pane.id)
+            self.refreshChromeIfNeeded()
         }
-        session.onExit = { [weak self, weak session] _ in
-            guard let self, let session else { return }
-            self.removeSession(session)
+        session.onExit = { [weak self, weak pane] _ in
+            guard let self, let pane else { return }
+            self.handlePaneExit(pane.id)
         }
         do {
             try session.start()
+            return pane
         } catch {
+            session.detach()
             NSAlert(error: error).runModal()
-            return
+            return nil
         }
-        project.sessions.append(session)
-        project.activeSessionIndex = project.sessions.count - 1
-        attachActiveSession()
-        refreshChrome()
     }
 
-    @objc public func closeSession(_ sender: Any?) {
-        activeProject?.activeSession?.terminate() // 退出回调里走 removeSession
-    }
-
-    private func removeSession(_ session: TerminalSession) {
-        for project in projects {
-            if let index = project.sessions.firstIndex(where: { $0 === session }) {
-                project.sessions.remove(at: index)
-                if project.activeSessionIndex >= project.sessions.count {
-                    project.activeSessionIndex = max(0, project.sessions.count - 1)
+    private func handlePaneExit(_ paneID: PaneID) {
+        for (projectIndex, project) in projects.enumerated() {
+            for (tabIndex, tab) in project.tabs.enumerated()
+            where tab.panes[paneID] != nil {
+                if tab.paneCount > 1, let pane = tab.removePane(paneID) {
+                    pane.session.detach()
+                    if projectIndex == activeProjectIndex,
+                       tabIndex == project.activeTabIndex {
+                        attachActiveTab()
+                    }
+                    refreshChrome()
+                } else {
+                    tab.activePane?.session.detach()
+                    _ = project.removeTab(at: tabIndex)
+                    normalizeAfterTabRemoval()
                 }
-                break
+                return
             }
         }
-        // 所有项目都没有会话了才关窗口；否则回到当前项目的邻近会话。
-        if projects.allSatisfy(\.sessions.isEmpty) {
+    }
+
+    private func closeTab(at index: Int) {
+        guard let project = activeProject,
+              let tab = project.removeTab(at: index) else { return }
+        terminate(tab: tab)
+        normalizeAfterTabRemoval()
+    }
+
+    private func terminate(tab: TerminalTab) {
+        let panes = tab.allPanes
+        for pane in panes { pane.session.detach() }
+        for pane in panes { pane.session.terminate() }
+    }
+
+    private func normalizeAfterTabRemoval() {
+        for project in projects where project.activeTabIndex >= project.tabs.count {
+            project.activeTabIndex = max(0, project.tabs.count - 1)
+        }
+        if projects.allSatisfy(\.tabs.isEmpty) {
+            workspaceVC.clear()
             window?.close()
             return
         }
-        if activeProject?.sessions.isEmpty ?? true {
-            // 当前项目空了：切到最近的有会话的项目。
-            if let index = projects.firstIndex(where: { !$0.sessions.isEmpty }) {
-                activeProjectIndex = index
-            }
+        if activeProject?.tabs.isEmpty ?? true,
+           let index = projects.firstIndex(where: { !$0.tabs.isEmpty }) {
+            activeProjectIndex = index
         }
-        attachActiveSession()
+        attachActiveTab()
         refreshChrome()
     }
 
-    private func selectSession(at index: Int) {
-        guard let project = activeProject, project.sessions.indices.contains(index) else { return }
-        project.activeSessionIndex = index
-        attachActiveSession()
+    private func selectTab(at index: Int) {
+        guard let project = activeProject, project.tabs.indices.contains(index) else { return }
+        project.activeTabIndex = index
+        attachActiveTab()
         refreshChrome()
     }
 
     @objc public func nextSession(_ sender: Any?) {
-        guard let project = activeProject, project.sessions.count > 1 else { return }
-        selectSession(at: (project.activeSessionIndex + 1) % project.sessions.count)
+        guard let project = activeProject, project.tabs.count > 1 else { return }
+        selectTab(at: (project.activeTabIndex + 1) % project.tabs.count)
     }
 
     @objc public func previousSession(_ sender: Any?) {
-        guard let project = activeProject, project.sessions.count > 1 else { return }
-        let count = project.sessions.count
-        selectSession(at: (project.activeSessionIndex - 1 + count) % count)
+        guard let project = activeProject, project.tabs.count > 1 else { return }
+        let count = project.tabs.count
+        selectTab(at: (project.activeTabIndex - 1 + count) % count)
     }
 
-    /// 把共享终端视图指到当前会话。
-    private func attachActiveSession() {
-        guard let session = activeProject?.activeSession else {
-            terminalView.terminalProvider = nil
-            terminalView.onInput = nil
-            terminalView.markDirty()
+    private func attachActiveTab() {
+        guard let tab = activeProject?.activeTab else {
+            workspaceVC.clear()
             return
         }
-        terminalView.terminalProvider = { [weak session] in
-            session?.terminal ?? Terminal(size: TerminalSize(columns: 80, rows: 24), scrollbackCapacity: 1)
+        workspaceVC.show(tab: tab, config: config)
+        DispatchQueue.main.async { [weak self] in
+            self?.workspaceVC.focusActivePane()
         }
-        terminalView.onInput = { [weak session] data in
-            session?.write(data)
-        }
-        if let size = terminalView.currentGridSize {
-            session.resize(to: size)
-        }
-        terminalView.resetTransientState()
     }
 
     // MARK: - 外壳刷新
 
-    /// 标签标题（Ghostty 式优先级）：用户改的名 > shell 设的 OSC 标题 >
+    /// 标签标题优先级：用户改的名 > 当前 pane 的 OSC 标题 >
     /// 项目路径缩写。路径在标签里头部截断（保 .../code/ink 尾部）。
-    private func sessionTitle(_ session: TerminalSession, project: Project) -> String {
-        if let custom = session.customName { return custom }
-        let osc = session.terminal.title
+    private func tabTitle(_ tab: TerminalTab, project: Project) -> String {
+        if let custom = tab.customName { return custom }
+        let osc = tab.activePane?.session.terminal.title ?? ""
         if !osc.isEmpty { return osc }
         return project.displayName
     }
 
     private func chromeSignature() -> String {
         let tabs = activeProject.map { project in
-            project.sessions.map { sessionTitle($0, project: project) }.joined(separator: "\u{1}")
+            project.tabs.map { tabTitle($0, project: project) }.joined(separator: "\u{1}")
         } ?? ""
         let sidebar = projects.map {
-            "\($0.displayName):\($0.sessions.count):\($0.label.rawValue)"
+            "\($0.displayName):\($0.tabs.count):\($0.label.rawValue)"
         }.joined(separator: "\u{1}")
-        return "\(activeProjectIndex)|\(activeProject?.activeSessionIndex ?? -1)|\(tabs)|\(sidebar)"
+        let pane = activeProject?.activeTab?.activePaneID.rawValue.uuidString ?? ""
+        return "\(activeProjectIndex)|\(activeProject?.activeTabIndex ?? -1)|\(pane)|\(tabs)|\(sidebar)"
     }
 
     /// 标题或结构变了才重建 chrome——每次输出都重建太浪费。
@@ -677,19 +807,19 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     private func refreshChrome() {
         lastChromeSignature = chromeSignature()
 
-        let activeSession = activeProject?.activeSessionIndex ?? -1
+        let activeTab = activeProject?.activeTabIndex ?? -1
         let tabs: [TabBarView.Tab] = activeProject.map { project in
-            project.sessions.enumerated().map { index, session in
+            project.tabs.enumerated().map { index, tab in
                 TabBarView.Tab(
-                    title: sessionTitle(session, project: project),
+                    title: tabTitle(tab, project: project),
                     shortcut: index < 9 ? "⌘\(index + 1)" : "",
-                    active: index == activeSession
+                    active: index == activeTab
                 )
             }
         } ?? []
         tabBar.reload(tabs: tabs)
         sidebarVC.reload(rows: projects.enumerated().map { index, project in
-            let fallback = project.sessions.isEmpty ? "未打开" : "\(project.sessions.count) 个会话"
+            let fallback = project.tabs.isEmpty ? "未打开" : "\(project.tabs.count) 个标签"
             return SidebarViewController.Row(
                 title: project.displayName,
                 subtitle: project.note ?? fallback,
@@ -703,12 +833,35 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - 窗口
 
     public func windowWillClose(_ notification: Notification) {
-        for project in projects {
-            for session in project.sessions {
-                session.terminate()
-            }
-            project.sessions.removeAll()
+        cancelSplitShortcut()
+        if let splitShortcutMonitor {
+            NSEvent.removeMonitor(splitShortcutMonitor)
+            self.splitShortcutMonitor = nil
         }
+        for project in projects {
+            for tab in project.tabs { terminate(tab: tab) }
+            project.tabs.removeAll()
+        }
+    }
+
+    public func windowDidResignKey(_ notification: Notification) {
+        cancelSplitShortcut()
+    }
+
+    public func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        guard let action = menuItem.action else { return true }
+        let horizontalActions = [#selector(splitLeft(_:)), #selector(splitRight(_:))]
+        let verticalActions = [#selector(splitUp(_:)), #selector(splitDown(_:))]
+        if horizontalActions.contains(action) || verticalActions.contains(action) {
+            guard !isShowingSettings,
+                  let pane = activeProject?.activeTab?.activePane else { return false }
+            let size = workspaceVC.currentGridSize(for: pane.id) ?? pane.session.terminal.grid.size
+            return horizontalActions.contains(action) ? size.columns >= 20 : size.rows >= 6
+        }
+        if action == #selector(closeActivePane(_:)) {
+            return !isShowingSettings && activeProject?.activeTab != nil
+        }
+        return true
     }
 }
 

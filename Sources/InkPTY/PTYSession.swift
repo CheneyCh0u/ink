@@ -135,6 +135,31 @@ public final class PTYSession: @unchecked Sendable {
         }
     }
 
+    /// PTY 前台进程组组长的工作目录。只在创建分屏时查询一次，失败静默返回 nil。
+    public func foregroundWorkingDirectory() -> String? {
+        guard masterFD >= 0 else { return nil }
+        let pgid = tcgetpgrp(masterFD)
+        guard pgid > 0 else { return nil }
+
+        var info = proc_vnodepathinfo()
+        let expectedSize = MemoryLayout<proc_vnodepathinfo>.stride
+        let actualSize = withUnsafeMutablePointer(to: &info) {
+            proc_pidinfo(pgid, PROC_PIDVNODEPATHINFO, 0, $0, Int32(expectedSize))
+        }
+        guard actualSize == Int32(expectedSize) else { return nil }
+
+        let path = withUnsafePointer(to: &info.pvi_cdir.vip_path) { pathPointer in
+            pathPointer.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) {
+                String(cString: $0)
+            }
+        }
+        guard !path.isEmpty else { return nil }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+              isDirectory.boolValue else { return nil }
+        return path
+    }
+
     // MARK: - I/O
 
     /// 写入用户输入。小数据量场景（键盘输入），入队即可，不做写缓冲。

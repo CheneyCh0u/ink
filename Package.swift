@@ -62,6 +62,10 @@ let package = Package(
             dependencies: ["InkConfig"]
         ),
         .testTarget(
+            name: "InkPTYTests",
+            dependencies: ["InkPTY"]
+        ),
+        .testTarget(
             name: "ReleaseWorkflowTests"
         ),
         .testTarget(

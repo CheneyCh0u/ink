@@ -10,8 +10,6 @@ import InkPTY
 public final class TerminalSession {
 
     public private(set) var terminal: Terminal
-    /// 用户双击标签改的名字，优先于 OSC 标题与路径。会话级，随会话生灭。
-    public var customName: String?
     /// 有新输出（终端状态变了），视图标脏用。
     public var onUpdate: (() -> Void)?
     /// shell 退出。
@@ -67,6 +65,11 @@ public final class TerminalSession {
     /// 前台进程名（标签标题的兜底：OSC 标题缺席时显示 zsh / vim / claude）。
     public var foregroundProcessName: String? {
         pty.foregroundProcessName()
+    }
+
+    /// 创建分屏时继承当前前台进程的工作目录，查询失败由外壳回退项目目录。
+    public var foregroundWorkingDirectory: String? {
+        pty.foregroundWorkingDirectory()
     }
 
     /// 移除会话时先解除退出回调，避免 terminate 触发的回调重入列表管理。

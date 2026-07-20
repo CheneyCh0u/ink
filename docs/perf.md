@@ -64,3 +64,32 @@ Terminal → scrollback，10 万行 × 200 列）。
   看帧间隔与 `buildInstances` 耗时。
 - 热路径 ARC 抽查：`sample` 显示核心循环无 retain/release 热点，
   正式结论等 Time Profiler。
+
+## 标签内分屏
+
+Issue #29 引入递归权重分屏容器，每个可见 pane 使用独立的
+`TerminalMetalView`。2026-07-20 在 MacBook Pro、macOS 27.0、2x 缩放、
+1280 × 800 窗口下做了第一次对比。测试应用为当前分支的 debug 构建，经过
+临时 ad-hoc 签名，并由 Computer Use 持续截图；下面的绝对值不能与 release
+基线直接比较，只看同一进程内增加 pane 前后的差值。
+
+| 场景 | Footprint | 相对 1 pane | Graphics unmapped | IOSurface |
+|---|---:|---:|---:|---:|
+| 1 pane 空闲 | 157 MB | - | 98 MB | 16 MB |
+| 4 pane 空闲 | 193 MB | +36 MB | 99 MB | 16 MB |
+
+窗口 surface 总量没有随 pane 数量成倍增长。增量主要来自三套额外的 glyph
+atlas、renderer 和 Metal 驱动对象：Malloc Small 从 16 MB 增至 30 MB，
+IOAccelerator 从 8 MB 增至 20 MB，其余 owned physical footprint 约增加
+5.5 MB。三个额外 pane 平均约 12 MB，符合最多四个常用 pane 的设计预算。
+
+交互验证覆盖了左右分屏、在右侧继续向下分屏、四 pane 嵌套、可拖动
+divider，以及连续 `Command-W` 从 3 pane 收拢到 2、1，最后关闭标签和窗口。
+
+性能采样在四 pane 可见、活动 pane 运行 `yes` 的条件下各记录 5 秒：
+
+- Time Profiler 采样的主要栈仍在 `Parser.feed`、`Grid.scrollUp` 和
+  `ScrollbackBuffer.append`，没有分屏布局函数进入输出热路径。
+- Metal System Trace 成功记录完整区间，trace 大小 180 MB。此次没有同时给
+  四个 pane 注入高速输出，因此不能据此宣称四路输出稳定 120 fps；四路压力
+  测试仍属于未完成项。

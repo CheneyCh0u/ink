@@ -26,16 +26,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - 菜单
 
     private func buildMenu() {
+        NSApplication.shared.mainMenu = Self.makeMainMenu(settingsTarget: self)
+    }
+
+    static func makeMainMenu(settingsTarget: AnyObject? = nil) -> NSMenu {
         let mainMenu = NSMenu()
 
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
         let settingsItem = appMenu.addItem(
             withTitle: "设置…",
-            action: #selector(showSettings(_:)),
+            action: #selector(AppDelegate.showSettings(_:)),
             keyEquivalent: ","
         )
-        settingsItem.target = self
+        settingsItem.target = settingsTarget
         appMenu.addItem(.separator())
         appMenu.addItem(
             withTitle: "退出 Ink",
@@ -53,13 +57,33 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             keyEquivalent: "n"
         )
         fileMenu.addItem(
-            withTitle: "新建会话",
+            withTitle: "新建标签",
             action: #selector(MainWindowController.newSession(_:)),
             keyEquivalent: "t"
         )
         fileMenu.addItem(
-            withTitle: "关闭会话",
-            action: #selector(MainWindowController.closeSession(_:)),
+            withTitle: "向左分屏",
+            action: #selector(MainWindowController.splitLeft(_:)),
+            keyEquivalent: ""
+        )
+        fileMenu.addItem(
+            withTitle: "向右分屏",
+            action: #selector(MainWindowController.splitRight(_:)),
+            keyEquivalent: ""
+        )
+        fileMenu.addItem(
+            withTitle: "向上分屏",
+            action: #selector(MainWindowController.splitUp(_:)),
+            keyEquivalent: ""
+        )
+        fileMenu.addItem(
+            withTitle: "向下分屏",
+            action: #selector(MainWindowController.splitDown(_:)),
+            keyEquivalent: ""
+        )
+        fileMenu.addItem(
+            withTitle: "关闭当前分屏",
+            action: #selector(MainWindowController.closeActivePane(_:)),
             keyEquivalent: "w"
         )
         fileMenu.addItem(.separator())
@@ -117,7 +141,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         windowItem.submenu = windowMenu
         mainMenu.addItem(windowItem)
 
-        NSApplication.shared.mainMenu = mainMenu
+        return mainMenu
     }
 
     @objc private func showSettings(_ sender: Any?) {

@@ -9,8 +9,8 @@ final class Project {
     var pinned: Bool
     var note: String?
     var label: InkProjectLabel
-    var sessions: [TerminalSession] = []
-    var activeSessionIndex = 0
+    var tabs: [TerminalTab] = []
+    var activeTabIndex = 0
 
     init(
         directory: URL,
@@ -29,8 +29,23 @@ final class Project {
         (directory.path as NSString).abbreviatingWithTildeInPath
     }
 
-    var activeSession: TerminalSession? {
-        sessions.indices.contains(activeSessionIndex) ? sessions[activeSessionIndex] : nil
+    var activeTab: TerminalTab? {
+        tabs.indices.contains(activeTabIndex) ? tabs[activeTabIndex] : nil
+    }
+
+    /// 删除标签时保持原活动标签的身份；只有删除活动标签才选择相邻标签。
+    @discardableResult
+    func removeTab(at index: Int) -> TerminalTab? {
+        guard tabs.indices.contains(index) else { return nil }
+        let removed = tabs.remove(at: index)
+        if tabs.isEmpty {
+            activeTabIndex = 0
+        } else if index < activeTabIndex {
+            activeTabIndex -= 1
+        } else if activeTabIndex >= tabs.count {
+            activeTabIndex = tabs.count - 1
+        }
+        return removed
     }
 }
 
