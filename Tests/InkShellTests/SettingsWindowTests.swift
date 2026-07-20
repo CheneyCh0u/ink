@@ -43,6 +43,131 @@ struct SettingsWindowTests {
         window.close()
     }
 
+    @Test("设置页打开时顶部栏仍可见并显示选中齿轮")
+    func showingSettingsKeepsTabBarVisible() throws {
+        let controller = MainWindowController()
+        let window = try #require(controller.window)
+        window.setFrame(NSRect(x: 640, y: 300, width: 1100, height: 700), display: true)
+        window.orderFront(nil)
+        controller.newSession(nil)
+        spinRunLoop()
+
+        controller.showSettings(nil)
+        spinRunLoop()
+
+        let contentView = try #require(window.contentView)
+        let tabBar = try #require(
+            allSubviews(in: contentView).first { $0 is TabBarView } as? TabBarView
+        )
+        let settings = try #require(
+            tabBar.subviews.compactMap { $0 as? NSButton }
+                .first { $0.toolTip == "设置（⌘,）" }
+        )
+        #expect(!tabBar.isHiddenOrHasHiddenAncestor)
+        #expect(settings.state == .on)
+        window.close()
+    }
+
+    @Test("设置页中点击当前标签返回终端")
+    func selectingTabLeavesSettings() throws {
+        let controller = MainWindowController()
+        let window = try #require(controller.window)
+        window.orderFront(nil)
+        controller.newSession(nil)
+        spinRunLoop()
+        controller.showSettings(nil)
+        spinRunLoop()
+
+        let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        item.tag = 0
+        controller.selectSessionMenu(item)
+        spinRunLoop()
+
+        let contentView = try #require(window.contentView)
+        let settingsTitle = try #require(
+            allSubviews(in: contentView)
+                .compactMap { $0 as? NSTextField }
+                .first { $0.stringValue == "设置" }
+        )
+        let tabBar = try #require(
+            allSubviews(in: contentView).first { $0 is TabBarView } as? TabBarView
+        )
+        let settings = try #require(
+            tabBar.subviews.compactMap { $0 as? NSButton }
+                .first { $0.toolTip == "设置（⌘,）" }
+        )
+        #expect(settingsTitle.isHiddenOrHasHiddenAncestor)
+        #expect(settings.state == .off)
+        window.close()
+    }
+
+    @Test("设置页中创建标签返回终端")
+    func creatingTabLeavesSettings() throws {
+        let controller = MainWindowController()
+        let window = try #require(controller.window)
+        window.orderFront(nil)
+        controller.showSettings(nil)
+        spinRunLoop()
+
+        controller.newSession(nil)
+        spinRunLoop()
+
+        let contentView = try #require(window.contentView)
+        let settingsTitle = try #require(
+            allSubviews(in: contentView)
+                .compactMap { $0 as? NSTextField }
+                .first { $0.stringValue == "设置" }
+        )
+        #expect(settingsTitle.isHiddenOrHasHiddenAncestor)
+        window.close()
+    }
+
+    @Test("设置页不显示完成按钮")
+    func settingsDoesNotShowDoneButton() throws {
+        let controller = MainWindowController()
+        let window = try #require(controller.window)
+        window.orderFront(nil)
+        controller.showSettings(nil)
+        spinRunLoop()
+
+        let contentView = try #require(window.contentView)
+        let doneButtons = allSubviews(in: contentView)
+            .compactMap { $0 as? NSButton }
+            .filter { $0.title == "完成" && !$0.isHiddenOrHasHiddenAncestor }
+        #expect(doneButtons.isEmpty)
+        window.close()
+    }
+
+    @Test("再次点击选中齿轮返回终端")
+    func selectingSettingsAgainLeavesSettings() throws {
+        let controller = MainWindowController()
+        let window = try #require(controller.window)
+        window.orderFront(nil)
+        controller.newSession(nil)
+        controller.showSettings(nil)
+        spinRunLoop()
+
+        let contentView = try #require(window.contentView)
+        let tabBar = try #require(
+            allSubviews(in: contentView).first { $0 is TabBarView } as? TabBarView
+        )
+        let settings = try #require(
+            tabBar.subviews.compactMap { $0 as? NSButton }
+                .first { $0.toolTip == "设置（⌘,）" }
+        )
+        settings.performClick(nil)
+        spinRunLoop()
+
+        let settingsTitle = try #require(
+            allSubviews(in: contentView)
+                .compactMap { $0 as? NSTextField }
+                .first { $0.stringValue == "设置" }
+        )
+        #expect(settingsTitle.isHiddenOrHasHiddenAncestor)
+        #expect(settings.state == .off)
+        window.close()
+    }
+
     @Test("所有设置分组共享同一内容列")
     func settingsSectionsShareOneContentColumn() throws {
         let controller = MainWindowController()

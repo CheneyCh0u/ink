@@ -92,20 +92,12 @@ final class SettingsViewController: NSViewController {
         title.font = InkDesignTokens.Typography.title
         title.textColor = InkDesignTokens.Color.textPrimary
 
-        let done = NSButton(title: "完成", target: self, action: #selector(doneAction))
-        done.bezelStyle = .rounded
-        done.keyEquivalent = "\r"
-
         title.translatesAutoresizingMaskIntoConstraints = false
-        done.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(title)
-        header.addSubview(done)
 
         NSLayoutConstraint.activate([
             title.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: InkDesignTokens.Spacing.md),
             title.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            done.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -InkDesignTokens.Spacing.md),
-            done.centerYAnchor.constraint(equalTo: header.centerYAnchor),
         ])
         return header
     }
@@ -427,7 +419,6 @@ final class SettingsViewController: NSViewController {
         )
     }
 
-    @objc private func doneAction() { onDone?() }
     @objc private func openConfigAction() { onOpenConfig?() }
 
     @objc private func resetAction() {

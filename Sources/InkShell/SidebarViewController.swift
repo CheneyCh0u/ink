@@ -44,12 +44,8 @@ final class SidebarViewController: NSViewController {
         }
     }
 
-    // MainWindowController 迁移到顶部设置入口前的临时兼容状态。
-    var isSettingsSelected = false
-
     var onSelect: ((Int) -> Void)?
     var onNewProject: (() -> Void)?
-    var onSettings: (() -> Void)?
     var onRemove: ((Int) -> Void)?
     var onTogglePin: ((Int) -> Void)?
     var onEditNote: ((Int) -> Void)?

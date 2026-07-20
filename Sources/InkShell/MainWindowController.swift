@@ -157,24 +157,25 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         let workspaceView = workspaceVC.view
         workspaceView.translatesAutoresizingMaskIntoConstraints = false
         hairline.translatesAutoresizingMaskIntoConstraints = false
+        contentRoot.addSubview(tabBar)
+        contentRoot.addSubview(hairline)
         contentRoot.addSubview(terminalWorkspace)
-        terminalWorkspace.addSubview(tabBar)
-        terminalWorkspace.addSubview(hairline)
         terminalWorkspace.addSubview(workspaceView)
         NSLayoutConstraint.activate([
-            terminalWorkspace.topAnchor.constraint(equalTo: contentRoot.topAnchor),
+            tabBar.topAnchor.constraint(equalTo: contentRoot.topAnchor),
+            tabBar.leadingAnchor.constraint(equalTo: contentRoot.leadingAnchor),
+            tabBar.trailingAnchor.constraint(equalTo: contentRoot.trailingAnchor),
+            tabBar.heightAnchor.constraint(equalToConstant: 38),
+            hairline.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
+            hairline.leadingAnchor.constraint(equalTo: contentRoot.leadingAnchor),
+            hairline.trailingAnchor.constraint(equalTo: contentRoot.trailingAnchor),
+
+            terminalWorkspace.topAnchor.constraint(equalTo: hairline.bottomAnchor),
             terminalWorkspace.leadingAnchor.constraint(equalTo: contentRoot.leadingAnchor),
             terminalWorkspace.trailingAnchor.constraint(equalTo: contentRoot.trailingAnchor),
             terminalWorkspace.bottomAnchor.constraint(equalTo: contentRoot.bottomAnchor),
 
-            tabBar.topAnchor.constraint(equalTo: terminalWorkspace.topAnchor),
-            tabBar.leadingAnchor.constraint(equalTo: terminalWorkspace.leadingAnchor),
-            tabBar.trailingAnchor.constraint(equalTo: terminalWorkspace.trailingAnchor),
-            tabBar.heightAnchor.constraint(equalToConstant: 38),
-            hairline.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
-            hairline.leadingAnchor.constraint(equalTo: terminalWorkspace.leadingAnchor),
-            hairline.trailingAnchor.constraint(equalTo: terminalWorkspace.trailingAnchor),
-            workspaceView.topAnchor.constraint(equalTo: hairline.bottomAnchor),
+            workspaceView.topAnchor.constraint(equalTo: terminalWorkspace.topAnchor),
             workspaceView.leadingAnchor.constraint(equalTo: terminalWorkspace.leadingAnchor),
             workspaceView.trailingAnchor.constraint(equalTo: terminalWorkspace.trailingAnchor),
             workspaceView.bottomAnchor.constraint(equalTo: terminalWorkspace.bottomAnchor),
@@ -225,9 +226,16 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         }
         tabBar.onNewTab = { [weak self] in self?.newSession(nil) }
         tabBar.onToggleSidebar = { [weak self] in self?.toggleSidebarMode() }
+        tabBar.onSettings = { [weak self] in
+            guard let self else { return }
+            if self.isShowingSettings {
+                self.hideSettings()
+            } else {
+                self.showSettings(nil)
+            }
+        }
         sidebarVC.onSelect = { [weak self] in self?.selectProject(at: $0) }
         sidebarVC.onNewProject = { [weak self] in self?.newProject(nil) }
-        sidebarVC.onSettings = { [weak self] in self?.showSettings(nil) }
         sidebarVC.onRemove = { [weak self] in self?.removeProject(at: $0) }
         sidebarVC.onTogglePin = { [weak self] in self?.togglePin(at: $0) }
         sidebarVC.onEditNote = { [weak self] in self?.editNote(at: $0) }
@@ -275,7 +283,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         workspaceVC.closeSearch(returnFocus: false)
         installSettingsViewIfNeeded()
         isShowingSettings = true
-        sidebarVC.isSettingsSelected = true
+        tabBar.setSettingsSelected(true)
         settingsVC.update(config: config)
         terminalWorkspace.isHidden = true
         settingsVC.view.isHidden = false
@@ -290,7 +298,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         settingsView.isHidden = true
         contentRoot.addSubview(settingsView)
         NSLayoutConstraint.activate([
-            settingsView.topAnchor.constraint(equalTo: contentRoot.topAnchor),
+            settingsView.topAnchor.constraint(equalTo: terminalWorkspace.topAnchor),
             settingsView.leadingAnchor.constraint(equalTo: contentRoot.leadingAnchor),
             settingsView.trailingAnchor.constraint(equalTo: contentRoot.trailingAnchor),
             settingsView.bottomAnchor.constraint(equalTo: contentRoot.bottomAnchor),
@@ -301,7 +309,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
     private func hideSettings() {
         guard isShowingSettings else { return }
         isShowingSettings = false
-        sidebarVC.isSettingsSelected = false
+        tabBar.setSettingsSelected(false)
         settingsVC.view.isHidden = true
         terminalWorkspace.isHidden = false
         workspaceVC.focusActivePane()
@@ -532,6 +540,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
     // MARK: - 标签与 pane 操作
 
     @objc public func newSession(_ sender: Any?) {
+        hideSettings()
         guard let project = activeProject,
               let pane = startPane(
                 size: TerminalSize(columns: 80, rows: 24),
@@ -756,6 +765,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
 
     private func selectTab(at index: Int) {
         guard let project = activeProject, project.tabs.indices.contains(index) else { return }
+        hideSettings()
         project.activeTabIndex = index
         attachActiveTab()
         refreshChrome()
