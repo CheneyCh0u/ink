@@ -542,8 +542,16 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         closeActivePane(sender)
     }
 
+    @objc public func splitLeft(_ sender: Any?) {
+        splitActivePane(direction: .left)
+    }
+
     @objc public func splitRight(_ sender: Any?) {
         splitActivePane(direction: .right)
+    }
+
+    @objc public func splitUp(_ sender: Any?) {
+        splitActivePane(direction: .up)
     }
 
     @objc public func splitDown(_ sender: Any?) {
@@ -766,12 +774,14 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
     }
 
     public func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        let action = menuItem.action
-        if action == #selector(splitRight(_:)) || action == #selector(splitDown(_:)) {
+        guard let action = menuItem.action else { return true }
+        let horizontalActions = [#selector(splitLeft(_:)), #selector(splitRight(_:))]
+        let verticalActions = [#selector(splitUp(_:)), #selector(splitDown(_:))]
+        if horizontalActions.contains(action) || verticalActions.contains(action) {
             guard !isShowingSettings,
                   let pane = activeProject?.activeTab?.activePane else { return false }
             let size = workspaceVC.currentGridSize(for: pane.id) ?? pane.session.terminal.grid.size
-            return action == #selector(splitRight(_:)) ? size.columns >= 20 : size.rows >= 6
+            return horizontalActions.contains(action) ? size.columns >= 20 : size.rows >= 6
         }
         if action == #selector(closeActivePane(_:)) {
             return !isShowingSettings && activeProject?.activeTab != nil

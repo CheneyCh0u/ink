@@ -7,17 +7,20 @@ import Testing
 @MainActor
 struct TerminalSplitCommandTests {
 
-    @Test("菜单把 Command-D 与 Command-Shift-D 接到不同方向")
-    func menuRegistersSplitShortcuts() throws {
+    @Test("文件菜单提供四方向分屏且不声明复合快捷键")
+    func menuOffersFourDirectionsWithoutKeyEquivalent() throws {
         let menu = AppDelegate.makeMainMenu()
         let fileMenu = try #require(menu.items.first { $0.submenu?.title == "文件" }?.submenu)
-        let right = try #require(fileMenu.items.first { $0.action == #selector(MainWindowController.splitRight(_:)) })
-        let down = try #require(fileMenu.items.first { $0.action == #selector(MainWindowController.splitDown(_:)) })
-
-        #expect(right.keyEquivalent == "d")
-        #expect(right.keyEquivalentModifierMask == [.command])
-        #expect(down.keyEquivalent == "d")
-        #expect(down.keyEquivalentModifierMask == [.command, .shift])
+        let actions = [
+            #selector(MainWindowController.splitLeft(_:)),
+            #selector(MainWindowController.splitRight(_:)),
+            #selector(MainWindowController.splitUp(_:)),
+            #selector(MainWindowController.splitDown(_:)),
+        ]
+        for action in actions {
+            let item = try #require(fileMenu.items.first { $0.action == action })
+            #expect(item.keyEquivalent.isEmpty)
+        }
     }
 
     @Test("Command-W 关闭活动 pane 而不是整个标签")

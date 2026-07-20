@@ -62,16 +62,25 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             keyEquivalent: "t"
         )
         fileMenu.addItem(
+            withTitle: "向左分屏",
+            action: #selector(MainWindowController.splitLeft(_:)),
+            keyEquivalent: ""
+        )
+        fileMenu.addItem(
             withTitle: "向右分屏",
             action: #selector(MainWindowController.splitRight(_:)),
-            keyEquivalent: "d"
+            keyEquivalent: ""
         )
-        let splitDownItem = fileMenu.addItem(
+        fileMenu.addItem(
+            withTitle: "向上分屏",
+            action: #selector(MainWindowController.splitUp(_:)),
+            keyEquivalent: ""
+        )
+        fileMenu.addItem(
             withTitle: "向下分屏",
             action: #selector(MainWindowController.splitDown(_:)),
-            keyEquivalent: "d"
+            keyEquivalent: ""
         )
-        splitDownItem.keyEquivalentModifierMask = [.command, .shift]
         fileMenu.addItem(
             withTitle: "关闭当前分屏",
             action: #selector(MainWindowController.closeActivePane(_:)),
