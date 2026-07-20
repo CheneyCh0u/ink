@@ -618,38 +618,35 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
 
     private func handleSplitShortcut(_ event: NSEvent) -> NSEvent? {
         guard event.window === window else {
-            cancelSplitShortcut()
+            _ = splitShortcutState.handleKeyEvent(.contextLost)
             return event
         }
 
-        if event.type == .flagsChanged {
-            if !event.modifierFlags.contains(.command) {
-                cancelSplitShortcut()
-            }
+        guard !isShowingSettings,
+              window?.firstResponder is TerminalMetalView else {
+            _ = splitShortcutState.handleKeyEvent(.contextLost)
             return event
         }
 
-        if event.type == .keyUp, event.keyCode == 2, splitShortcutState.isActive {
-            return applySplitShortcutDecision(splitShortcutState.handle(.dUp), event: event)
-        }
-
-        guard event.type == .keyDown,
-              !isShowingSettings,
-              window?.firstResponder is TerminalMetalView,
-              event.modifierFlags.contains(.command) else {
-            cancelSplitShortcut()
-            return event
-        }
-
-        if event.keyCode == 2 {
-            return applySplitShortcutDecision(
-                splitShortcutState.handle(.commandDDown(isRepeat: event.isARepeat)),
-                event: event
+        let keyEvent: SplitShortcutKeyEvent
+        switch event.type {
+        case .keyDown:
+            keyEvent = .keyDown(
+                keyCode: event.keyCode,
+                isRepeat: event.isARepeat,
+                commandDown: event.modifierFlags.contains(.command)
             )
+        case .keyUp:
+            keyEvent = .keyUp(keyCode: event.keyCode)
+        case .flagsChanged:
+            keyEvent = .flagsChanged(
+                commandDown: event.modifierFlags.contains(.command)
+            )
+        default:
+            return event
         }
-        guard let direction = Self.splitDirection(for: event.keyCode) else { return event }
         return applySplitShortcutDecision(
-            splitShortcutState.handle(.direction(direction)), event: event
+            splitShortcutState.handleKeyEvent(keyEvent), event: event
         )
     }
 
@@ -670,16 +667,6 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
 
     private func cancelSplitShortcut() {
         _ = splitShortcutState.handle(.cancel)
-    }
-
-    private static func splitDirection(for keyCode: UInt16) -> PaneSplitDirection? {
-        switch keyCode {
-        case 123: .left
-        case 124: .right
-        case 125: .down
-        case 126: .up
-        default: nil
-        }
     }
 
     private func startPane(size: TerminalSize, workingDirectory: String) -> TerminalPane? {

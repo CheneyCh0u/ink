@@ -48,4 +48,32 @@ struct SplitShortcutStateTests {
         #expect(state.handle(.direction(.right)) == .passThrough)
         #expect(state.handle(.dUp) == .passThrough)
     }
+
+    @Test("方向键松开不结束已消费状态")
+    func directionKeyUpKeepsChordConsumed() {
+        var state = SplitShortcutState()
+
+        #expect(state.handleKeyEvent(
+            .keyDown(keyCode: 2, isRepeat: false, commandDown: true)
+        ) == .consume)
+        #expect(state.handleKeyEvent(
+            .keyDown(keyCode: 126, isRepeat: false, commandDown: true)
+        ) == .split(.up))
+        #expect(state.handleKeyEvent(.keyUp(keyCode: 126)) == .passThrough)
+        #expect(state.handleKeyEvent(
+            .keyDown(keyCode: 123, isRepeat: false, commandDown: true)
+        ) == .consume)
+        #expect(state.handleKeyEvent(.keyUp(keyCode: 2)) == .consume)
+    }
+
+    @Test("终端焦点离开后 D 松开不再默认分屏")
+    func contextLossBeforeDUpCancelsChord() {
+        var state = SplitShortcutState()
+        _ = state.handleKeyEvent(
+            .keyDown(keyCode: 2, isRepeat: false, commandDown: true)
+        )
+
+        #expect(state.handleKeyEvent(.contextLost) == .passThrough)
+        #expect(state.handleKeyEvent(.keyUp(keyCode: 2)) == .passThrough)
+    }
 }
