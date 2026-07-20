@@ -80,37 +80,38 @@ struct ProjectSidebarLayoutTests {
         })
     }
 
-    @Test("展开态底部入口横向等宽排列")
-    func expandedFooterUsesOneRow() throws {
-        let (controller, newButton, settingsButton, separator) = try makeController(mode: .expanded)
+    @Test("展开态底部只保留全宽新建项目")
+    func expandedFooterUsesFullWidthNewProject() throws {
+        let (controller, newButton, separator) = try makeController(mode: .expanded)
 
-        #expect(abs(newButton.frame.midY - settingsButton.frame.midY) < 0.5)
-        #expect(abs(newButton.frame.width - settingsButton.frame.width) < 0.5)
-        #expect(newButton.frame.maxX < settingsButton.frame.minX)
-        #expect(separator.frame.minY > max(newButton.frame.maxY, settingsButton.frame.maxY))
+        #expect(newButton.title == "新建项目")
+        #expect(abs(newButton.frame.minX - InkDesignTokens.Spacing.xs) < 0.5)
+        #expect(
+            abs(controller.view.bounds.maxX - newButton.frame.maxX - InkDesignTokens.Spacing.xs) < 0.5
+        )
+        #expect(separator.frame.minY > newButton.frame.maxY)
         #expect(newButton.imageHugsTitle)
-        #expect(settingsButton.imageHugsTitle)
+        #expect(controller.view.subviews.compactMap { $0 as? NSButton }.count == 1)
         #expect(!hasShortcutHints(in: controller.view))
     }
 
-    @Test("图标态底部入口上下排列")
-    func compactFooterUsesTwoRows() throws {
-        let (controller, newButton, settingsButton, separator) = try makeController(mode: .compact)
+    @Test("图标态底部只保留居中加号")
+    func compactFooterUsesCenteredNewProject() throws {
+        let (controller, newButton, separator) = try makeController(mode: .compact)
 
-        #expect(abs(newButton.frame.midX - settingsButton.frame.midX) < 0.5)
-        #expect(newButton.frame.minY > settingsButton.frame.maxY)
+        #expect(abs(newButton.frame.midX - controller.view.bounds.midX) < 0.5)
         #expect(separator.frame.minY > newButton.frame.maxY)
         #expect(newButton.title.isEmpty)
-        #expect(settingsButton.title.isEmpty)
+        #expect(newButton.toolTip == "新建项目")
+        #expect(controller.view.subviews.compactMap { $0 as? NSButton }.count == 1)
         #expect(!hasShortcutHints(in: controller.view))
     }
 
     private func makeController(
         mode: SidebarViewController.DisplayMode
-    ) throws -> (SidebarViewController, NSButton, NSButton, NSBox) {
+    ) throws -> (SidebarViewController, NSButton, NSBox) {
         let controller = SidebarViewController()
         controller.displayMode = mode
-        controller.isSettingsSelected = true
         let width = mode == .compact
             ? InkDesignTokens.Sidebar.compactWidth
             : InkDesignTokens.Sidebar.width
@@ -128,11 +129,13 @@ struct ProjectSidebarLayoutTests {
         controller.view.layoutSubtreeIfNeeded()
 
         let buttons = controller.view.subviews.compactMap { $0 as? NSButton }
-        #expect(buttons.count == 2)
+        let newButton = try #require(buttons.first { button in
+            button.title == "新建项目" || button.toolTip == "新建项目"
+        })
         let separator = try #require(
             controller.view.subviews.compactMap { $0 as? NSBox }.first
         )
-        return (controller, try #require(buttons.first), try #require(buttons.last), separator)
+        return (controller, newButton, separator)
     }
 
     private func makeLabelController(
