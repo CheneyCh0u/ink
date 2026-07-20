@@ -67,7 +67,7 @@ Terminal → scrollback，10 万行 × 200 列）。
 
 ## 标签内分屏
 
-Issue #29 引入递归 `NSSplitView`，每个可见 pane 使用独立的
+Issue #29 引入递归权重分屏容器，每个可见 pane 使用独立的
 `TerminalMetalView`。2026-07-20 在 MacBook Pro、macOS 27.0、2x 缩放、
 1280 × 800 窗口下做了第一次对比。测试应用为当前分支的 debug 构建，经过
 临时 ad-hoc 签名，并由 Computer Use 持续截图；下面的绝对值不能与 release
@@ -83,7 +83,7 @@ atlas、renderer 和 Metal 驱动对象：Malloc Small 从 16 MB 增至 30 MB，
 IOAccelerator 从 8 MB 增至 20 MB，其余 owned physical footprint 约增加
 5.5 MB。三个额外 pane 平均约 12 MB，符合最多四个常用 pane 的设计预算。
 
-交互验证覆盖了左右分屏、在右侧继续向下分屏、四 pane 嵌套、原生可设置
+交互验证覆盖了左右分屏、在右侧继续向下分屏、四 pane 嵌套、可拖动
 divider，以及连续 `Command-W` 从 3 pane 收拢到 2、1，最后关闭标签和窗口。
 
 性能采样在四 pane 可见、活动 pane 运行 `yes` 的条件下各记录 5 秒：
