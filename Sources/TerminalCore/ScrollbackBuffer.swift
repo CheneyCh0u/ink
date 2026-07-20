@@ -87,7 +87,22 @@ extension ScrollbackLine: Equatable {
 /// 手写环形结构而不引 swift-collections 的 Deque：新依赖需要理由（CLAUDE.md），
 /// 一个头索引加计数不构成理由。
 public struct ScrollbackBuffer: Sendable {
-    private var lines: ContiguousArray<ScrollbackLine?>
+    /// 分页 COW：后台搜索快照与主终端共享旧页，持续输出只复制被写入的一页，
+    /// 不复制 10 万槽的整块环。页目录约 391 个引用，空终端不分配行槽。
+    private final class Page: @unchecked Sendable {
+        var lines: ContiguousArray<ScrollbackLine?>
+
+        init(size: Int) {
+            lines = ContiguousArray(repeating: nil, count: size)
+        }
+
+        init(copying other: Page) {
+            lines = other.lines
+        }
+    }
+
+    private static let pageSize = 256
+    private var pages: ContiguousArray<Page?>
     private var head = 0
     public private(set) var count = 0
     /// 自上次清空以来累计入库的物理行数；搜索索引用它识别可变后缀。
@@ -97,13 +112,17 @@ public struct ScrollbackBuffer: Sendable {
     public init(capacity: Int) {
         precondition(capacity > 0, "scrollback 容量必须为正")
         self.capacity = capacity
-        // 预留桶但不预填行——空终端不该为 10 万行上限付一分钱内存。
-        self.lines = ContiguousArray(repeating: nil, count: capacity)
+        let pageCount = (capacity + Self.pageSize - 1) / Self.pageSize
+        pages = ContiguousArray(repeating: nil, count: pageCount)
     }
 
     public mutating func append(_ line: ScrollbackLine) {
         totalAppendedLines &+= 1
-        lines[(head + count) % capacity] = line
+        let slot = (head + count) % capacity
+        let pageIndex = slot / Self.pageSize
+        let offset = slot % Self.pageSize
+        ensureUniquePage(at: pageIndex)
+        pages[pageIndex]!.lines[offset] = line
         if count < capacity {
             count += 1
         } else {
@@ -114,13 +133,23 @@ public struct ScrollbackBuffer: Sendable {
     /// 0 是最旧的一行，`count - 1` 最新。
     @inline(__always)
     public subscript(index: Int) -> ScrollbackLine {
-        lines[(head + index) % capacity]!
+        let slot = (head + index) % capacity
+        return pages[slot / Self.pageSize]!.lines[slot % Self.pageSize]!
     }
 
     public mutating func removeAll() {
-        for i in lines.indices { lines[i] = nil }
+        pages = ContiguousArray(repeating: nil, count: pages.count)
         head = 0
         count = 0
         totalAppendedLines = 0
+    }
+
+    private mutating func ensureUniquePage(at index: Int) {
+        if pages[index] == nil {
+            let firstSlot = index * Self.pageSize
+            pages[index] = Page(size: min(Self.pageSize, capacity - firstSlot))
+        } else if !isKnownUniquelyReferenced(&pages[index]) {
+            pages[index] = Page(copying: pages[index]!)
+        }
     }
 }

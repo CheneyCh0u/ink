@@ -25,6 +25,7 @@ public enum TerminalSearchEngine {
         var logicalLine = LogicalLine()
 
         for lineIndex in firstLine..<terminal.totalLines {
+            if lineIndex & 0x7F == 0, currentTaskIsCancelled() { return [] }
             guard let line = terminal.absoluteLine(lineIndex) else { continue }
             logicalLine.append(
                 cells: line.cells,
@@ -41,6 +42,10 @@ public enum TerminalSearchEngine {
         }
 
         return matches
+    }
+
+    private static func currentTaskIsCancelled() -> Bool {
+        withUnsafeCurrentTask { $0?.isCancelled ?? false }
     }
 }
 
@@ -74,7 +79,20 @@ public struct TerminalSearchIndex: Sendable {
         }
         let appended = Int(terminal.scrollback.totalAppendedLines - appendedLines)
         let evicted = max(0, scrollbackCount + appended - terminal.scrollback.count)
-        return evicted > 0
+        if evicted > 0 { return true }
+
+        let earliestChangedLine = appended > 0
+            ? max(0, scrollbackCount)
+            : terminal.scrollback.count
+        var rescanStart = min(max(0, earliestChangedLine), max(0, terminal.totalLines - 1))
+        var rewound = 0
+        while rescanStart > 0,
+              terminal.absoluteLineInfo(rescanStart)?.isWrapped == true {
+            rescanStart -= 1
+            rewound += 1
+            if rewound >= 512 { return true }
+        }
+        return terminal.totalLines - rescanStart > 512
     }
 
     @discardableResult
@@ -222,8 +240,13 @@ private struct LogicalLine {
         let source = text as NSString
         var results: [TerminalSearchMatch] = []
         var searchLocation = 0
+        var matchCount = 0
 
         while searchLocation < searchableLength {
+            if matchCount & 0x7F == 0,
+               withUnsafeCurrentTask(body: { $0?.isCancelled ?? false }) {
+                return []
+            }
             let result = source.range(
                 of: query,
                 options: [.caseInsensitive],
@@ -245,6 +268,7 @@ private struct LogicalLine {
                 )))
             }
             searchLocation = resultEnd
+            matchCount += 1
         }
 
         return results

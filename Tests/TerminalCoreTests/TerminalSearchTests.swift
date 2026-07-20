@@ -158,4 +158,16 @@ struct TerminalSearchTests {
         #expect(matches.first?.range.start == TextPosition(line: 0, column: 0))
         #expect(matches.last?.range.end == TextPosition(line: 99, column: 9))
     }
+
+    @Test("超长软折行的增量重扫标记为后台工作")
+    func longWrappedIncrementalRequiresBackground() {
+        var (parser, terminal) = makeTerminal(columns: 10, rows: 5, scrollback: 1_000)
+        feed(String(repeating: "a", count: 6_000), &parser, &terminal)
+        var index = TerminalSearchIndex()
+        _ = index.update(in: terminal, query: "a")
+
+        feed("a", &parser, &terminal)
+
+        #expect(index.requiresBackgroundUpdate(in: terminal, query: "a"))
+    }
 }

@@ -112,6 +112,31 @@ struct TerminalSearchWorkspaceTests {
         #expect(try #require(controller.currentMatch).range.start.line == 0)
     }
 
+    @Test("淘汰后旧坐标被其他结果占用也保持原结果")
+    func rebasesBeforeCoordinateEquality() async throws {
+        var parser = Parser()
+        var terminal = Terminal(
+            size: TerminalSize(columns: 8, rows: 1),
+            scrollbackCapacity: 2
+        )
+        parser.feed(Array("hit 0\r\nhit 1\r\nhit 2".utf8), handler: &terminal)
+        let terminalView = TerminalMetalView(frame: .zero)
+        terminalView.terminalProvider = { terminal }
+        let controller = TerminalSearchController(
+            terminalProvider: { terminal }, terminalView: terminalView
+        )
+        controller.updateQuery("hit")
+        await controller.waitForPendingUpdate()
+        controller.selectPrevious()
+        #expect(try #require(controller.currentMatch).range.start.line == 1)
+
+        parser.feed(Array("\r\nhit 3".utf8), handler: &terminal)
+        controller.refreshForTerminalUpdate()
+        await controller.waitForPendingUpdate()
+
+        #expect(try #require(controller.currentMatch).range.start.line == 0)
+    }
+
     @Test("当前结果被淘汰后可选择后续新结果")
     func recoversAfterSelectedMatchIsEvicted() async throws {
         var parser = Parser()

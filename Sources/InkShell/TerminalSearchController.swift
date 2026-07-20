@@ -158,11 +158,16 @@ final class TerminalSearchController {
                 try? await Task.sleep(for: .milliseconds(30))
                 guard !Task.isCancelled else { return }
             }
-            let updated = await Task.detached(priority: .userInitiated) {
+            let scanTask = Task.detached(priority: .userInitiated) {
                 var nextIndex = startingIndex
                 nextIndex.update(in: terminal, query: query)
                 return nextIndex
-            }.value
+            }
+            let updated = await withTaskCancellationHandler {
+                await scanTask.value
+            } onCancel: {
+                scanTask.cancel()
+            }
             guard !Task.isCancelled, let self, self.updateGeneration == generation else { return }
             self.updateTask = nil
             self.apply(
@@ -209,14 +214,14 @@ final class TerminalSearchController {
     ) {
         if matches.isEmpty {
             currentIndex = nil
-        } else if let previousMatch, let preserved = matches.firstIndex(of: previousMatch) {
-            currentIndex = preserved
         } else if let previousMatch, index.lastEvictedLineCount > 0 {
             var shifted = previousMatch.range
             shifted.start.line -= index.lastEvictedLineCount
             shifted.end.line -= index.lastEvictedLineCount
             currentIndex = matches.firstIndex(of: TerminalSearchMatch(range: shifted))
                 ?? previousIndex.map { max(0, min($0, matches.count - 1)) }
+        } else if let previousMatch, let preserved = matches.firstIndex(of: previousMatch) {
+            currentIndex = preserved
         } else if let previousIndex {
             currentIndex = max(0, min(previousIndex, matches.count - 1))
         } else {
