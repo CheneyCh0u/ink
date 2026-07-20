@@ -6,7 +6,7 @@ enum ProjectLabelIndicatorStyle: Equatable {
     case rail
 }
 
-/// 侧边栏：项目列表 + 底部新建与设置入口。
+/// 侧边栏：项目列表 + 底部新建项目入口。
 ///
 /// 根视图直接承载系统 sidebar 材质，让背景从标题栏贯穿到底部。
 /// 不使用系统 sidebar split item，避免新系统把侧栏变成浮动圆角面板。
@@ -44,16 +44,8 @@ final class SidebarViewController: NSViewController {
         }
     }
 
-    var isSettingsSelected = false {
-        didSet {
-            guard isViewLoaded else { return }
-            settingsButton.isSelectedState = isSettingsSelected
-        }
-    }
-
     var onSelect: ((Int) -> Void)?
     var onNewProject: (() -> Void)?
-    var onSettings: (() -> Void)?
     var onRemove: ((Int) -> Void)?
     var onTogglePin: ((Int) -> Void)?
     var onEditNote: ((Int) -> Void)?
@@ -65,14 +57,11 @@ final class SidebarViewController: NSViewController {
 
     private let rowStack = NSStackView()
     private let newButton = SidebarActionButton()
-    private let settingsButton = SidebarActionButton()
     private let footerSeparator = NSBox()
     private let sectionTitle = NSTextField(labelWithString: "项目")
     private var rows: [Row] = []
     private var expandedRowsTop: NSLayoutConstraint?
     private var compactRowsTop: NSLayoutConstraint?
-    private var expandedFooterConstraints: [NSLayoutConstraint] = []
-    private var compactFooterConstraints: [NSLayoutConstraint] = []
 
     override func loadView() {
         let root = ProjectDropView()
@@ -106,21 +95,6 @@ final class SidebarViewController: NSViewController {
         newButton.layer?.cornerCurve = .continuous
         newButton.translatesAutoresizingMaskIntoConstraints = false
 
-        settingsButton.title = "设置"
-        settingsButton.target = self
-        settingsButton.action = #selector(openSettings)
-        settingsButton.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
-        settingsButton.imagePosition = .imageLeading
-        settingsButton.imageHugsTitle = true
-        settingsButton.isBordered = false
-        settingsButton.font = InkDesignTokens.Typography.body
-        settingsButton.contentTintColor = InkDesignTokens.Color.textSecondary
-        settingsButton.alignment = .left
-        settingsButton.layer?.cornerRadius = InkDesignTokens.Radius.item
-        settingsButton.layer?.cornerCurve = .continuous
-        settingsButton.translatesAutoresizingMaskIntoConstraints = false
-        settingsButton.isSelectedState = isSettingsSelected
-
         footerSeparator.boxType = .separator
         footerSeparator.translatesAutoresizingMaskIntoConstraints = false
 
@@ -128,7 +102,6 @@ final class SidebarViewController: NSViewController {
         root.addSubview(rowStack)
         root.addSubview(newButton)
         root.addSubview(footerSeparator)
-        root.addSubview(settingsButton)
 
         let sp = InkDesignTokens.Spacing.self
         let expandedRowsTop = rowStack.topAnchor.constraint(
@@ -141,31 +114,6 @@ final class SidebarViewController: NSViewController {
         )
         self.expandedRowsTop = expandedRowsTop
         self.compactRowsTop = compactRowsTop
-        expandedFooterConstraints = [
-            footerSeparator.bottomAnchor.constraint(
-                equalTo: newButton.topAnchor,
-                constant: -sp.xxs
-            ),
-            newButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.xs),
-            newButton.trailingAnchor.constraint(
-                equalTo: settingsButton.leadingAnchor,
-                constant: -sp.xxs
-            ),
-            settingsButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.xs),
-            newButton.widthAnchor.constraint(equalTo: settingsButton.widthAnchor),
-            newButton.centerYAnchor.constraint(equalTo: settingsButton.centerYAnchor),
-        ]
-        compactFooterConstraints = [
-            footerSeparator.bottomAnchor.constraint(
-                equalTo: newButton.topAnchor,
-                constant: -sp.xs
-            ),
-            newButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.xs),
-            newButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.xs),
-            newButton.bottomAnchor.constraint(equalTo: settingsButton.topAnchor, constant: -sp.xs),
-            settingsButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.xs),
-            settingsButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.xs),
-        ]
         NSLayoutConstraint.activate([
             // 跟随 safe area：系统已为标题栏/红绿灯留位，再叠固定值就是双重让位。
             sectionTitle.topAnchor.constraint(
@@ -178,12 +126,13 @@ final class SidebarViewController: NSViewController {
             rowStack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.xs),
             rowStack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.xs),
 
+            footerSeparator.bottomAnchor.constraint(equalTo: newButton.topAnchor, constant: -sp.xs),
             newButton.heightAnchor.constraint(equalToConstant: InkDesignTokens.Sidebar.actionHeight),
+            newButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.xs),
+            newButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.xs),
+            newButton.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -sp.sm),
             footerSeparator.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.sm),
             footerSeparator.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.sm),
-
-            settingsButton.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -sp.sm),
-            settingsButton.heightAnchor.constraint(equalToConstant: InkDesignTokens.Sidebar.actionHeight),
         ])
 
         view = root
@@ -221,22 +170,15 @@ final class SidebarViewController: NSViewController {
         sectionTitle.isHidden = compact
         expandedRowsTop?.isActive = !compact
         compactRowsTop?.isActive = compact
-        NSLayoutConstraint.deactivate(compact ? expandedFooterConstraints : compactFooterConstraints)
-        NSLayoutConstraint.activate(compact ? compactFooterConstraints : expandedFooterConstraints)
         newButton.title = compact ? "" : "新建项目"
         newButton.imagePosition = compact ? .imageOnly : .imageLeading
-        newButton.alignment = .center
+        newButton.alignment = compact ? .center : .left
+        newButton.contentLeadingInset = compact ? 0 : InkDesignTokens.Spacing.xs
         newButton.toolTip = compact ? "新建项目" : nil
         newButton.setAccessibilityLabel("新建项目")
-        settingsButton.title = compact ? "" : "设置"
-        settingsButton.imagePosition = compact ? .imageOnly : .imageLeading
-        settingsButton.alignment = .center
-        settingsButton.toolTip = compact ? "设置" : nil
-        settingsButton.setAccessibilityLabel("设置")
     }
 
     @objc private func newProject() { onNewProject?() }
-    @objc private func openSettings() { onSettings?() }
 }
 
 /// 承接项目行拖拽的容器：按落点 y 算插入位置。
@@ -578,6 +520,7 @@ private final class SidebarActionButton: NSButton {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+        cell = SidebarActionButtonCell()
         wantsLayer = true
         updateLayerColor()
         addTrackingArea(NSTrackingArea(
@@ -589,6 +532,14 @@ private final class SidebarActionButton: NSButton {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("代码构建") }
+
+    var contentLeadingInset: CGFloat {
+        get { (cell as? SidebarActionButtonCell)?.contentLeadingInset ?? 0 }
+        set {
+            (cell as? SidebarActionButtonCell)?.contentLeadingInset = newValue
+            needsDisplay = true
+        }
+    }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
@@ -616,5 +567,22 @@ private final class SidebarActionButton: NSButton {
                     nil
                 }
         }
+    }
+}
+
+@MainActor
+private final class SidebarActionButtonCell: NSButtonCell {
+    var contentLeadingInset: CGFloat = 0
+
+    override func imageRect(forBounds rect: NSRect) -> NSRect {
+        var imageRect = super.imageRect(forBounds: rect)
+        imageRect.origin.x += contentLeadingInset
+        return imageRect
+    }
+
+    override func titleRect(forBounds rect: NSRect) -> NSRect {
+        var titleRect = super.titleRect(forBounds: rect)
+        titleRect.origin.x += contentLeadingInset
+        return titleRect
     }
 }
