@@ -69,6 +69,11 @@ public final class TerminalSession {
         pty.foregroundProcessName()
     }
 
+    /// 创建分屏时继承当前前台进程的工作目录，查询失败由外壳回退项目目录。
+    public var foregroundWorkingDirectory: String? {
+        pty.foregroundWorkingDirectory()
+    }
+
     /// 移除会话时先解除退出回调，避免 terminate 触发的回调重入列表管理。
     public func detach() {
         onExit = nil
