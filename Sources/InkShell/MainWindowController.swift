@@ -35,6 +35,9 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     private let sidebarVC = SidebarViewController()
     private let tabBar = TabBarView()
     private let terminalView = TerminalMetalView(frame: .zero)
+    private let contentRoot = NSView()
+    private let terminalWorkspace = NSView()
+    private lazy var settingsVC = SettingsViewController(config: config)
 
     private var projects: [Project] = []
     private var activeProjectIndex = 0
@@ -43,14 +46,26 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     private var config = InkConfig.load()
     private var configWatcher: ConfigWatcher?
     private var sidebarMode: SidebarDisplayMode = .expanded
+    private var isShowingSettings = false
+    private var isSettingsViewInstalled = false
 
     private var activeProject: Project? {
         projects.indices.contains(activeProjectIndex) ? projects[activeProjectIndex] : nil
     }
 
     public convenience init() {
+        let initialConfig = InkConfig.load()
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800),
+            contentRect: NSRect(
+                x: 0,
+                y: 0,
+                width: initialConfig.rememberWindowFrame
+                    ? 1280
+                    : initialConfig.windowWidth,
+                height: initialConfig.rememberWindowFrame
+                    ? 800
+                    : initialConfig.windowHeight
+            ),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -61,6 +76,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.backgroundColor = InkDesignTokens.Color.canvas
         window.minSize = NSSize(width: 520, height: 320)
         self.init(window: window)
+        config = initialConfig
         window.delegate = self
         loadProjects()
         buildContent()
@@ -69,13 +85,25 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
         configWatcher = ConfigWatcher { [weak self] fresh in
             self?.config = fresh
             self?.applyConfig(fresh)
+            self?.settingsVC.update(config: fresh)
         }
-        window.center()
-        // 记住用户上次调整的尺寸与位置；1280×800 只是首启默认。
-        window.setFrameAutosaveName("InkMainWindow")
+        if initialConfig.rememberWindowFrame {
+            window.setFrameAutosaveName("InkMainWindow")
+            if !window.setFrameUsingName("InkMainWindow") {
+                window.center()
+            }
+        } else {
+            window.center()
+        }
     }
 
     private func applyConfig(_ config: InkConfig) {
+        NSApplication.shared.appearance =
+            switch config.appearanceMode {
+            case .system: nil
+            case .light: NSAppearance(named: .aqua)
+            case .dark: NSAppearance(named: .darkAqua)
+            }
         terminalView.fontFamily = config.fontFamily
         terminalView.lineHeightMultiplier = CGFloat(config.lineHeight)
         terminalView.fontSize = CGFloat(config.fontSize)
@@ -88,6 +116,11 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
         terminalView.cursorBlinkEnabled = config.cursorBlink
         terminalView.optionAsMeta = config.optionAsMeta
         terminalView.copyOnSelect = config.copyOnSelect
+        if config.rememberWindowFrame {
+            window?.setFrameAutosaveName("InkMainWindow")
+        } else {
+            window?.setFrameAutosaveName("")
+        }
         // scrollbackLines 只对新会话生效：改已有 Terminal 的环形容量
         // 需要整体搬迁，不值得为配置热改付这个复杂度。
     }
@@ -129,27 +162,33 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
         guard let window else { return }
 
         let contentVC = NSViewController()
-        let contentRoot = NSView()
         let hairline = NSBox()
         hairline.boxType = .separator
+        terminalWorkspace.translatesAutoresizingMaskIntoConstraints = false
         tabBar.translatesAutoresizingMaskIntoConstraints = false
         terminalView.translatesAutoresizingMaskIntoConstraints = false
         hairline.translatesAutoresizingMaskIntoConstraints = false
-        contentRoot.addSubview(tabBar)
-        contentRoot.addSubview(hairline)
-        contentRoot.addSubview(terminalView)
+        contentRoot.addSubview(terminalWorkspace)
+        terminalWorkspace.addSubview(tabBar)
+        terminalWorkspace.addSubview(hairline)
+        terminalWorkspace.addSubview(terminalView)
         NSLayoutConstraint.activate([
-            tabBar.topAnchor.constraint(equalTo: contentRoot.topAnchor),
-            tabBar.leadingAnchor.constraint(equalTo: contentRoot.leadingAnchor),
-            tabBar.trailingAnchor.constraint(equalTo: contentRoot.trailingAnchor),
+            terminalWorkspace.topAnchor.constraint(equalTo: contentRoot.topAnchor),
+            terminalWorkspace.leadingAnchor.constraint(equalTo: contentRoot.leadingAnchor),
+            terminalWorkspace.trailingAnchor.constraint(equalTo: contentRoot.trailingAnchor),
+            terminalWorkspace.bottomAnchor.constraint(equalTo: contentRoot.bottomAnchor),
+
+            tabBar.topAnchor.constraint(equalTo: terminalWorkspace.topAnchor),
+            tabBar.leadingAnchor.constraint(equalTo: terminalWorkspace.leadingAnchor),
+            tabBar.trailingAnchor.constraint(equalTo: terminalWorkspace.trailingAnchor),
             tabBar.heightAnchor.constraint(equalToConstant: 38),
             hairline.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
-            hairline.leadingAnchor.constraint(equalTo: contentRoot.leadingAnchor),
-            hairline.trailingAnchor.constraint(equalTo: contentRoot.trailingAnchor),
+            hairline.leadingAnchor.constraint(equalTo: terminalWorkspace.leadingAnchor),
+            hairline.trailingAnchor.constraint(equalTo: terminalWorkspace.trailingAnchor),
             terminalView.topAnchor.constraint(equalTo: hairline.bottomAnchor),
-            terminalView.leadingAnchor.constraint(equalTo: contentRoot.leadingAnchor),
-            terminalView.trailingAnchor.constraint(equalTo: contentRoot.trailingAnchor),
-            terminalView.bottomAnchor.constraint(equalTo: contentRoot.bottomAnchor),
+            terminalView.leadingAnchor.constraint(equalTo: terminalWorkspace.leadingAnchor),
+            terminalView.trailingAnchor.constraint(equalTo: terminalWorkspace.trailingAnchor),
+            terminalView.bottomAnchor.constraint(equalTo: terminalWorkspace.bottomAnchor),
         ])
         contentVC.view = contentRoot
 
@@ -174,7 +213,14 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
         splitVC.onToggleSidebar = { [weak self] in self?.toggleSidebarMode() }
         DispatchQueue.main.async { [weak self] in
-            self?.setSidebarMode(.expanded, animated: false)
+            guard let self else { return }
+            let mode: SidebarDisplayMode =
+                switch self.config.startupSidebarMode {
+                case .expanded: .expanded
+                case .compact: .compact
+                case .hidden: .hidden
+                }
+            self.setSidebarMode(mode, animated: false)
         }
 
         // 事件接线。
@@ -194,6 +240,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
         tabBar.onToggleSidebar = { [weak self] in self?.toggleSidebarMode() }
         sidebarVC.onSelect = { [weak self] in self?.selectProject(at: $0) }
         sidebarVC.onNewProject = { [weak self] in self?.newProject(nil) }
+        sidebarVC.onSettings = { [weak self] in self?.showSettings(nil) }
         sidebarVC.onRemove = { [weak self] in self?.removeProject(at: $0) }
         sidebarVC.onTogglePin = { [weak self] in self?.togglePin(at: $0) }
         sidebarVC.onEditNote = { [weak self] in self?.editNote(at: $0) }
@@ -201,6 +248,10 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
             self?.setProjectLabel(label, at: index)
         }
         sidebarVC.onReorder = { [weak self] from, to in self?.reorderProject(from: from, to: to) }
+        settingsVC.onChange = { [weak self] fresh in self?.saveConfig(fresh) }
+        settingsVC.onDone = { [weak self] in self?.hideSettings() }
+        settingsVC.onOpenConfig = { [weak self] in self?.openConfigFile() }
+        settingsVC.onReset = { [weak self] in self?.saveConfig(InkConfig()) }
 
         terminalView.onGridResize = { [weak self] size in
             guard let self else { return }
@@ -215,6 +266,65 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
             }
         }
         window.makeFirstResponder(terminalView)
+    }
+
+    private func saveConfig(_ fresh: InkConfig) {
+        do {
+            try fresh.save()
+            config = fresh
+            applyConfig(fresh)
+            settingsVC.update(config: fresh)
+        } catch {
+            guard let window else { return }
+            NSAlert(error: error).beginSheetModal(for: window)
+        }
+    }
+
+    private func openConfigFile() {
+        do {
+            try config.save()
+            NSWorkspace.shared.open(InkConfig.defaultURL)
+        } catch {
+            guard let window else { return }
+            NSAlert(error: error).beginSheetModal(for: window)
+        }
+    }
+
+    @objc public func showSettings(_ sender: Any?) {
+        guard !isShowingSettings else { return }
+        installSettingsViewIfNeeded()
+        isShowingSettings = true
+        sidebarVC.isSettingsSelected = true
+        settingsVC.update(config: config)
+        terminalWorkspace.isHidden = true
+        settingsVC.view.isHidden = false
+        window?.makeFirstResponder(settingsVC.view)
+        refreshChrome()
+    }
+
+    private func installSettingsViewIfNeeded() {
+        guard !isSettingsViewInstalled else { return }
+        let settingsView = settingsVC.view
+        settingsView.translatesAutoresizingMaskIntoConstraints = false
+        settingsView.isHidden = true
+        contentRoot.addSubview(settingsView)
+        NSLayoutConstraint.activate([
+            settingsView.topAnchor.constraint(equalTo: contentRoot.topAnchor),
+            settingsView.leadingAnchor.constraint(equalTo: contentRoot.leadingAnchor),
+            settingsView.trailingAnchor.constraint(equalTo: contentRoot.trailingAnchor),
+            settingsView.bottomAnchor.constraint(equalTo: contentRoot.bottomAnchor),
+        ])
+        isSettingsViewInstalled = true
+    }
+
+    private func hideSettings() {
+        guard isShowingSettings else { return }
+        isShowingSettings = false
+        sidebarVC.isSettingsSelected = false
+        settingsVC.view.isHidden = true
+        terminalWorkspace.isHidden = false
+        window?.makeFirstResponder(terminalView)
+        refreshChrome()
     }
 
     private func toggleSidebarMode() {
@@ -339,6 +449,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
 
     private func selectProject(at index: Int) {
         guard projects.indices.contains(index) else { return }
+        hideSettings()
         activeProjectIndex = index
         persistProjects()
         if let project = activeProject, project.sessions.isEmpty {
@@ -582,7 +693,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
             return SidebarViewController.Row(
                 title: project.displayName,
                 subtitle: project.note ?? fallback,
-                active: index == activeProjectIndex,
+                active: !isShowingSettings && index == activeProjectIndex,
                 pinned: project.pinned,
                 label: project.label
             )

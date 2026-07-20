@@ -39,6 +39,86 @@ public enum MiniTOML {
         return result
     }
 
+    /// 只更新指定键，保留原始排版、注释与未知内容。
+    ///
+    /// `values` 的顺序同时决定新文件及缺失键的稳定输出顺序。
+    static func updating(
+        _ text: String,
+        values: [(key: String, value: String)]
+    ) -> String {
+        let replacements = Dictionary(uniqueKeysWithValues: values.map { ($0.key, $0.value) })
+        var present = Set<String>()
+        var existingSections = Set<String>()
+        var section = ""
+
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        for line in lines {
+            if let parsedSection = sectionName(in: line) {
+                section = parsedSection
+                existingSections.insert(section)
+                continue
+            }
+            guard let key = assignmentKey(in: line) else { continue }
+            present.insert(section.isEmpty ? key : "\(section).\(key)")
+        }
+
+        let missing = values.filter { !present.contains($0.key) }
+        var missingBySection: [String: [(key: String, value: String)]] = [:]
+        for entry in missing {
+            let split = splitPath(entry.key)
+            missingBySection[split.section, default: []].append((split.key, entry.value))
+        }
+
+        var output: [String] = []
+        section = ""
+
+        func appendMissing(for section: String) {
+            guard let entries = missingBySection.removeValue(forKey: section) else { return }
+            if !output.isEmpty, output.last?.isEmpty == false {
+                output.append("")
+            }
+            output.append(contentsOf: entries.map { "\($0.key) = \($0.value)" })
+        }
+
+        for line in lines {
+            if let nextSection = sectionName(in: line) {
+                appendMissing(for: section)
+                section = nextSection
+                output.append(line)
+                continue
+            }
+
+            guard let key = assignmentKey(in: line) else {
+                output.append(line)
+                continue
+            }
+            let path = section.isEmpty ? key : "\(section).\(key)"
+            guard let value = replacements[path] else {
+                output.append(line)
+                continue
+            }
+            output.append(replacingValue(in: line, with: value))
+        }
+        appendMissing(for: section)
+
+        let orderedSections = values.map { splitPath($0.key).section }
+        for missingSection in orderedSections where !missingSection.isEmpty {
+            guard !existingSections.contains(missingSection),
+                  let entries = missingBySection.removeValue(forKey: missingSection)
+            else { continue }
+            if !output.isEmpty, output.last?.isEmpty == false {
+                output.append("")
+            }
+            output.append("[\(missingSection)]")
+            output.append(contentsOf: entries.map { "\($0.key) = \($0.value)" })
+        }
+
+        if text.isEmpty, output.first?.isEmpty == true {
+            output.removeFirst()
+        }
+        return output.joined(separator: "\n")
+    }
+
     private static func parseValue(_ raw: String) -> Value? {
         if raw.hasPrefix("\""), raw.hasSuffix("\""), raw.count >= 2 {
             let inner = String(raw.dropFirst().dropLast())
@@ -61,17 +141,55 @@ public enum MiniTOML {
 
     /// 去掉注释，但不动引号内的 `#`。
     private static func stripComment(_ line: String) -> String {
+        guard let index = commentIndex(in: line) else { return line }
+        return String(line[..<index])
+    }
+
+    private static func commentIndex(in line: String) -> String.Index? {
         var inString = false
         var previous: Character = " "
-        for (offset, ch) in line.enumerated() {
+        for index in line.indices {
+            let ch = line[index]
             if ch == "\"", previous != "\\" {
                 inString.toggle()
             } else if ch == "#", !inString {
-                return String(line.prefix(offset))
+                return index
             }
             previous = ch
         }
-        return line
+        return nil
+    }
+
+    private static func sectionName(in line: String) -> String? {
+        let content = stripComment(line).trimmingCharacters(in: .whitespaces)
+        guard content.hasPrefix("["), content.hasSuffix("]") else { return nil }
+        return String(content.dropFirst().dropLast()).trimmingCharacters(in: .whitespaces)
+    }
+
+    private static func assignmentKey(in line: String) -> String? {
+        let content = stripComment(line)
+        guard let equals = content.firstIndex(of: "=") else { return nil }
+        let key = content[..<equals].trimmingCharacters(in: .whitespaces)
+        return key.isEmpty ? nil : key
+    }
+
+    private static func splitPath(_ path: String) -> (section: String, key: String) {
+        guard let dot = path.lastIndex(of: ".") else { return ("", path) }
+        return (String(path[..<dot]), String(path[path.index(after: dot)...]))
+    }
+
+    private static func replacingValue(in line: String, with value: String) -> String {
+        guard let equals = line.firstIndex(of: "=") else { return line }
+        let valueStart = line.index(after: equals)
+        let remainder = line[valueStart...]
+        let leadingWhitespace = remainder.prefix { $0 == " " || $0 == "\t" }
+        let local = String(remainder)
+        let comment = commentIndex(in: local).map { index -> String in
+            let beforeComment = local[..<index]
+            let spacing = beforeComment.reversed().prefix { $0 == " " || $0 == "\t" }.reversed()
+            return "\(String(spacing))\(local[index...])"
+        } ?? ""
+        return "\(line[...equals])\(leadingWhitespace)\(value)\(comment)"
     }
 }
 

@@ -46,6 +46,31 @@ struct MiniTOMLTests {
         #expect(values.double("ok.good") == 1)
         #expect(values.count == 1)
     }
+
+    @Test("更新已知键时保留注释与未知内容")
+    func updatingPreservesHandwrittenContent() {
+        let updated = MiniTOML.updating(
+            """
+            # 用户写的说明
+            custom = "keep"
+
+            [font]
+            size = 13   # 行尾注释
+            experimental = true
+            """,
+            values: [
+                ("font.size", "16"),
+                ("cursor.style", #""bar""#),
+            ]
+        )
+
+        #expect(updated.contains("# 用户写的说明"))
+        #expect(updated.contains(#"custom = "keep""#))
+        #expect(updated.contains("size = 16   # 行尾注释"))
+        #expect(updated.contains("experimental = true"))
+        #expect(updated.contains("[cursor]"))
+        #expect(updated.contains(#"style = "bar""#))
+    }
 }
 
 @Suite("InkConfig")
@@ -84,5 +109,43 @@ struct InkConfigTests {
         #expect(config.optionAsMeta == false)
         #expect(config.scrollbackLines == InkConfig().scrollbackLines) // 非法回默认
         #expect(config.copyOnSelect == false) // 未配置保持默认
+    }
+
+    @Test("设置写回后完整往返并保留未知字段")
+    func saveRoundtripPreservesUnknownFields() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ink-save-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent("config.toml")
+        try """
+        # 这行必须保留
+        [custom]
+        future_option = "keep"
+
+        [font]
+        size = 12 # 保留行尾注释
+        """.write(to: file, atomically: true, encoding: .utf8)
+
+        var config = InkConfig()
+        config.appearanceMode = .dark
+        config.startupSidebarMode = .compact
+        config.rememberWindowFrame = false
+        config.windowWidth = 1440
+        config.windowHeight = 900
+        config.fontFamily = "Menlo"
+        config.fontSize = 16
+        config.lineHeight = 1.35
+        config.cursorStyle = .bar
+        config.cursorBlink = false
+        config.optionAsMeta = false
+        config.copyOnSelect = true
+        config.scrollbackLines = 250_000
+        try config.save(to: file)
+
+        let text = try String(contentsOf: file, encoding: .utf8)
+        #expect(text.contains("# 这行必须保留"))
+        #expect(text.contains(#"future_option = "keep""#))
+        #expect(text.contains("size = 16 # 保留行尾注释"))
+        #expect(InkConfig.load(from: file) == config)
     }
 }
