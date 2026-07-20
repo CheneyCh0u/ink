@@ -41,6 +41,7 @@ final class TerminalRenderer {
     private var defaultBG: SIMD4<Float> = .zero
     private var cursorColor: SIMD4<Float> = .zero
     private var selectionColor: SIMD4<Float> = .zero
+    private var searchColor: SIMD4<Float> = .zero
     private(set) var clearColor = MTLClearColor()
 
     private let contentInset: CGFloat
@@ -120,6 +121,7 @@ final class TerminalRenderer {
         defaultBG = Self.floatColor(palette.defaultBackground.rgb)
         cursorColor = Self.floatColor(palette.cursor.rgb)
         selectionColor = Self.floatColor(palette.selection.rgb)
+        searchColor = Self.floatColor(palette.searchHighlight.rgb)
         clearColor = MTLClearColor(
             red: Double(defaultBG.x), green: Double(defaultBG.y),
             blue: Double(defaultBG.z), alpha: 1
@@ -161,6 +163,7 @@ final class TerminalRenderer {
         cursorOn: Bool,
         scrollOffset: Int = 0,
         selection: SelectionRange? = nil,
+        searchHighlights: [TerminalSearchHighlightSpan] = [],
         preedit: String? = nil
     ) {
         let grid = terminal.grid
@@ -175,6 +178,7 @@ final class TerminalRenderer {
         var count = buildInstances(
             terminal: terminal, cursorOn: cursorOn && preedit == nil,
             scrollOffset: scrollOffset, selection: selection?.normalized,
+            searchHighlights: searchHighlights,
             into: buffer
         )
         if let preedit, !preedit.isEmpty, scrollOffset == 0 {
@@ -199,7 +203,8 @@ final class TerminalRenderer {
             viewportSize: SIMD2(Float(layer.drawableSize.width), Float(layer.drawableSize.height)),
             cellSize: SIMD2(Float(atlas.cellWidth), Float(atlas.cellHeight)),
             origin: SIMD2(Float(contentInset), Float(contentInset)),
-            cursorColor: cursorColor
+            cursorColor: cursorColor,
+            searchEdgeColor: searchColor
         )
 
         guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else {
@@ -245,6 +250,7 @@ final class TerminalRenderer {
     private func buildInstances(
         terminal: Terminal, cursorOn: Bool,
         scrollOffset: Int, selection: SelectionRange?,
+        searchHighlights: [TerminalSearchHighlightSpan],
         into buffer: MTLBuffer
     ) -> Int {
         let grid = terminal.grid
@@ -259,8 +265,14 @@ final class TerminalRenderer {
         let cursorCol = grid.cursorCol
         // 翻看历史时不画光标——它属于屏上区域，回到底部才有意义。
         let drawCursor = cursorOn && terminal.modes.showCursor && offset == 0
+        var rowHighlightStart = 0
 
         for visualRow in 0..<rows {
+            while rowHighlightStart < searchHighlights.count,
+                  searchHighlights[rowHighlightStart].visualRow < visualRow {
+                rowHighlightStart += 1
+            }
+            var rowHighlightCursor = rowHighlightStart
             let absLine = sbCount - offset + visualRow
             let fromScrollback = visualRow < offset
             let gridRow = visualRow - offset
@@ -280,8 +292,31 @@ final class TerminalRenderer {
                 let isCursorCell = drawCursor && gridRow == cursorRow
                     && (col == cursorCol || (col == cursorCol - 1 && attr & Cell.Attr.wideLeading != 0))
                 let isSelected = selection?.contains(line: absLine, column: col) ?? false
+                while rowHighlightCursor < searchHighlights.count,
+                      searchHighlights[rowHighlightCursor].visualRow == visualRow,
+                      searchHighlights[rowHighlightCursor].columns.upperBound < col {
+                    rowHighlightCursor += 1
+                }
+                let searchKind: TerminalSearchHighlightKind
+                if !isSelected,
+                   rowHighlightCursor < searchHighlights.count,
+                   searchHighlights[rowHighlightCursor].visualRow == visualRow,
+                   searchHighlights[rowHighlightCursor].columns.contains(col) {
+                    searchKind = searchHighlights[rowHighlightCursor].isCurrent
+                        ? .current : .ordinary
+                } else {
+                    searchKind = .none
+                }
 
                 var (fg, bg) = resolve(attr: attr, colorTable: terminal.colorTable)
+                switch searchKind {
+                case .none:
+                    break
+                case .ordinary:
+                    bg = Self.blend(bg, searchColor, alpha: 0.22)
+                case .current:
+                    bg = Self.blend(bg, searchColor, alpha: 0.42)
+                }
                 if isSelected {
                     bg = selectionColor
                 }
@@ -297,6 +332,7 @@ final class TerminalRenderer {
 
                 // 纯空白 + 默认背景 + 非光标非选中：不发实例。
                 if !hasGlyph, decorations == 0, !isCursorCell, !isSelected,
+                   searchKind == .none,
                    Cell.Attr.background(of: attr) == Cell.Attr.colorDefault,
                    attr & Cell.Attr.inverse == 0 {
                     continue
@@ -311,6 +347,7 @@ final class TerminalRenderer {
                     if cursorStyle == .bar { flags |= CellInstance.cursorBar }
                     if cursorStyle == .underline { flags |= CellInstance.cursorUnderline }
                 }
+                if searchKind == .current { flags |= CellInstance.currentSearchMatch }
 
                 if hasGlyph {
                     let text = glyphText(for: cell, clusterTable: terminal.clusterTable)
@@ -335,6 +372,17 @@ final class TerminalRenderer {
             }
         }
         return count
+    }
+
+    private static func blend(
+        _ background: SIMD4<Float>, _ accent: SIMD4<Float>, alpha: Float
+    ) -> SIMD4<Float> {
+        SIMD4(
+            background.x + (accent.x - background.x) * alpha,
+            background.y + (accent.y - background.y) * alpha,
+            background.z + (accent.z - background.z) * alpha,
+            1
+        )
     }
 
     // MARK: - 预编辑（输入法 marked text）
