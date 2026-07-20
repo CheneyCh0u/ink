@@ -30,6 +30,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
+        let settingsItem = appMenu.addItem(
+            withTitle: "设置…",
+            action: #selector(showSettings(_:)),
+            keyEquivalent: ","
+        )
+        settingsItem.target = self
+        appMenu.addItem(.separator())
         appMenu.addItem(
             withTitle: "退出 Ink",
             action: #selector(NSApplication.terminate(_:)),
@@ -111,5 +118,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(windowItem)
 
         NSApplication.shared.mainMenu = mainMenu
+    }
+
+    @objc private func showSettings(_ sender: Any?) {
+        mainWindowController?.showSettings(sender)
     }
 }

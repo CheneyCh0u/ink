@@ -1,7 +1,7 @@
 import AppKit
 import InkDesign
 
-/// 侧边栏：项目列表 + 底部新建按钮。
+/// 侧边栏：项目列表 + 底部新建与设置入口。
 ///
 /// 根视图直接承载系统 sidebar 材质，让背景从标题栏贯穿到底部。
 /// 不使用系统 sidebar split item，避免新系统把侧栏变成浮动圆角面板。
@@ -34,8 +34,16 @@ final class SidebarViewController: NSViewController {
         }
     }
 
+    var isSettingsSelected = false {
+        didSet {
+            guard isViewLoaded else { return }
+            settingsButton.isSelectedState = isSettingsSelected
+        }
+    }
+
     var onSelect: ((Int) -> Void)?
     var onNewProject: (() -> Void)?
+    var onSettings: (() -> Void)?
     var onRemove: ((Int) -> Void)?
     var onTogglePin: ((Int) -> Void)?
     var onEditNote: ((Int) -> Void)?
@@ -47,8 +55,11 @@ final class SidebarViewController: NSViewController {
 
     private let rowStack = NSStackView()
     private let newButton = SidebarActionButton()
+    private let settingsButton = SidebarActionButton()
+    private let footerSeparator = NSBox()
     private let sectionTitle = NSTextField(labelWithString: "项目")
     private let shortcutHint = NSTextField(labelWithString: "⌘N")
+    private let settingsShortcutHint = NSTextField(labelWithString: "⌘,")
     private var rows: [Row] = []
     private var expandedRowsTop: NSLayoutConstraint?
     private var compactRowsTop: NSLayoutConstraint?
@@ -88,10 +99,34 @@ final class SidebarViewController: NSViewController {
         shortcutHint.textColor = InkDesignTokens.Color.textSecondary
         shortcutHint.translatesAutoresizingMaskIntoConstraints = false
 
+        settingsButton.title = "设置"
+        settingsButton.target = self
+        settingsButton.action = #selector(openSettings)
+        settingsButton.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
+        settingsButton.imagePosition = .imageLeading
+        settingsButton.isBordered = false
+        settingsButton.font = InkDesignTokens.Typography.body
+        settingsButton.contentTintColor = InkDesignTokens.Color.textSecondary
+        settingsButton.alignment = .left
+        settingsButton.layer?.cornerRadius = InkDesignTokens.Radius.item
+        settingsButton.layer?.cornerCurve = .continuous
+        settingsButton.translatesAutoresizingMaskIntoConstraints = false
+        settingsButton.isSelectedState = isSettingsSelected
+
+        footerSeparator.boxType = .separator
+        footerSeparator.translatesAutoresizingMaskIntoConstraints = false
+
+        settingsShortcutHint.font = InkDesignTokens.Typography.label
+        settingsShortcutHint.textColor = InkDesignTokens.Color.textSecondary
+        settingsShortcutHint.translatesAutoresizingMaskIntoConstraints = false
+
         root.addSubview(sectionTitle)
         root.addSubview(rowStack)
         root.addSubview(newButton)
         root.addSubview(shortcutHint)
+        root.addSubview(footerSeparator)
+        root.addSubview(settingsButton)
+        root.addSubview(settingsShortcutHint)
 
         let sp = InkDesignTokens.Spacing.self
         let expandedRowsTop = rowStack.topAnchor.constraint(
@@ -118,10 +153,21 @@ final class SidebarViewController: NSViewController {
 
             newButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.sm),
             newButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.sm),
-            newButton.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -sp.sm),
             newButton.heightAnchor.constraint(equalToConstant: InkDesignTokens.Sidebar.actionHeight),
             shortcutHint.centerYAnchor.constraint(equalTo: newButton.centerYAnchor),
             shortcutHint.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.md),
+
+            newButton.bottomAnchor.constraint(equalTo: footerSeparator.topAnchor, constant: -sp.xxs),
+            footerSeparator.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.sm),
+            footerSeparator.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.sm),
+            footerSeparator.bottomAnchor.constraint(equalTo: settingsButton.topAnchor, constant: -sp.xxs),
+
+            settingsButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.sm),
+            settingsButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.sm),
+            settingsButton.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -sp.sm),
+            settingsButton.heightAnchor.constraint(equalToConstant: InkDesignTokens.Sidebar.actionHeight),
+            settingsShortcutHint.centerYAnchor.constraint(equalTo: settingsButton.centerYAnchor),
+            settingsShortcutHint.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.md),
         ])
 
         view = root
@@ -158,6 +204,7 @@ final class SidebarViewController: NSViewController {
         let compact = displayMode == .compact
         sectionTitle.isHidden = compact
         shortcutHint.isHidden = compact
+        settingsShortcutHint.isHidden = compact
         expandedRowsTop?.isActive = !compact
         compactRowsTop?.isActive = compact
         newButton.title = compact ? "" : "新建项目"
@@ -165,9 +212,15 @@ final class SidebarViewController: NSViewController {
         newButton.alignment = compact ? .center : .left
         newButton.toolTip = compact ? "新建项目" : nil
         newButton.setAccessibilityLabel("新建项目")
+        settingsButton.title = compact ? "" : "设置"
+        settingsButton.imagePosition = compact ? .imageOnly : .imageLeading
+        settingsButton.alignment = compact ? .center : .left
+        settingsButton.toolTip = compact ? "设置" : nil
+        settingsButton.setAccessibilityLabel("设置")
     }
 
     @objc private func newProject() { onNewProject?() }
+    @objc private func openSettings() { onSettings?() }
 }
 
 /// 承接项目行拖拽的容器：按落点 y 算插入位置。
@@ -492,6 +545,9 @@ private final class ProjectLabelIndicator: NSView {
 private final class SidebarActionButton: NSButton {
 
     private var hovered = false
+    var isSelectedState = false {
+        didSet { updateLayerColor() }
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -524,7 +580,14 @@ private final class SidebarActionButton: NSButton {
 
     private func updateLayerColor() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer?.backgroundColor = hovered ? InkDesignTokens.Color.pill.cgColor : nil
+            layer?.backgroundColor =
+                if isSelectedState {
+                    InkDesignTokens.Color.selected.cgColor
+                } else if hovered {
+                    InkDesignTokens.Color.pill.cgColor
+                } else {
+                    nil
+                }
         }
     }
 }

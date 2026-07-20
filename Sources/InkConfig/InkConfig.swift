@@ -8,6 +8,17 @@ import Foundation
 /// size = 14.0
 /// line_height = 1.2
 ///
+/// [appearance]
+/// mode = "system"       # system | light | dark
+///
+/// [sidebar]
+/// startup_mode = "expanded"  # expanded | compact | hidden
+///
+/// [window]
+/// remember_frame = true
+/// width = 1280
+/// height = 800
+///
 /// [cursor]
 /// style = "block"      # block | bar | underline
 /// blink = true
@@ -23,10 +34,23 @@ import Foundation
 /// ```
 public struct InkConfig: Equatable, Sendable {
 
-    public enum CursorStyle: String, Sendable {
+    public enum AppearanceMode: String, CaseIterable, Sendable {
+        case system, light, dark
+    }
+
+    public enum SidebarMode: String, CaseIterable, Sendable {
+        case expanded, compact, hidden
+    }
+
+    public enum CursorStyle: String, CaseIterable, Sendable {
         case block, bar, underline
     }
 
+    public var appearanceMode: AppearanceMode = .system
+    public var startupSidebarMode: SidebarMode = .expanded
+    public var rememberWindowFrame = true
+    public var windowWidth = 1280
+    public var windowHeight = 800
     /// 等宽字体族名。nil = 系统 SF Mono。字体不存在时静默回退系统字体。
     public var fontFamily: String?
     public var fontSize: Double = 14
@@ -54,6 +78,23 @@ public struct InkConfig: Equatable, Sendable {
         }
         let values = MiniTOML.parse(text)
 
+        if let mode = values.string("appearance.mode"),
+           let parsed = AppearanceMode(rawValue: mode) {
+            config.appearanceMode = parsed
+        }
+        if let mode = values.string("sidebar.startup_mode"),
+           let parsed = SidebarMode(rawValue: mode) {
+            config.startupSidebarMode = parsed
+        }
+        if let remember = values.bool("window.remember_frame") {
+            config.rememberWindowFrame = remember
+        }
+        if let width = values.int("window.width"), (640...4096).contains(width) {
+            config.windowWidth = width
+        }
+        if let height = values.int("window.height"), (400...2160).contains(height) {
+            config.windowHeight = height
+        }
         if let family = values.string("font.family"), !family.isEmpty {
             config.fontFamily = family
         }
@@ -79,6 +120,49 @@ public struct InkConfig: Equatable, Sendable {
             config.scrollbackLines = lines
         }
         return config
+    }
+
+    /// 原子写回已知设置。原文件中的注释、空行、未知 section 和未知键全部保留；
+    /// 缺少的键补进对应 section，避免 UI 接管后破坏用户手写配置。
+    public func save(to url: URL = defaultURL) throws {
+        let original = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        let updated = MiniTOML.updating(original, values: tomlValues)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try updated.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private var tomlValues: [(key: String, value: String)] {
+        [
+            ("appearance.mode", quote(appearanceMode.rawValue)),
+            ("sidebar.startup_mode", quote(startupSidebarMode.rawValue)),
+            ("window.remember_frame", rememberWindowFrame ? "true" : "false"),
+            ("window.width", "\(windowWidth)"),
+            ("window.height", "\(windowHeight)"),
+            ("font.family", quote(fontFamily ?? "")),
+            ("font.size", format(fontSize)),
+            ("font.line_height", format(lineHeight)),
+            ("cursor.style", quote(cursorStyle.rawValue)),
+            ("cursor.blink", cursorBlink ? "true" : "false"),
+            ("input.option_as_meta", optionAsMeta ? "true" : "false"),
+            ("selection.copy_on_select", copyOnSelect ? "true" : "false"),
+            ("scrollback.lines", "\(scrollbackLines)"),
+        ]
+    }
+
+    private func quote(_ value: String) -> String {
+        let escaped = value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\t", with: "\\t")
+        return "\"\(escaped)\""
+    }
+
+    private func format(_ value: Double) -> String {
+        value.rounded() == value ? "\(Int(value))" : "\(value)"
     }
 }
 

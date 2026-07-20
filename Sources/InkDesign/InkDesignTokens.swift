@@ -155,6 +155,8 @@ public enum InkDesignTokens {
         public static let body = NSFont.systemFont(ofSize: 13, weight: .regular)
         public static let bodyEmphasized = NSFont.systemFont(ofSize: 13, weight: .semibold)
         public static let title = NSFont.systemFont(ofSize: 15, weight: .semibold)
+        public static let pageTitle = NSFont.systemFont(ofSize: 22, weight: .semibold)
+        public static let sectionTitle = NSFont.systemFont(ofSize: 12, weight: .semibold)
 
         public static func terminal(size: CGFloat = 14) -> NSFont {
             NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
@@ -184,6 +186,14 @@ public enum InkDesignTokens {
         public static let labelRailInset: CGFloat = 4
         public static let material: NSVisualEffectView.Material = .sidebar
         public static let blendingMode: NSVisualEffectView.BlendingMode = .behindWindow
+    }
+
+    public enum Settings {
+        public static let contentWidth: CGFloat = 720
+        public static let headerHeight: CGFloat = 44
+        public static let rowMinimumHeight: CGFloat = 52
+        public static let previewHeight: CGFloat = 112
+        public static let controlWidth: CGFloat = 260
     }
 
     public enum ProjectLabel {
