@@ -123,7 +123,7 @@ final class SettingsViewController: NSViewController {
         document.translatesAutoresizingMaskIntoConstraints = false
         let content = NSStackView()
         content.orientation = .vertical
-        content.alignment = .width
+        content.alignment = .leading
         content.spacing = InkDesignTokens.Spacing.lg
         content.translatesAutoresizingMaskIntoConstraints = false
         document.addSubview(content)
@@ -183,12 +183,20 @@ final class SettingsViewController: NSViewController {
                 makeActionsRow(),
             ]
         ))
+        for item in content.arrangedSubviews {
+            item.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        }
 
         scroll.documentView = document
+        let preferredContentWidth = content.widthAnchor.constraint(
+            equalToConstant: InkDesignTokens.Settings.contentWidth
+        )
+        preferredContentWidth.priority = .defaultHigh
         NSLayoutConstraint.activate([
             content.topAnchor.constraint(equalTo: document.topAnchor, constant: InkDesignTokens.Spacing.xl),
             content.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -InkDesignTokens.Spacing.xl),
             content.centerXAnchor.constraint(equalTo: document.centerXAnchor),
+            preferredContentWidth,
             content.widthAnchor.constraint(
                 lessThanOrEqualToConstant: InkDesignTokens.Settings.contentWidth
             ),
