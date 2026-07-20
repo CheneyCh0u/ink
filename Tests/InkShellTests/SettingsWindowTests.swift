@@ -168,6 +168,37 @@ struct SettingsWindowTests {
         window.close()
     }
 
+    @Test("设置页中关闭标签不把焦点移到隐藏终端")
+    func closingTabWhileShowingSettingsKeepsSettingsFocus() throws {
+        let controller = MainWindowController()
+        let window = try #require(controller.window)
+        window.orderFront(nil)
+        controller.newSession(nil)
+        controller.newSession(nil)
+        spinRunLoop()
+        controller.showSettings(nil)
+        spinRunLoop()
+        let settingsResponder = try #require(window.firstResponder)
+
+        let contentView = try #require(window.contentView)
+        let closeButtons = allSubviews(in: contentView)
+            .compactMap { $0 as? NSButton }
+            .filter { $0.image?.accessibilityDescription == "关闭标签" }
+        #expect(closeButtons.count == 2)
+        let closeButton = try #require(closeButtons.first)
+        closeButton.isHidden = false
+        let closeAction = try #require(closeButton.action)
+        #expect(NSApp.sendAction(closeAction, to: closeButton.target, from: closeButton))
+        spinRunLoop()
+
+        let remainingCloseButtons = allSubviews(in: contentView)
+            .compactMap { $0 as? NSButton }
+            .filter { $0.image?.accessibilityDescription == "关闭标签" }
+        #expect(remainingCloseButtons.count == 1)
+        #expect(window.firstResponder === settingsResponder)
+        window.close()
+    }
+
     @Test("所有设置分组共享同一内容列")
     func settingsSectionsShareOneContentColumn() throws {
         let controller = MainWindowController()
