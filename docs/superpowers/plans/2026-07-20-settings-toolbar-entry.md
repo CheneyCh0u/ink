@@ -125,6 +125,7 @@ NSLayoutConstraint.activate([
 newButton.title = compact ? "" : "新建项目"
 newButton.imagePosition = compact ? .imageOnly : .imageLeading
 newButton.alignment = compact ? .center : .left
+newButton.contentLeadingInset = compact ? 0 : InkDesignTokens.Spacing.xs
 newButton.toolTip = compact ? "新建项目" : nil
 newButton.setAccessibilityLabel("新建项目")
 ```

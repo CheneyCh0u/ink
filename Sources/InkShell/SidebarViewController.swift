@@ -173,6 +173,7 @@ final class SidebarViewController: NSViewController {
         newButton.title = compact ? "" : "新建项目"
         newButton.imagePosition = compact ? .imageOnly : .imageLeading
         newButton.alignment = compact ? .center : .left
+        newButton.contentLeadingInset = compact ? 0 : InkDesignTokens.Spacing.xs
         newButton.toolTip = compact ? "新建项目" : nil
         newButton.setAccessibilityLabel("新建项目")
     }
@@ -519,6 +520,7 @@ private final class SidebarActionButton: NSButton {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+        cell = SidebarActionButtonCell()
         wantsLayer = true
         updateLayerColor()
         addTrackingArea(NSTrackingArea(
@@ -530,6 +532,14 @@ private final class SidebarActionButton: NSButton {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("代码构建") }
+
+    var contentLeadingInset: CGFloat {
+        get { (cell as? SidebarActionButtonCell)?.contentLeadingInset ?? 0 }
+        set {
+            (cell as? SidebarActionButtonCell)?.contentLeadingInset = newValue
+            needsDisplay = true
+        }
+    }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
@@ -557,5 +567,23 @@ private final class SidebarActionButton: NSButton {
                     nil
                 }
         }
+    }
+}
+
+@MainActor
+private final class SidebarActionButtonCell: NSButtonCell {
+    var contentLeadingInset: CGFloat = 0
+
+    override func imageRect(forBounds rect: NSRect) -> NSRect {
+        var imageRect = super.imageRect(forBounds: rect)
+        imageRect.origin.x += contentLeadingInset
+        return imageRect
+    }
+
+    override func titleRect(forBounds rect: NSRect) -> NSRect {
+        var titleRect = super.titleRect(forBounds: rect)
+        titleRect.origin.x += contentLeadingInset
+        titleRect.size.width = max(0, titleRect.width - contentLeadingInset)
+        return titleRect
     }
 }
