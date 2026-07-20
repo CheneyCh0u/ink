@@ -91,6 +91,7 @@ struct ProjectSidebarLayoutTests {
         )
         #expect(separator.frame.minY > newButton.frame.maxY)
         #expect(newButton.imageHugsTitle)
+        #expect(newButton.alignment == .left)
         #expect(controller.view.subviews.compactMap { $0 as? NSButton }.count == 1)
         #expect(!hasShortcutHints(in: controller.view))
     }
@@ -101,6 +102,7 @@ struct ProjectSidebarLayoutTests {
 
         #expect(abs(newButton.frame.midX - controller.view.bounds.midX) < 0.5)
         #expect(separator.frame.minY > newButton.frame.maxY)
+        #expect(newButton.alignment == .center)
         #expect(newButton.title.isEmpty)
         #expect(newButton.toolTip == "新建项目")
         #expect(controller.view.subviews.compactMap { $0 as? NSButton }.count == 1)
