@@ -8,6 +8,57 @@ import Testing
 @MainActor
 struct TerminalWorkspaceTests {
 
+    @Test("多子项分隔线位置恢复为权重")
+    func restoresGroupWeights() throws {
+        let first = makePane()
+        let second = makePane()
+        let third = makePane()
+        let tab = TerminalTab(initialPane: first)
+        _ = tab.insertPane(second, splitting: first.id, direction: .down)
+        _ = tab.insertPane(third, splitting: second.id, direction: .down)
+        guard case let .group(id, _, _, _) = tab.layout else {
+            Issue.record("没有形成多子项分组")
+            return
+        }
+        _ = tab.updateSplitWeights(id, weights: [0.25, 0.25, 0.5])
+        let workspace = TerminalWorkspaceViewController()
+        workspace.view.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
+
+        workspace.show(tab: tab, config: InkConfig())
+        workspace.view.layoutSubtreeIfNeeded()
+
+        let heights = try [first, second, third].map {
+            try #require(workspace.paneContainer(for: $0.id)).frame.height
+        }
+        #expect(heights.allSatisfy { $0 > 1 })
+        #expect(heights[2] > heights[0] * 1.9)
+    }
+
+    @Test("用户拖动结束后把整组权重写回标签")
+    func dividerDragCommitsGroupWeights() throws {
+        let first = makePane()
+        let second = makePane()
+        let tab = TerminalTab(initialPane: first)
+        _ = tab.insertPane(second, splitting: first.id, direction: .right)
+        let workspace = TerminalWorkspaceViewController()
+        workspace.view.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        workspace.show(tab: tab, config: InkConfig())
+        workspace.view.layoutSubtreeIfNeeded()
+        let splitView = try #require(
+            allSubviews(in: workspace.view).compactMap { $0 as? WorkspaceSplitView }.first
+        )
+
+        splitView.setPosition(200, ofDividerAt: 0)
+        splitView.onFinishTracking?()
+
+        guard case let .group(_, _, weights, _) = tab.layout else {
+            Issue.record("拖动后布局不再是分组")
+            return
+        }
+        #expect(abs(weights[0] - 0.25) < 0.02)
+        #expect(abs(weights[1] - 0.75) < 0.02)
+    }
+
     @Test("连续向下分屏并重建时每个 pane 都有可见高度")
     func repeatedTopBottomSplitsKeepEveryPaneVisible() throws {
         let first = makePane()

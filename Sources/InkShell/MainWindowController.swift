@@ -1,6 +1,7 @@
 import AppKit
 import InkConfig
 import InkDesign
+import InkTerminalView
 import QuartzCore
 import TerminalCore
 
@@ -43,6 +44,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
     private var sidebarMode: SidebarDisplayMode = .expanded
     private var isShowingSettings = false
     private var isSettingsViewInstalled = false
+    private var splitShortcutState = SplitShortcutState()
+    private var splitShortcutMonitor: Any?
 
     private var activeProject: Project? {
         projects.indices.contains(activeProjectIndex) ? projects[activeProjectIndex] : nil
@@ -75,6 +78,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         window.delegate = self
         loadProjects()
         buildContent()
+        installSplitShortcutMonitor()
         applyConfig(config)
         // 配置热重载：~/.config/ink/config.toml 保存即生效。
         configWatcher = ConfigWatcher { [weak self] fresh in
@@ -267,6 +271,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
 
     @objc public func showSettings(_ sender: Any?) {
         guard !isShowingSettings else { return }
+        cancelSplitShortcut()
         installSettingsViewIfNeeded()
         isShowingSettings = true
         sidebarVC.isSettingsSelected = true
@@ -603,6 +608,80 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         refreshChrome()
     }
 
+    private func installSplitShortcutMonitor() {
+        splitShortcutMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.keyDown, .keyUp, .flagsChanged]
+        ) { @MainActor [weak self] event in
+            self?.handleSplitShortcut(event) ?? event
+        }
+    }
+
+    private func handleSplitShortcut(_ event: NSEvent) -> NSEvent? {
+        guard event.window === window else {
+            cancelSplitShortcut()
+            return event
+        }
+
+        if event.type == .flagsChanged {
+            if !event.modifierFlags.contains(.command) {
+                cancelSplitShortcut()
+            }
+            return event
+        }
+
+        if event.type == .keyUp, event.keyCode == 2, splitShortcutState.isActive {
+            return applySplitShortcutDecision(splitShortcutState.handle(.dUp), event: event)
+        }
+
+        guard event.type == .keyDown,
+              !isShowingSettings,
+              window?.firstResponder is TerminalMetalView,
+              event.modifierFlags.contains(.command) else {
+            cancelSplitShortcut()
+            return event
+        }
+
+        if event.keyCode == 2 {
+            return applySplitShortcutDecision(
+                splitShortcutState.handle(.commandDDown(isRepeat: event.isARepeat)),
+                event: event
+            )
+        }
+        guard let direction = Self.splitDirection(for: event.keyCode) else { return event }
+        return applySplitShortcutDecision(
+            splitShortcutState.handle(.direction(direction)), event: event
+        )
+    }
+
+    private func applySplitShortcutDecision(
+        _ decision: SplitShortcutDecision,
+        event: NSEvent
+    ) -> NSEvent? {
+        switch decision {
+        case .passThrough:
+            return event
+        case .consume:
+            return nil
+        case let .split(direction):
+            splitActivePane(direction: direction)
+            return nil
+        }
+    }
+
+    private func cancelSplitShortcut() {
+        _ = splitShortcutState.handle(.cancel)
+    }
+
+    private static func splitDirection(for keyCode: UInt16) -> PaneSplitDirection? {
+        switch keyCode {
+        case 123: .left
+        case 124: .right
+        case 125: .down
+        case 126: .up
+        default: nil
+        }
+    }
+
     private func startPane(size: TerminalSize, workingDirectory: String) -> TerminalPane? {
         let session = TerminalSession(
             size: size,
@@ -767,10 +846,19 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
     // MARK: - 窗口
 
     public func windowWillClose(_ notification: Notification) {
+        cancelSplitShortcut()
+        if let splitShortcutMonitor {
+            NSEvent.removeMonitor(splitShortcutMonitor)
+            self.splitShortcutMonitor = nil
+        }
         for project in projects {
             for tab in project.tabs { terminate(tab: tab) }
             project.tabs.removeAll()
         }
+    }
+
+    public func windowDidResignKey(_ notification: Notification) {
+        cancelSplitShortcut()
     }
 
     public func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
