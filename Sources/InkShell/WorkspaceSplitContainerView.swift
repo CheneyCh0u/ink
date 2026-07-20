@@ -74,6 +74,14 @@ final class WorkspaceSplitContainerView: NSView {
         }
     }
 
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard !isHidden, alphaValue > 0, bounds.contains(point) else { return nil }
+        if dividerHitIndex(at: point) != nil {
+            return self
+        }
+        return super.hitTest(point)
+    }
+
     @discardableResult
     func beginDividerDrag(at point: NSPoint) -> Bool {
         layoutSubtreeIfNeeded()

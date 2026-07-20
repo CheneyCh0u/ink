@@ -122,4 +122,21 @@ struct WorkspaceSplitContainerViewTests {
 
         #expect(!container.beginDividerDrag(at: NSPoint(x: 50, y: 200)))
     }
+
+    @Test("扩展命中区域由容器接收鼠标事件")
+    func expandedDividerHitAreaRoutesToContainer() {
+        let container = WorkspaceSplitContainerView(
+            splitID: SplitID(), axis: .leftRight, weights: [0.5, 0.5]
+        )
+        container.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+        container.addPaneSubview(NSView())
+        container.addPaneSubview(NSView())
+        container.layoutSubtreeIfNeeded()
+        let pointInsideSecondPane = NSPoint(
+            x: container.subviews[0].frame.maxX + 2,
+            y: 200
+        )
+
+        #expect(container.hitTest(pointInsideSecondPane) === container)
+    }
 }
