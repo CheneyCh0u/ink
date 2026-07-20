@@ -36,10 +36,11 @@ struct ProjectSidebarTests {
         #expect(SidebarDisplayMode.hidden.next == .expanded)
     }
 
-    @Test("项目颜色只在图标态展示")
-    func projectLabelVisibility() {
-        #expect(!SidebarViewController.DisplayMode.expanded.showsProjectLabels)
-        #expect(SidebarViewController.DisplayMode.compact.showsProjectLabels)
+    @Test("项目颜色按侧边栏状态切换形态")
+    func projectLabelStyle() {
+        #expect(SidebarViewController.DisplayMode.expanded.labelIndicatorStyle == .dot)
+        #expect(SidebarViewController.DisplayMode.compact.labelIndicatorStyle == .rail)
+        #expect(InkDesignTokens.Sidebar.labelDotDiameter == 8)
     }
 
     @Test("图标态宽度完整容纳窗口控制按钮")

@@ -1,6 +1,11 @@
 import AppKit
 import InkDesign
 
+enum ProjectLabelIndicatorStyle: Equatable {
+    case dot
+    case rail
+}
+
 /// 侧边栏：项目列表 + 底部新建与设置入口。
 ///
 /// 根视图直接承载系统 sidebar 材质，让背景从标题栏贯穿到底部。
@@ -16,6 +21,13 @@ final class SidebarViewController: NSViewController {
         case compact
 
         var showsProjectLabels: Bool { self == .compact }
+
+        var labelIndicatorStyle: ProjectLabelIndicatorStyle {
+            switch self {
+            case .expanded: .dot
+            case .compact: .rail
+            }
+        }
     }
 
     struct Row {
