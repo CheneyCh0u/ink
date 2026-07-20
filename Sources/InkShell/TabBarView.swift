@@ -38,7 +38,7 @@ final class TabBarView: NSView {
         addSubview(toggleButton)
 
         plusButton.isBordered = false
-        plusButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "新建会话")
+        plusButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "新建标签")
         plusButton.contentTintColor = InkDesignTokens.Color.textSecondary
         plusButton.target = self
         plusButton.action = #selector(newTab)
@@ -145,7 +145,7 @@ private final class TabItemView: NSView, NSTextFieldDelegate {
         addSubview(shortcutLabel)
 
         closeButton.isBordered = false
-        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "关闭会话")?
+        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "关闭标签")?
             .withSymbolConfiguration(.init(pointSize: 8, weight: .bold))
         closeButton.contentTintColor = InkDesignTokens.Color.textSecondary
         closeButton.target = self

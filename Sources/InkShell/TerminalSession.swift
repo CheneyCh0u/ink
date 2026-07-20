@@ -10,8 +10,6 @@ import InkPTY
 public final class TerminalSession {
 
     public private(set) var terminal: Terminal
-    /// 用户双击标签改的名字，优先于 OSC 标题与路径。会话级，随会话生灭。
-    public var customName: String?
     /// 有新输出（终端状态变了），视图标脏用。
     public var onUpdate: (() -> Void)?
     /// shell 退出。

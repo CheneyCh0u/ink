@@ -11,9 +11,6 @@ final class Project {
     var label: InkProjectLabel
     var tabs: [TerminalTab] = []
     var activeTabIndex = 0
-    // 窗口迁移到 TerminalTab 前保留，Issue #29 完成时删除。
-    var sessions: [TerminalSession] = []
-    var activeSessionIndex = 0
 
     init(
         directory: URL,
@@ -30,10 +27,6 @@ final class Project {
     /// 侧边栏显示名：`~/work/code/ink` 式的缩写路径。
     var displayName: String {
         (directory.path as NSString).abbreviatingWithTildeInPath
-    }
-
-    var activeSession: TerminalSession? {
-        sessions.indices.contains(activeSessionIndex) ? sessions[activeSessionIndex] : nil
     }
 
     var activeTab: TerminalTab? {
