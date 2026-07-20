@@ -35,6 +35,33 @@ struct TerminalSearchWorkspaceTests {
         #expect(controller.matches.count == 3)
     }
 
+    @Test("同一轮输出只调度一次搜索刷新")
+    func coalescesTerminalUpdates() async {
+        var terminal = Terminal(
+            size: TerminalSize(columns: 12, rows: 2),
+            scrollbackCapacity: 20
+        )
+        var parser = Parser()
+        parser.feed(Array("hit".utf8), handler: &terminal)
+        var providerReads = 0
+        let terminalView = TerminalMetalView(frame: .zero)
+        let controller = TerminalSearchController(
+            terminalProvider: {
+                providerReads += 1
+                return terminal
+            },
+            terminalView: terminalView
+        )
+        controller.updateQuery("hit")
+        providerReads = 0
+
+        controller.scheduleRefreshForTerminalUpdate()
+        controller.scheduleRefreshForTerminalUpdate()
+        await Task.yield()
+
+        #expect(providerReads == 1)
+    }
+
     @Test("同一标签始终只在一个 pane 显示搜索栏")
     func oneOverlayPerTab() throws {
         let first = makeSearchPane()

@@ -106,7 +106,7 @@ final class TerminalWorkspaceViewController: NSViewController {
 
     func refreshSearch(for paneID: PaneID) {
         guard activeSearchPaneID == paneID else { return }
-        searchController?.refreshForTerminalUpdate()
+        searchController?.scheduleRefreshForTerminalUpdate()
     }
 
     @discardableResult
@@ -116,6 +116,11 @@ final class TerminalWorkspaceViewController: NSViewController {
         guard let pane = tab.panes[paneID],
               let container = paneContainers[paneID]
         else { return false }
+
+        if activeSearchPaneID == paneID, let searchController {
+            searchController.searchBar.focus()
+            return true
+        }
 
         closeSearch(returnFocus: false)
         let controller = TerminalSearchController(

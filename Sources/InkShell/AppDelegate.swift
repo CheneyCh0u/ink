@@ -97,6 +97,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let editItem = NSMenuItem()
         let editMenu = NSMenu(title: "编辑")
+        editMenu.addItem(
+            withTitle: "查找…",
+            action: #selector(MainWindowController.findInActivePane(_:)),
+            keyEquivalent: "f"
+        )
+        editMenu.addItem(.separator())
         editMenu.addItem(withTitle: "拷贝", action: #selector(TerminalMetalView.copy(_:)), keyEquivalent: "c")
         editMenu.addItem(withTitle: "粘贴", action: #selector(TerminalMetalView.paste(_:)), keyEquivalent: "v")
         editItem.submenu = editMenu

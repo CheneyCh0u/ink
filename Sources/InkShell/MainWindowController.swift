@@ -272,6 +272,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
     @objc public func showSettings(_ sender: Any?) {
         guard !isShowingSettings else { return }
         cancelSplitShortcut()
+        workspaceVC.closeSearch(returnFocus: false)
         installSettingsViewIfNeeded()
         isShowingSettings = true
         sidebarVC.isSettingsSelected = true
@@ -579,6 +580,12 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         refreshChrome()
     }
 
+    /// Command-F 只在当前聚焦 pane 打开搜索；已有同 pane 搜索时回到输入框。
+    @objc public func findInActivePane(_ sender: Any?) {
+        guard !isShowingSettings else { return }
+        _ = workspaceVC.openSearchInActivePane()
+    }
+
     private func splitActivePane(direction: PaneSplitDirection) {
         guard !isShowingSettings,
               let project = activeProject,
@@ -679,6 +686,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         session.onUpdate = { [weak self, weak pane] in
             guard let self, let pane else { return }
             self.workspaceVC.markDirty(pane.id)
+            self.workspaceVC.refreshSearch(for: pane.id)
             self.refreshChromeIfNeeded()
         }
         session.onExit = { [weak self, weak pane] _ in
@@ -860,6 +868,9 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         }
         if action == #selector(closeActivePane(_:)) {
             return !isShowingSettings && activeProject?.activeTab != nil
+        }
+        if action == #selector(findInActivePane(_:)) {
+            return !isShowingSettings && activeProject?.activeTab?.activePane != nil
         }
         return true
     }

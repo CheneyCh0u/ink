@@ -1,3 +1,4 @@
+import Dispatch
 import InkTerminalView
 import TerminalCore
 
@@ -11,6 +12,7 @@ final class TerminalSearchController {
     private weak var terminalView: TerminalMetalView?
     private var index = TerminalSearchIndex()
     private var query = ""
+    private var refreshScheduled = false
     private(set) var currentIndex: Int?
 
     var matches: [TerminalSearchMatch] { index.matches }
@@ -56,6 +58,17 @@ final class TerminalSearchController {
         publish(reveal: false)
     }
 
+    /// PTY 可能在一轮主循环内连续送来多个 chunk，只安排一次索引更新。
+    func scheduleRefreshForTerminalUpdate() {
+        guard !query.isEmpty, !refreshScheduled else { return }
+        refreshScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.refreshScheduled = false
+            self.refreshForTerminalUpdate()
+        }
+    }
+
     func selectNext() {
         guard !matches.isEmpty else { return }
         currentIndex = ((currentIndex ?? -1) + 1) % matches.count
@@ -69,6 +82,8 @@ final class TerminalSearchController {
     }
 
     func close() {
+        query = ""
+        refreshScheduled = false
         index.clear()
         currentIndex = nil
         terminalView?.clearSearchResults()
