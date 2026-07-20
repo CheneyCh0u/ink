@@ -44,6 +44,101 @@ public enum TerminalSearchEngine {
     }
 }
 
+/// 搜索结果的短生命周期缓存。只保留匹配坐标，不给 cell 或历史行增加常驻字段。
+public struct TerminalSearchIndex: Sendable {
+    enum UpdateKind: Sendable, Equatable {
+        case none
+        case full
+        case incremental
+    }
+
+    private(set) var lastUpdateKind: UpdateKind = .none
+    public private(set) var matches: [TerminalSearchMatch] = []
+
+    private var query: String?
+    private var layoutRevision: UInt64 = 0
+    private var appendedLines: UInt64 = 0
+    private var scrollbackCount = 0
+
+    public init() {}
+
+    @discardableResult
+    public mutating func update(in terminal: Terminal, query newQuery: String) -> [TerminalSearchMatch] {
+        guard !newQuery.isEmpty else {
+            clear()
+            return matches
+        }
+
+        let requiresFullScan = query != newQuery
+            || query == nil
+            || layoutRevision != terminal.searchLayoutRevision
+            || appendedLines > terminal.scrollback.totalAppendedLines
+
+        if requiresFullScan {
+            matches = TerminalSearchEngine.search(in: terminal, query: newQuery)
+            lastUpdateKind = .full
+            remember(terminal: terminal, query: newQuery)
+            return matches
+        }
+
+        let appended = Int(terminal.scrollback.totalAppendedLines - appendedLines)
+        let evicted = max(0, scrollbackCount + appended - terminal.scrollback.count)
+        let earliestChangedLine: Int
+        if appended > 0 {
+            earliestChangedLine = max(0, scrollbackCount - evicted)
+        } else {
+            earliestChangedLine = terminal.scrollback.count
+        }
+        let rescanStart = rewindToLogicalLineHead(
+            earliestChangedLine,
+            in: terminal
+        )
+
+        var prefix: [TerminalSearchMatch] = []
+        prefix.reserveCapacity(matches.count)
+        for match in matches {
+            var shifted = match.range
+            shifted.start.line -= evicted
+            shifted.end.line -= evicted
+            guard shifted.start.line >= 0, shifted.end.line < rescanStart else { continue }
+            prefix.append(TerminalSearchMatch(range: shifted))
+        }
+        prefix.append(contentsOf: TerminalSearchEngine.search(
+            in: terminal,
+            query: newQuery,
+            fromLine: rescanStart
+        ))
+        matches = prefix
+        lastUpdateKind = .incremental
+        remember(terminal: terminal, query: newQuery)
+        return matches
+    }
+
+    public mutating func clear() {
+        matches.removeAll(keepingCapacity: false)
+        query = nil
+        layoutRevision = 0
+        appendedLines = 0
+        scrollbackCount = 0
+        lastUpdateKind = .none
+    }
+
+    private mutating func remember(terminal: Terminal, query: String) {
+        self.query = query
+        layoutRevision = terminal.searchLayoutRevision
+        appendedLines = terminal.scrollback.totalAppendedLines
+        scrollbackCount = terminal.scrollback.count
+    }
+
+    private func rewindToLogicalLineHead(_ line: Int, in terminal: Terminal) -> Int {
+        var result = min(max(0, line), max(0, terminal.totalLines - 1))
+        while result > 0, terminal.absoluteLine(result)?.info.isWrapped == true {
+            result -= 1
+        }
+        return result
+    }
+}
+
 private struct LogicalLine {
     private struct CellMapping {
         let utf16Range: Range<Int>

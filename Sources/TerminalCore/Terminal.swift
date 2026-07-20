@@ -36,6 +36,8 @@ public struct Terminal: Sendable {
     public private(set) var colorTable = ColorTable()
     public private(set) var clusterTable = ClusterTable()
     public private(set) var modes = Modes()
+    /// reflow、备用屏切换等整体改变行坐标的代次。
+    public private(set) var searchLayoutRevision: UInt64 = 0
     /// OSC 0 / 2 设置的窗口标题。
     public private(set) var title = ""
     /// OSC 133 当前段落语义，新行产生时自动继承（详见任务 #8）。
@@ -82,6 +84,7 @@ public struct Terminal: Sendable {
         } else {
             reflow(to: newSize)
         }
+        searchLayoutRevision &+= 1
     }
 
     // MARK: - Reflow
@@ -420,7 +423,9 @@ public struct Terminal: Sendable {
         case UInt8(ascii: "c"): // RIS 全量重置
             let size = grid.size
             let capacity = scrollback.capacity
+            let nextSearchLayoutRevision = searchLayoutRevision &+ 1
             self = Terminal(size: size, scrollbackCapacity: capacity)
+            searchLayoutRevision = nextSearchLayoutRevision
         case UInt8(ascii: "Z"): // DECID，同 DA1
             respond("\u{1B}[?62;22c")
         default:
@@ -553,6 +558,7 @@ public struct Terminal: Sendable {
             grid.clearAll()
         case 3:
             scrollback.removeAll() // xterm 扩展：连历史一起清
+            searchLayoutRevision &+= 1
         default:
             break
         }
@@ -667,6 +673,7 @@ public struct Terminal: Sendable {
         scrollTop = 0
         scrollBottom = grid.size.rows - 1
         pendingWrap = false
+        searchLayoutRevision &+= 1
     }
 
     // MARK: - SGR

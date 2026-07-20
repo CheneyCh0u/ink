@@ -90,6 +90,8 @@ public struct ScrollbackBuffer: Sendable {
     private var lines: ContiguousArray<ScrollbackLine?>
     private var head = 0
     public private(set) var count = 0
+    /// 自上次清空以来累计入库的物理行数；搜索索引用它识别可变后缀。
+    public private(set) var totalAppendedLines: UInt64 = 0
     public let capacity: Int
 
     public init(capacity: Int) {
@@ -100,6 +102,7 @@ public struct ScrollbackBuffer: Sendable {
     }
 
     public mutating func append(_ line: ScrollbackLine) {
+        totalAppendedLines &+= 1
         lines[(head + count) % capacity] = line
         if count < capacity {
             count += 1
@@ -118,5 +121,6 @@ public struct ScrollbackBuffer: Sendable {
         for i in lines.indices { lines[i] = nil }
         head = 0
         count = 0
+        totalAppendedLines = 0
     }
 }

@@ -93,4 +93,57 @@ struct TerminalSearchTests {
             ),
         ])
     }
+
+    @Test("相同查询只重扫可变后缀")
+    func incrementalSuffixUpdate() {
+        var (parser, terminal) = makeTerminal(columns: 12, rows: 2, scrollback: 20)
+        feed("hit old\r\nkeep", &parser, &terminal)
+        var index = TerminalSearchIndex()
+
+        let first = index.update(in: terminal, query: "hit")
+        #expect(index.lastUpdateKind == .full)
+
+        feed("\r\nhit new", &parser, &terminal)
+        let second = index.update(in: terminal, query: "hit")
+
+        #expect(index.lastUpdateKind == .incremental)
+        #expect(second.count == first.count + 1)
+        #expect(second.last?.range.start == TextPosition(line: 2, column: 0))
+    }
+
+    @Test("环形淘汰后平移保留结果坐标")
+    func ringEvictionShiftsCoordinates() {
+        var (parser, terminal) = makeTerminal(columns: 12, rows: 2, scrollback: 1)
+        feed("hit old\r\nhit mid\r\nplain", &parser, &terminal)
+        var index = TerminalSearchIndex()
+        #expect(index.update(in: terminal, query: "hit").count == 2)
+
+        feed("\r\nhit new", &parser, &terminal)
+        let matches = index.update(in: terminal, query: "hit")
+
+        #expect(index.lastUpdateKind == .incremental)
+        #expect(matches.map(\.range.start) == [
+            TextPosition(line: 0, column: 0),
+            TextPosition(line: 2, column: 0),
+        ])
+    }
+
+    @Test("查询或 reflow 改变时执行全量扫描")
+    func fullInvalidation() {
+        var (parser, terminal) = makeTerminal(columns: 12, rows: 3, scrollback: 20)
+        feed("hit one\r\ntwo", &parser, &terminal)
+        var index = TerminalSearchIndex()
+        _ = index.update(in: terminal, query: "hit")
+
+        _ = index.update(in: terminal, query: "two")
+        #expect(index.lastUpdateKind == .full)
+
+        terminal.resize(to: TerminalSize(columns: 6, rows: 3))
+        _ = index.update(in: terminal, query: "two")
+        #expect(index.lastUpdateKind == .full)
+
+        index.clear()
+        #expect(index.matches.isEmpty)
+        #expect(index.lastUpdateKind == .none)
+    }
 }
