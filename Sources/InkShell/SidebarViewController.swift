@@ -583,7 +583,6 @@ private final class SidebarActionButtonCell: NSButtonCell {
     override func titleRect(forBounds rect: NSRect) -> NSRect {
         var titleRect = super.titleRect(forBounds: rect)
         titleRect.origin.x += contentLeadingInset
-        titleRect.size.width = max(0, titleRect.width - contentLeadingInset)
         return titleRect
     }
 }

@@ -93,7 +93,9 @@ struct ProjectSidebarLayoutTests {
         #expect(newButton.imageHugsTitle)
         #expect(newButton.alignment == .left)
         let imageRect = try #require(newButton.cell?.imageRect(forBounds: newButton.bounds))
+        let titleRect = try #require(newButton.cell?.titleRect(forBounds: newButton.bounds))
         #expect(imageRect.minX >= InkDesignTokens.Spacing.xs - 0.5)
+        #expect(titleRect.width >= newButton.attributedTitle.size().width)
         #expect(controller.view.subviews.compactMap { $0 as? NSButton }.count == 1)
         #expect(!hasShortcutHints(in: controller.view))
     }
