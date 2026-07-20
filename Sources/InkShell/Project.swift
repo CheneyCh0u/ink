@@ -9,6 +9,9 @@ final class Project {
     var pinned: Bool
     var note: String?
     var label: InkProjectLabel
+    var tabs: [TerminalTab] = []
+    var activeTabIndex = 0
+    // 窗口迁移到 TerminalTab 前保留，Issue #29 完成时删除。
     var sessions: [TerminalSession] = []
     var activeSessionIndex = 0
 
@@ -31,6 +34,10 @@ final class Project {
 
     var activeSession: TerminalSession? {
         sessions.indices.contains(activeSessionIndex) ? sessions[activeSessionIndex] : nil
+    }
+
+    var activeTab: TerminalTab? {
+        tabs.indices.contains(activeTabIndex) ? tabs[activeTabIndex] : nil
     }
 }
 
