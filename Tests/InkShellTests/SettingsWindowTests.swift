@@ -42,6 +42,46 @@ struct SettingsWindowTests {
         window.close()
     }
 
+    @Test("所有设置分组共享同一内容列")
+    func settingsSectionsShareOneContentColumn() throws {
+        let controller = MainWindowController()
+        let window = try #require(controller.window)
+        window.setFrame(NSRect(x: 640, y: 200, width: 1100, height: 800), display: true)
+        window.orderFront(nil)
+        controller.showSettings(nil)
+        spinRunLoop()
+
+        let contentView = try #require(window.contentView)
+        let sectionTitles = ["外观", "窗口", "终端", "光标", "交互", "高级"]
+        let panels = try sectionTitles.map { title in
+            let label = try #require(
+                allSubviews(in: contentView)
+                    .compactMap { $0 as? NSTextField }
+                    .first { $0.stringValue == title }
+            )
+            let section = try #require(label.superview as? NSStackView)
+            return try #require(section.arrangedSubviews.last)
+        }
+        let panelFrames = panels.map { $0.convert($0.bounds, to: contentView) }
+        let reference = try #require(panelFrames.first)
+
+        for (title, frame) in zip(sectionTitles.dropFirst(), panelFrames.dropFirst()) {
+            #expect(
+                abs(frame.minX - reference.minX) < 0.5,
+                "\(title)分组左边缘 \(frame.minX) 与外观分组 \(reference.minX) 不一致"
+            )
+            #expect(
+                abs(frame.width - reference.width) < 0.5,
+                "\(title)分组宽度 \(frame.width) 与外观分组 \(reference.width) 不一致"
+            )
+        }
+        window.close()
+    }
+
+    private func allSubviews(in view: NSView) -> [NSView] {
+        view.subviews.flatMap { [$0] + allSubviews(in: $0) }
+    }
+
     /// 驱动主 RunLoop 让异步布局（含 AppKit 显示周期的窗口适配 pass）跑完。
     private func spinRunLoop(cycles: Int = 8) {
         for _ in 0..<cycles {
