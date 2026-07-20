@@ -64,4 +64,62 @@ struct WorkspaceSplitContainerViewTests {
         #expect(first.frame.height == 300)
         #expect(second.frame.height == 300)
     }
+
+    @Test("拖动只改变 divider 两侧并在结束时提交一次")
+    func dragChangesAdjacentPairAndCommitsOnce() {
+        let splitID = SplitID()
+        let container = WorkspaceSplitContainerView(
+            splitID: splitID, axis: .leftRight, weights: [0.25, 0.25, 0.5]
+        )
+        container.frame = NSRect(x: 0, y: 0, width: 800, height: 500)
+        (0..<3).forEach { _ in container.addPaneSubview(NSView()) }
+        container.layoutSubtreeIfNeeded()
+        var submissions: [(SplitID, [Double])] = []
+        container.onWeightsChange = { id, weights in submissions.append((id, weights)) }
+
+        #expect(container.beginDividerDrag(at: NSPoint(x: 200, y: 250)))
+        container.updateDividerDrag(to: NSPoint(x: 280, y: 250))
+        #expect(container.weights[0] > 0.25)
+        #expect(container.weights[1] < 0.25)
+        #expect(abs(container.weights[2] - 0.5) < 0.001)
+        #expect(submissions.isEmpty)
+
+        container.endDividerDrag()
+        #expect(submissions.count == 1)
+        #expect(submissions.first?.0 == splitID)
+        #expect(abs((submissions.first?.1.reduce(0, +) ?? 0) - 1) < 0.0001)
+    }
+
+    @Test("拖动不能把相邻 pane 压到零")
+    func dragPreservesMinimumPaneLength() {
+        let container = WorkspaceSplitContainerView(
+            splitID: SplitID(), axis: .topBottom, weights: [0.5, 0.5]
+        )
+        container.frame = NSRect(x: 0, y: 0, width: 300, height: 200)
+        let first = NSView()
+        let second = NSView()
+        container.addPaneSubview(first)
+        container.addPaneSubview(second)
+        container.layoutSubtreeIfNeeded()
+
+        #expect(container.beginDividerDrag(at: NSPoint(x: 150, y: 100)))
+        container.updateDividerDrag(to: NSPoint(x: 150, y: -1_000))
+        container.layoutSubtreeIfNeeded()
+
+        #expect(first.frame.height >= 48)
+        #expect(second.frame.height >= 48)
+    }
+
+    @Test("分隔线命中区域外不开始拖动")
+    func dragRequiresDividerHit() {
+        let container = WorkspaceSplitContainerView(
+            splitID: SplitID(), axis: .leftRight, weights: [0.5, 0.5]
+        )
+        container.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+        container.addPaneSubview(NSView())
+        container.addPaneSubview(NSView())
+        container.layoutSubtreeIfNeeded()
+
+        #expect(!container.beginDividerDrag(at: NSPoint(x: 50, y: 200)))
+    }
 }
