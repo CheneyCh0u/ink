@@ -58,11 +58,11 @@ final class SidebarViewController: NSViewController {
     private let settingsButton = SidebarActionButton()
     private let footerSeparator = NSBox()
     private let sectionTitle = NSTextField(labelWithString: "项目")
-    private let shortcutHint = NSTextField(labelWithString: "⌘N")
-    private let settingsShortcutHint = NSTextField(labelWithString: "⌘,")
     private var rows: [Row] = []
     private var expandedRowsTop: NSLayoutConstraint?
     private var compactRowsTop: NSLayoutConstraint?
+    private var expandedFooterConstraints: [NSLayoutConstraint] = []
+    private var compactFooterConstraints: [NSLayoutConstraint] = []
 
     override func loadView() {
         let root = ProjectDropView()
@@ -87,6 +87,7 @@ final class SidebarViewController: NSViewController {
         newButton.action = #selector(newProject)
         newButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)
         newButton.imagePosition = .imageLeading
+        newButton.imageHugsTitle = true
         newButton.isBordered = false
         newButton.font = InkDesignTokens.Typography.body
         newButton.contentTintColor = InkDesignTokens.Color.textSecondary
@@ -95,15 +96,12 @@ final class SidebarViewController: NSViewController {
         newButton.layer?.cornerCurve = .continuous
         newButton.translatesAutoresizingMaskIntoConstraints = false
 
-        shortcutHint.font = InkDesignTokens.Typography.label
-        shortcutHint.textColor = InkDesignTokens.Color.textSecondary
-        shortcutHint.translatesAutoresizingMaskIntoConstraints = false
-
         settingsButton.title = "设置"
         settingsButton.target = self
         settingsButton.action = #selector(openSettings)
         settingsButton.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
         settingsButton.imagePosition = .imageLeading
+        settingsButton.imageHugsTitle = true
         settingsButton.isBordered = false
         settingsButton.font = InkDesignTokens.Typography.body
         settingsButton.contentTintColor = InkDesignTokens.Color.textSecondary
@@ -116,17 +114,11 @@ final class SidebarViewController: NSViewController {
         footerSeparator.boxType = .separator
         footerSeparator.translatesAutoresizingMaskIntoConstraints = false
 
-        settingsShortcutHint.font = InkDesignTokens.Typography.label
-        settingsShortcutHint.textColor = InkDesignTokens.Color.textSecondary
-        settingsShortcutHint.translatesAutoresizingMaskIntoConstraints = false
-
         root.addSubview(sectionTitle)
         root.addSubview(rowStack)
         root.addSubview(newButton)
-        root.addSubview(shortcutHint)
         root.addSubview(footerSeparator)
         root.addSubview(settingsButton)
-        root.addSubview(settingsShortcutHint)
 
         let sp = InkDesignTokens.Spacing.self
         let expandedRowsTop = rowStack.topAnchor.constraint(
@@ -139,6 +131,31 @@ final class SidebarViewController: NSViewController {
         )
         self.expandedRowsTop = expandedRowsTop
         self.compactRowsTop = compactRowsTop
+        expandedFooterConstraints = [
+            footerSeparator.bottomAnchor.constraint(
+                equalTo: newButton.topAnchor,
+                constant: -sp.xxs
+            ),
+            newButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.xs),
+            newButton.trailingAnchor.constraint(
+                equalTo: settingsButton.leadingAnchor,
+                constant: -sp.xxs
+            ),
+            settingsButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.xs),
+            newButton.widthAnchor.constraint(equalTo: settingsButton.widthAnchor),
+            newButton.centerYAnchor.constraint(equalTo: settingsButton.centerYAnchor),
+        ]
+        compactFooterConstraints = [
+            footerSeparator.bottomAnchor.constraint(
+                equalTo: newButton.topAnchor,
+                constant: -sp.xs
+            ),
+            newButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.xs),
+            newButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.xs),
+            newButton.bottomAnchor.constraint(equalTo: settingsButton.topAnchor, constant: -sp.xs),
+            settingsButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.xs),
+            settingsButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.xs),
+        ]
         NSLayoutConstraint.activate([
             // 跟随 safe area：系统已为标题栏/红绿灯留位，再叠固定值就是双重让位。
             sectionTitle.topAnchor.constraint(
@@ -151,23 +168,12 @@ final class SidebarViewController: NSViewController {
             rowStack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.xs),
             rowStack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.xs),
 
-            newButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.xs),
-            newButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.xs),
             newButton.heightAnchor.constraint(equalToConstant: InkDesignTokens.Sidebar.actionHeight),
-            shortcutHint.centerYAnchor.constraint(equalTo: newButton.centerYAnchor),
-            shortcutHint.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.md),
-
-            newButton.bottomAnchor.constraint(equalTo: footerSeparator.topAnchor, constant: -sp.xxs),
             footerSeparator.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.sm),
             footerSeparator.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.sm),
-            footerSeparator.bottomAnchor.constraint(equalTo: settingsButton.topAnchor, constant: -sp.xxs),
 
-            settingsButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.xs),
-            settingsButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.xs),
             settingsButton.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -sp.sm),
             settingsButton.heightAnchor.constraint(equalToConstant: InkDesignTokens.Sidebar.actionHeight),
-            settingsShortcutHint.centerYAnchor.constraint(equalTo: settingsButton.centerYAnchor),
-            settingsShortcutHint.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.md),
         ])
 
         view = root
@@ -203,20 +209,18 @@ final class SidebarViewController: NSViewController {
         guard isViewLoaded else { return }
         let compact = displayMode == .compact
         sectionTitle.isHidden = compact
-        shortcutHint.isHidden = compact
-        settingsShortcutHint.isHidden = compact
         expandedRowsTop?.isActive = !compact
         compactRowsTop?.isActive = compact
+        NSLayoutConstraint.deactivate(compact ? expandedFooterConstraints : compactFooterConstraints)
+        NSLayoutConstraint.activate(compact ? compactFooterConstraints : expandedFooterConstraints)
         newButton.title = compact ? "" : "新建项目"
         newButton.imagePosition = compact ? .imageOnly : .imageLeading
-        newButton.alignment = compact ? .center : .left
-        newButton.contentLeadingInset = compact ? 0 : InkDesignTokens.Spacing.xs
+        newButton.alignment = .center
         newButton.toolTip = compact ? "新建项目" : nil
         newButton.setAccessibilityLabel("新建项目")
         settingsButton.title = compact ? "" : "设置"
         settingsButton.imagePosition = compact ? .imageOnly : .imageLeading
-        settingsButton.alignment = compact ? .center : .left
-        settingsButton.contentLeadingInset = compact ? 0 : InkDesignTokens.Spacing.xs
+        settingsButton.alignment = .center
         settingsButton.toolTip = compact ? "设置" : nil
         settingsButton.setAccessibilityLabel("设置")
     }
@@ -547,22 +551,13 @@ private final class ProjectLabelIndicator: NSView {
 private final class SidebarActionButton: NSButton {
 
     private var hovered = false
-    var contentLeadingInset: CGFloat {
-        get { (cell as? SidebarActionButtonCell)?.contentLeadingInset ?? 0 }
-        set {
-            (cell as? SidebarActionButtonCell)?.contentLeadingInset = newValue
-            needsDisplay = true
-        }
-    }
     var isSelectedState = false {
         didSet { updateLayerColor() }
     }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        cell = SidebarActionButtonCell()
         wantsLayer = true
-        contentLeadingInset = InkDesignTokens.Spacing.xs
         updateLayerColor()
         addTrackingArea(NSTrackingArea(
             rect: .zero,
@@ -600,19 +595,5 @@ private final class SidebarActionButton: NSButton {
                     nil
                 }
         }
-    }
-}
-
-@MainActor
-private final class SidebarActionButtonCell: NSButtonCell {
-    var contentLeadingInset: CGFloat = 0
-
-    override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
-        var contentFrame = cellFrame
-        contentFrame.size.width = max(0, contentFrame.width - contentLeadingInset)
-        if controlView.userInterfaceLayoutDirection == .leftToRight {
-            contentFrame.origin.x += contentLeadingInset
-        }
-        super.draw(withFrame: contentFrame, in: controlView)
     }
 }
