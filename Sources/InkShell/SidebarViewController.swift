@@ -1,6 +1,11 @@
 import AppKit
 import InkDesign
 
+enum ProjectLabelIndicatorStyle: Equatable {
+    case dot
+    case rail
+}
+
 /// 侧边栏：项目列表 + 底部新建与设置入口。
 ///
 /// 根视图直接承载系统 sidebar 材质，让背景从标题栏贯穿到底部。
@@ -15,7 +20,12 @@ final class SidebarViewController: NSViewController {
         case expanded
         case compact
 
-        var showsProjectLabels: Bool { self == .compact }
+        var labelIndicatorStyle: ProjectLabelIndicatorStyle {
+            switch self {
+            case .expanded: .dot
+            case .compact: .rail
+            }
+        }
     }
 
     struct Row {
@@ -193,7 +203,7 @@ final class SidebarViewController: NSViewController {
                 row: row,
                 index: index,
                 compact: displayMode == .compact,
-                showsLabel: displayMode.showsProjectLabels
+                indicatorStyle: displayMode.labelIndicatorStyle
             )
             rowView.onClick = { [weak self] in self?.onSelect?(index) }
             rowView.onRemove = { [weak self] in self?.onRemove?(index) }
@@ -296,7 +306,7 @@ private final class ProjectRowView: NSView, NSDraggingSource {
         row: SidebarViewController.Row,
         index: Int,
         compact: Bool,
-        showsLabel: Bool
+        indicatorStyle: ProjectLabelIndicatorStyle
     ) {
         self.index = index
         self.pinned = row.pinned
@@ -321,19 +331,17 @@ private final class ProjectRowView: NSView, NSDraggingSource {
             ? InkDesignTokens.Color.textPrimary
             : InkDesignTokens.Color.textSecondary
 
+        let indicator = ProjectLabelIndicator(label: row.label, style: indicatorStyle)
+        indicator.translatesAutoresizingMaskIntoConstraints = false
+
         if compact {
-            let indicator = ProjectLabelIndicator(label: row.label)
             icon.translatesAutoresizingMaskIntoConstraints = false
             addSubview(icon)
+            addSubview(indicator)
             NSLayoutConstraint.activate([
                 heightAnchor.constraint(equalToConstant: InkDesignTokens.Sidebar.projectRowHeight),
                 icon.centerXAnchor.constraint(equalTo: centerXAnchor),
                 icon.centerYAnchor.constraint(equalTo: centerYAnchor),
-            ])
-            if showsLabel {
-                indicator.translatesAutoresizingMaskIntoConstraints = false
-                addSubview(indicator)
-                NSLayoutConstraint.activate([
                 indicator.leadingAnchor.constraint(
                     equalTo: leadingAnchor,
                     constant: InkDesignTokens.Sidebar.labelRailInset
@@ -345,8 +353,7 @@ private final class ProjectRowView: NSView, NSDraggingSource {
                 indicator.heightAnchor.constraint(
                     equalToConstant: InkDesignTokens.Sidebar.labelRailHeight
                 ),
-                ])
-            }
+            ])
             installTrackingArea()
             return
         }
@@ -374,7 +381,7 @@ private final class ProjectRowView: NSView, NSDraggingSource {
         textStack.alignment = .leading
         textStack.spacing = 1
 
-        let hStack = NSStackView(views: [icon, textStack, NSView(), closeButton])
+        let hStack = NSStackView(views: [indicator, icon, textStack, NSView(), closeButton])
         hStack.orientation = .horizontal
         hStack.alignment = .centerY
         hStack.spacing = InkDesignTokens.Spacing.xs
@@ -383,6 +390,12 @@ private final class ProjectRowView: NSView, NSDraggingSource {
 
         let sp = InkDesignTokens.Spacing.self
         NSLayoutConstraint.activate([
+            indicator.widthAnchor.constraint(
+                equalToConstant: InkDesignTokens.Sidebar.labelDotDiameter
+            ),
+            indicator.heightAnchor.constraint(
+                equalToConstant: InkDesignTokens.Sidebar.labelDotDiameter
+            ),
             hStack.topAnchor.constraint(equalTo: topAnchor, constant: 6),
             hStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
             hStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: sp.xs),
@@ -518,13 +531,16 @@ private final class ProjectRowView: NSView, NSDraggingSource {
 }
 
 @MainActor
-private final class ProjectLabelIndicator: NSView {
+final class ProjectLabelIndicator: NSView {
     private let label: InkProjectLabel
+    private let style: ProjectLabelIndicatorStyle
 
-    init(label: InkProjectLabel) {
+    var drawsColor: Bool { label != .none }
+
+    init(label: InkProjectLabel, style: ProjectLabelIndicatorStyle) {
         self.label = label
+        self.style = style
         super.init(frame: .zero)
-        isHidden = label == .none
     }
 
     @available(*, unavailable)
@@ -533,11 +549,16 @@ private final class ProjectLabelIndicator: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard let color = InkDesignTokens.ProjectLabel.color(for: label) else { return }
         color.setFill()
-        NSBezierPath(
-            roundedRect: bounds,
-            xRadius: bounds.width / 2,
-            yRadius: bounds.width / 2
-        ).fill()
+        switch style {
+        case .dot:
+            NSBezierPath(ovalIn: bounds).fill()
+        case .rail:
+            NSBezierPath(
+                roundedRect: bounds,
+                xRadius: bounds.width / 2,
+                yRadius: bounds.width / 2
+            ).fill()
+        }
     }
 
     override func viewDidChangeEffectiveAppearance() {

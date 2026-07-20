@@ -36,10 +36,11 @@ struct ProjectSidebarTests {
         #expect(SidebarDisplayMode.hidden.next == .expanded)
     }
 
-    @Test("项目颜色只在图标态展示")
-    func projectLabelVisibility() {
-        #expect(!SidebarViewController.DisplayMode.expanded.showsProjectLabels)
-        #expect(SidebarViewController.DisplayMode.compact.showsProjectLabels)
+    @Test("项目颜色按侧边栏状态切换形态")
+    func projectLabelStyle() {
+        #expect(SidebarViewController.DisplayMode.expanded.labelIndicatorStyle == .dot)
+        #expect(SidebarViewController.DisplayMode.compact.labelIndicatorStyle == .rail)
+        #expect(InkDesignTokens.Sidebar.labelDotDiameter == 8)
     }
 
     @Test("图标态宽度完整容纳窗口控制按钮")
@@ -51,6 +52,34 @@ struct ProjectSidebarTests {
 @Suite("项目侧边栏布局", .serialized)
 @MainActor
 struct ProjectSidebarLayoutTests {
+    @Test("展开态为所有项目保留圆点列")
+    func expandedRowsReserveDotColumn() {
+        let controller = makeLabelController(mode: .expanded)
+        let indicators = descendants(of: ProjectLabelIndicator.self, in: controller.view)
+
+        #expect(indicators.count == 2)
+        #expect(indicators.allSatisfy {
+            abs($0.frame.width - InkDesignTokens.Sidebar.labelDotDiameter) < 0.5
+                && abs($0.frame.height - InkDesignTokens.Sidebar.labelDotDiameter) < 0.5
+        })
+        #expect(abs(indicators[0].frame.minX - indicators[1].frame.minX) < 0.5)
+        #expect(indicators[0].drawsColor)
+        #expect(!indicators[1].drawsColor)
+        #expect(!indicators[1].isHidden)
+    }
+
+    @Test("图标态继续使用颜色竖条")
+    func compactRowsUseLabelRail() {
+        let controller = makeLabelController(mode: .compact)
+        let indicators = descendants(of: ProjectLabelIndicator.self, in: controller.view)
+
+        #expect(indicators.count == 2)
+        #expect(indicators.allSatisfy {
+            abs($0.frame.width - InkDesignTokens.Sidebar.labelRailWidth) < 0.5
+                && abs($0.frame.height - InkDesignTokens.Sidebar.labelRailHeight) < 0.5
+        })
+    }
+
     @Test("展开态底部入口横向等宽排列")
     func expandedFooterUsesOneRow() throws {
         let (controller, newButton, settingsButton, separator) = try makeController(mode: .expanded)
@@ -104,6 +133,41 @@ struct ProjectSidebarLayoutTests {
             controller.view.subviews.compactMap { $0 as? NSBox }.first
         )
         return (controller, try #require(buttons.first), try #require(buttons.last), separator)
+    }
+
+    private func makeLabelController(
+        mode: SidebarViewController.DisplayMode
+    ) -> SidebarViewController {
+        let controller = SidebarViewController()
+        controller.displayMode = mode
+        let width = mode == .compact
+            ? InkDesignTokens.Sidebar.compactWidth
+            : InkDesignTokens.Sidebar.width
+        controller.view.frame = NSRect(x: 0, y: 0, width: width, height: 700)
+        controller.reload(rows: [
+            .init(
+                title: "~/ink",
+                subtitle: "1 个会话",
+                active: true,
+                pinned: false,
+                label: .red
+            ),
+            .init(
+                title: "~/notes",
+                subtitle: "无会话",
+                active: false,
+                pinned: false,
+                label: .none
+            ),
+        ])
+        controller.view.layoutSubtreeIfNeeded()
+        return controller
+    }
+
+    private func descendants<T: NSView>(of type: T.Type, in view: NSView) -> [T] {
+        view.subviews.flatMap { child in
+            (child as? T).map { [$0] } ?? descendants(of: type, in: child)
+        }
     }
 
     private func hasShortcutHints(in view: NSView) -> Bool {

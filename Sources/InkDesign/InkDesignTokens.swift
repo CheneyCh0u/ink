@@ -181,6 +181,7 @@ public enum InkDesignTokens {
         public static let collapsedTitlebarInset: CGFloat = 84
         public static let projectRowHeight: CGFloat = 40
         public static let actionHeight: CGFloat = 36
+        public static let labelDotDiameter: CGFloat = 8
         public static let labelRailWidth: CGFloat = 4
         public static let labelRailHeight: CGFloat = 26
         public static let labelRailInset: CGFloat = 4
