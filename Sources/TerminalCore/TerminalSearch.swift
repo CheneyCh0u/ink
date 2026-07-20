@@ -54,6 +54,8 @@ public struct TerminalSearchIndex: Sendable {
 
     private(set) var lastUpdateKind: UpdateKind = .none
     public private(set) var matches: [TerminalSearchMatch] = []
+    /// 最近一次增量更新淘汰的历史行数，供 UI 保持当前结果身份。
+    public private(set) var lastEvictedLineCount = 0
 
     private var query: String?
     private var layoutRevision: UInt64 = 0
@@ -77,12 +79,14 @@ public struct TerminalSearchIndex: Sendable {
         if requiresFullScan {
             matches = TerminalSearchEngine.search(in: terminal, query: newQuery)
             lastUpdateKind = .full
+            lastEvictedLineCount = 0
             remember(terminal: terminal, query: newQuery)
             return matches
         }
 
         let appended = Int(terminal.scrollback.totalAppendedLines - appendedLines)
         let evicted = max(0, scrollbackCount + appended - terminal.scrollback.count)
+        lastEvictedLineCount = evicted
         let earliestChangedLine: Int
         if appended > 0 {
             earliestChangedLine = max(0, scrollbackCount - evicted)
@@ -121,6 +125,7 @@ public struct TerminalSearchIndex: Sendable {
         appendedLines = 0
         scrollbackCount = 0
         lastUpdateKind = .none
+        lastEvictedLineCount = 0
     }
 
     private mutating func remember(terminal: Terminal, query: String) {
@@ -149,6 +154,7 @@ private struct LogicalLine {
 
     private var text = ""
     private var mappings: [CellMapping] = []
+    private var utf16Length = 0
 
     mutating func append(cells: [Cell], line: Int, clusterTable: ClusterTable) {
         for column in cells.indices {
@@ -156,9 +162,10 @@ private struct LogicalLine {
             if cell.attr & Cell.Attr.wideTrailing != 0 { continue }
 
             let cellText = text(for: cell, clusterTable: clusterTable)
-            let lowerBound = text.utf16.count
+            let lowerBound = utf16Length
             text.append(cellText)
-            let upperBound = text.utf16.count
+            utf16Length += cellText.utf16.count
+            let upperBound = utf16Length
             guard upperBound > lowerBound else { continue }
 
             let occupiesTrailingCell = cell.attr & Cell.Attr.wideLeading != 0
@@ -215,6 +222,7 @@ private struct LogicalLine {
     mutating func removeAll(keepingCapacity: Bool) {
         text.removeAll(keepingCapacity: keepingCapacity)
         mappings.removeAll(keepingCapacity: keepingCapacity)
+        utf16Length = 0
     }
 
     private func text(for cell: Cell, clusterTable: ClusterTable) -> String {

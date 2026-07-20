@@ -48,10 +48,18 @@ final class TerminalSearchController {
         let terminal = terminalProvider()
         _ = index.update(in: terminal, query: query)
 
-        if let previousMatch, let preserved = matches.firstIndex(of: previousMatch) {
+        if matches.isEmpty {
+            currentIndex = nil
+        } else if let previousMatch, let preserved = matches.firstIndex(of: previousMatch) {
             currentIndex = preserved
+        } else if let previousMatch, index.lastEvictedLineCount > 0 {
+            var shifted = previousMatch.range
+            shifted.start.line -= index.lastEvictedLineCount
+            shifted.end.line -= index.lastEvictedLineCount
+            currentIndex = matches.firstIndex(of: TerminalSearchMatch(range: shifted))
+                ?? previousIndex.map { max(0, min($0, matches.count - 1)) }
         } else if let previousIndex, !matches.isEmpty {
-            currentIndex = min(previousIndex, matches.count - 1)
+            currentIndex = max(0, min(previousIndex, matches.count - 1))
         } else {
             currentIndex = nearestMatchIndex(to: terminalView?.searchViewportLineRange(in: terminal))
         }

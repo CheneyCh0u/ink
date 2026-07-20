@@ -842,6 +842,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
 
     public func windowWillClose(_ notification: Notification) {
         cancelSplitShortcut()
+        workspaceVC.closeSearch(returnFocus: false)
         if let splitShortcutMonitor {
             NSEvent.removeMonitor(splitShortcutMonitor)
             self.splitShortcutMonitor = nil
