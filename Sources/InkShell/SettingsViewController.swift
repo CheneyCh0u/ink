@@ -117,6 +117,10 @@ final class SettingsViewController: NSViewController {
         scroll.autohidesScrollers = true
 
         let document = FlippedView()
+        // 文档视图参与约束布局。漏掉这行时，零 frame 的文档会携带一条
+        // required 的 width == 0 autoresizing 约束，经下方 width 等式传导到
+        // 分栏内容列，AppKit 的窗口适配布局会把整个主窗口压到最小宽度。
+        document.translatesAutoresizingMaskIntoConstraints = false
         let content = NSStackView()
         content.orientation = .vertical
         content.alignment = .width
