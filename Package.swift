@@ -64,5 +64,9 @@ let package = Package(
         .testTarget(
             name: "ReleaseWorkflowTests"
         ),
+        .testTarget(
+            name: "InkShellTests",
+            dependencies: ["InkShell", "InkDesign"]
+        ),
     ]
 )

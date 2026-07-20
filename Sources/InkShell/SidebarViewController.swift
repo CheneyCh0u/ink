@@ -11,11 +11,27 @@ import InkDesign
 @MainActor
 final class SidebarViewController: NSViewController {
 
+    enum DisplayMode {
+        case expanded
+        case compact
+
+        var showsProjectLabels: Bool { self == .compact }
+    }
+
     struct Row {
         let title: String
         let subtitle: String
         let active: Bool
         let pinned: Bool
+        let label: InkProjectLabel
+    }
+
+    var displayMode: DisplayMode = .expanded {
+        didSet {
+            guard displayMode != oldValue else { return }
+            updateDisplayMode()
+            rebuildRows()
+        }
     }
 
     var onSelect: ((Int) -> Void)?
@@ -23,6 +39,7 @@ final class SidebarViewController: NSViewController {
     var onRemove: ((Int) -> Void)?
     var onTogglePin: ((Int) -> Void)?
     var onEditNote: ((Int) -> Void)?
+    var onSetLabel: ((Int, InkProjectLabel) -> Void)?
     /// 拖动排序：把第 from 行移动到第 to 位。
     var onReorder: ((Int, Int) -> Void)?
 
@@ -30,6 +47,11 @@ final class SidebarViewController: NSViewController {
 
     private let rowStack = NSStackView()
     private let newButton = SidebarActionButton()
+    private let sectionTitle = NSTextField(labelWithString: "项目")
+    private let shortcutHint = NSTextField(labelWithString: "⌘N")
+    private var rows: [Row] = []
+    private var expandedRowsTop: NSLayoutConstraint?
+    private var compactRowsTop: NSLayoutConstraint?
 
     override func loadView() {
         let root = ProjectDropView()
@@ -45,10 +67,9 @@ final class SidebarViewController: NSViewController {
         rowStack.alignment = .leading
         rowStack.translatesAutoresizingMaskIntoConstraints = false
 
-        let title = NSTextField(labelWithString: "项目")
-        title.font = InkDesignTokens.Typography.label
-        title.textColor = InkDesignTokens.Color.textSecondary
-        title.translatesAutoresizingMaskIntoConstraints = false
+        sectionTitle.font = InkDesignTokens.Typography.label
+        sectionTitle.textColor = InkDesignTokens.Color.textSecondary
+        sectionTitle.translatesAutoresizingMaskIntoConstraints = false
 
         newButton.title = "新建项目"
         newButton.target = self
@@ -63,23 +84,35 @@ final class SidebarViewController: NSViewController {
         newButton.layer?.cornerCurve = .continuous
         newButton.translatesAutoresizingMaskIntoConstraints = false
 
-        let shortcutHint = NSTextField(labelWithString: "⌘N")
         shortcutHint.font = InkDesignTokens.Typography.label
         shortcutHint.textColor = InkDesignTokens.Color.textSecondary
         shortcutHint.translatesAutoresizingMaskIntoConstraints = false
 
-        root.addSubview(title)
+        root.addSubview(sectionTitle)
         root.addSubview(rowStack)
         root.addSubview(newButton)
         root.addSubview(shortcutHint)
 
         let sp = InkDesignTokens.Spacing.self
+        let expandedRowsTop = rowStack.topAnchor.constraint(
+            equalTo: sectionTitle.bottomAnchor,
+            constant: sp.xs
+        )
+        let compactRowsTop = rowStack.topAnchor.constraint(
+            equalTo: root.safeAreaLayoutGuide.topAnchor,
+            constant: sp.xs
+        )
+        self.expandedRowsTop = expandedRowsTop
+        self.compactRowsTop = compactRowsTop
         NSLayoutConstraint.activate([
             // 跟随 safe area：系统已为标题栏/红绿灯留位，再叠固定值就是双重让位。
-            title.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor, constant: sp.xs),
-            title.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.md),
+            sectionTitle.topAnchor.constraint(
+                equalTo: root.safeAreaLayoutGuide.topAnchor,
+                constant: sp.xs
+            ),
+            sectionTitle.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.md),
 
-            rowStack.topAnchor.constraint(equalTo: title.bottomAnchor, constant: sp.xs),
+            expandedRowsTop,
             rowStack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.xs),
             rowStack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.xs),
 
@@ -92,19 +125,46 @@ final class SidebarViewController: NSViewController {
         ])
 
         view = root
+        updateDisplayMode()
     }
 
     func reload(rows: [Row]) {
+        self.rows = rows
+        rebuildRows()
+    }
+
+    private func rebuildRows() {
+        guard isViewLoaded else { return }
         rowStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for (index, row) in rows.enumerated() {
-            let rowView = ProjectRowView(row: row, index: index)
+            let rowView = ProjectRowView(
+                row: row,
+                index: index,
+                compact: displayMode == .compact,
+                showsLabel: displayMode.showsProjectLabels
+            )
             rowView.onClick = { [weak self] in self?.onSelect?(index) }
             rowView.onRemove = { [weak self] in self?.onRemove?(index) }
             rowView.onTogglePin = { [weak self] in self?.onTogglePin?(index) }
             rowView.onEditNote = { [weak self] in self?.onEditNote?(index) }
+            rowView.onSetLabel = { [weak self] label in self?.onSetLabel?(index, label) }
             rowStack.addArrangedSubview(rowView)
             rowView.widthAnchor.constraint(equalTo: rowStack.widthAnchor).isActive = true
         }
+    }
+
+    private func updateDisplayMode() {
+        guard isViewLoaded else { return }
+        let compact = displayMode == .compact
+        sectionTitle.isHidden = compact
+        shortcutHint.isHidden = compact
+        expandedRowsTop?.isActive = !compact
+        compactRowsTop?.isActive = compact
+        newButton.title = compact ? "" : "新建项目"
+        newButton.imagePosition = compact ? .imageOnly : .imageLeading
+        newButton.alignment = compact ? .center : .left
+        newButton.toolTip = compact ? "新建项目" : nil
+        newButton.setAccessibilityLabel("新建项目")
     }
 
     @objc private func newProject() { onNewProject?() }
@@ -154,7 +214,7 @@ private final class ProjectDropView: NSVisualEffectView {
     }
 }
 
-/// 两行式项目行：标题 + 备注/状态，置顶别针，悬停出关闭钮，可拖动。
+/// 展开态是两行项目卡片；图标态复用同一交互，只保留图标与颜色轨道。
 @MainActor
 private final class ProjectRowView: NSView, NSDraggingSource {
 
@@ -162,23 +222,37 @@ private final class ProjectRowView: NSView, NSDraggingSource {
     var onRemove: (() -> Void)?
     var onTogglePin: (() -> Void)?
     var onEditNote: (() -> Void)?
+    var onSetLabel: ((InkProjectLabel) -> Void)?
 
     private let index: Int
     private let pinned: Bool
     private let active: Bool
+    private let label: InkProjectLabel
+    private let compact: Bool
     private let closeButton = NSButton()
     private var mouseDownPoint: NSPoint?
     private var didDrag = false
 
-    init(row: SidebarViewController.Row, index: Int) {
+    init(
+        row: SidebarViewController.Row,
+        index: Int,
+        compact: Bool,
+        showsLabel: Bool
+    ) {
         self.index = index
         self.pinned = row.pinned
         self.active = row.active
+        self.label = row.label
+        self.compact = compact
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = InkDesignTokens.Radius.item
         layer?.cornerCurve = .continuous
         updateLayerColors()
+        toolTip = compact ? "\(row.title)\n\(row.subtitle)" : nil
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
+        setAccessibilityLabel(row.title)
 
         let icon = NSImageView(image: NSImage(
             systemSymbolName: row.pinned ? "pin.fill" : "folder",
@@ -187,6 +261,36 @@ private final class ProjectRowView: NSView, NSDraggingSource {
         icon.contentTintColor = row.active
             ? InkDesignTokens.Color.textPrimary
             : InkDesignTokens.Color.textSecondary
+
+        if compact {
+            let indicator = ProjectLabelIndicator(label: row.label)
+            icon.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(icon)
+            NSLayoutConstraint.activate([
+                heightAnchor.constraint(equalToConstant: InkDesignTokens.Sidebar.projectRowHeight),
+                icon.centerXAnchor.constraint(equalTo: centerXAnchor),
+                icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+            ])
+            if showsLabel {
+                indicator.translatesAutoresizingMaskIntoConstraints = false
+                addSubview(indicator)
+                NSLayoutConstraint.activate([
+                indicator.leadingAnchor.constraint(
+                    equalTo: leadingAnchor,
+                    constant: InkDesignTokens.Sidebar.labelRailInset
+                ),
+                indicator.centerYAnchor.constraint(equalTo: centerYAnchor),
+                indicator.widthAnchor.constraint(
+                    equalToConstant: InkDesignTokens.Sidebar.labelRailWidth
+                ),
+                indicator.heightAnchor.constraint(
+                    equalToConstant: InkDesignTokens.Sidebar.labelRailHeight
+                ),
+                ])
+            }
+            installTrackingArea()
+            return
+        }
 
         let title = NSTextField(labelWithString: row.title)
         title.font = InkDesignTokens.Typography.bodyEmphasized
@@ -226,6 +330,10 @@ private final class ProjectRowView: NSView, NSDraggingSource {
             hStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -sp.xs),
         ])
 
+        installTrackingArea()
+    }
+
+    private func installTrackingArea() {
         addTrackingArea(NSTrackingArea(
             rect: .zero,
             options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
@@ -247,8 +355,13 @@ private final class ProjectRowView: NSView, NSDraggingSource {
         }
     }
 
-    override func mouseEntered(with event: NSEvent) { closeButton.isHidden = false }
-    override func mouseExited(with event: NSEvent) { closeButton.isHidden = true }
+    override func mouseEntered(with event: NSEvent) {
+        if !compact { closeButton.isHidden = false }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        closeButton.isHidden = true
+    }
 
     // 点击选中放到 mouseUp，给拖拽让路。
     override func mouseDown(with event: NSEvent) {
@@ -301,6 +414,24 @@ private final class ProjectRowView: NSView, NSDraggingSource {
         let note = NSMenuItem(title: "编辑备注…", action: #selector(noteAction), keyEquivalent: "")
         note.target = self
         menu.addItem(note)
+
+        let labelItem = NSMenuItem(title: "颜色标记", action: nil, keyEquivalent: "")
+        let labelMenu = NSMenu(title: "颜色标记")
+        for (tag, option) in InkProjectLabel.allCases.enumerated() {
+            let item = NSMenuItem(
+                title: option.title,
+                action: #selector(labelAction(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.tag = tag
+            item.state = option == label ? .on : .off
+            item.image = Self.labelMenuImage(for: option)
+            labelMenu.addItem(item)
+        }
+        labelItem.submenu = labelMenu
+        menu.addItem(labelItem)
+
         menu.addItem(.separator())
         let remove = NSMenuItem(title: "移除项目", action: #selector(removeAction), keyEquivalent: "")
         remove.target = self
@@ -311,6 +442,49 @@ private final class ProjectRowView: NSView, NSDraggingSource {
     @objc private func removeAction() { onRemove?() }
     @objc private func pinAction() { onTogglePin?() }
     @objc private func noteAction() { onEditNote?() }
+
+    @objc private func labelAction(_ sender: NSMenuItem) {
+        guard InkProjectLabel.allCases.indices.contains(sender.tag) else { return }
+        onSetLabel?(InkProjectLabel.allCases[sender.tag])
+    }
+
+    private static func labelMenuImage(for label: InkProjectLabel) -> NSImage? {
+        guard let color = InkDesignTokens.ProjectLabel.color(for: label) else { return nil }
+        return NSImage(size: NSSize(width: 12, height: 12), flipped: false) { rect in
+            color.setFill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: 2, dy: 2)).fill()
+            return true
+        }
+    }
+}
+
+@MainActor
+private final class ProjectLabelIndicator: NSView {
+    private let label: InkProjectLabel
+
+    init(label: InkProjectLabel) {
+        self.label = label
+        super.init(frame: .zero)
+        isHidden = label == .none
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("代码构建") }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let color = InkDesignTokens.ProjectLabel.color(for: label) else { return }
+        color.setFill()
+        NSBezierPath(
+            roundedRect: bounds,
+            xRadius: bounds.width / 2,
+            yRadius: bounds.width / 2
+        ).fill()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
 }
 
 /// 底部操作按钮的背景是 layer 色，外观变化时需要重新解析动态 NSColor。

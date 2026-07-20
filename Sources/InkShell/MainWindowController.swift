@@ -2,7 +2,22 @@ import AppKit
 import InkConfig
 import InkDesign
 import InkTerminalView
+import QuartzCore
 import TerminalCore
+
+enum SidebarDisplayMode: Equatable {
+    case expanded
+    case compact
+    case hidden
+
+    var next: Self {
+        switch self {
+        case .expanded: .compact
+        case .compact: .hidden
+        case .hidden: .expanded
+        }
+    }
+}
 
 /// 主窗口：项目侧边栏 + 会话标签栏 + 终端内容区。
 ///
@@ -27,6 +42,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
     private var firstSessionScheduled = false
     private var config = InkConfig.load()
     private var configWatcher: ConfigWatcher?
+    private var sidebarMode: SidebarDisplayMode = .expanded
 
     private var activeProject: Project? {
         projects.indices.contains(activeProjectIndex) ? projects[activeProjectIndex] : nil
@@ -141,8 +157,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
         // 浮动面板，与窗口脱节。普通 split item 配合侧栏自己的系统材质，
         // 才能让雾面背景从标题栏贯穿到底部。
         let sidebarItem = NSSplitViewItem(viewController: sidebarVC)
-        sidebarItem.minimumThickness = 200
-        sidebarItem.maximumThickness = 320
+        sidebarItem.minimumThickness = InkDesignTokens.Sidebar.minimumExpandedWidth
+        sidebarItem.maximumThickness = InkDesignTokens.Sidebar.maximumExpandedWidth
         sidebarItem.canCollapse = true
         sidebarItem.holdingPriority = NSLayoutConstraint.Priority(261)
         self.sidebarItem = sidebarItem
@@ -154,11 +170,11 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.contentViewController = splitVC
         splitVC.onLayoutChange = { [weak self] in
             guard let self else { return }
-            let collapsed = self.sidebarItem?.isCollapsed ?? false
-            self.tabBar.setLeadingInset(collapsed ? 84 : InkDesignTokens.Spacing.sm)
+            self.updateTabBarInset()
         }
+        splitVC.onToggleSidebar = { [weak self] in self?.toggleSidebarMode() }
         DispatchQueue.main.async { [weak self] in
-            self?.splitVC.splitView.setPosition(InkDesignTokens.Sidebar.width, ofDividerAt: 0)
+            self?.setSidebarMode(.expanded, animated: false)
         }
 
         // 事件接线。
@@ -175,12 +191,15 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
             self.refreshChrome()
         }
         tabBar.onNewTab = { [weak self] in self?.newSession(nil) }
-        tabBar.onToggleSidebar = { [weak self] in self?.splitVC.toggleSidebar(nil) }
+        tabBar.onToggleSidebar = { [weak self] in self?.toggleSidebarMode() }
         sidebarVC.onSelect = { [weak self] in self?.selectProject(at: $0) }
         sidebarVC.onNewProject = { [weak self] in self?.newProject(nil) }
         sidebarVC.onRemove = { [weak self] in self?.removeProject(at: $0) }
         sidebarVC.onTogglePin = { [weak self] in self?.togglePin(at: $0) }
         sidebarVC.onEditNote = { [weak self] in self?.editNote(at: $0) }
+        sidebarVC.onSetLabel = { [weak self] index, label in
+            self?.setProjectLabel(label, at: index)
+        }
         sidebarVC.onReorder = { [weak self] from, to in self?.reorderProject(from: from, to: to) }
 
         terminalView.onGridResize = { [weak self] size in
@@ -196,6 +215,101 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
             }
         }
         window.makeFirstResponder(terminalView)
+    }
+
+    private func toggleSidebarMode() {
+        setSidebarMode(sidebarMode.next, animated: true)
+    }
+
+    private func setSidebarMode(_ mode: SidebarDisplayMode, animated: Bool) {
+        guard let sidebarItem else { return }
+        sidebarMode = mode
+        sidebarVC.displayMode = mode == .compact ? .compact : .expanded
+        tabBar.setSidebarMode(mode)
+        updateTabBarInset()
+
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let shouldAnimate = animated && !reduceMotion
+        let duration = shouldAnimate ? InkDesignTokens.Motion.stateDuration : 0
+
+        switch mode {
+        case .expanded:
+            sidebarItem.canCollapse = true
+            sidebarItem.minimumThickness = InkDesignTokens.Sidebar.compactWidth
+            sidebarItem.maximumThickness = InkDesignTokens.Sidebar.maximumExpandedWidth
+            applySidebarGeometry(
+                collapsed: false,
+                position: InkDesignTokens.Sidebar.width,
+                duration: duration
+            )
+        case .compact:
+            // NSSplitView 会把“位置 == 最小宽度”当作折叠阈值。图标态关闭
+            // 系统自动折叠，第二次点击再由状态机显式进入 hidden。
+            sidebarItem.canCollapse = false
+            sidebarItem.minimumThickness = InkDesignTokens.Sidebar.compactWidth
+            sidebarItem.maximumThickness = InkDesignTokens.Sidebar.maximumExpandedWidth
+            applySidebarGeometry(
+                collapsed: false,
+                position: InkDesignTokens.Sidebar.compactWidth,
+                duration: duration
+            )
+        case .hidden:
+            sidebarItem.canCollapse = true
+            applySidebarGeometry(collapsed: true, position: nil, duration: duration)
+        }
+
+        guard shouldAnimate else {
+            finishSidebarGeometry(for: mode)
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
+            guard let self, self.sidebarMode == mode else { return }
+            self.finishSidebarGeometry(for: mode)
+        }
+    }
+
+    private func applySidebarGeometry(
+        collapsed: Bool,
+        position: CGFloat?,
+        duration: TimeInterval
+    ) {
+        guard let sidebarItem else { return }
+        if duration > 0 {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = duration
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                sidebarItem.animator().isCollapsed = collapsed
+                if let position {
+                    splitVC.splitView.animator().setPosition(position, ofDividerAt: 0)
+                }
+            }
+        } else {
+            sidebarItem.isCollapsed = collapsed
+            if let position {
+                splitVC.splitView.setPosition(position, ofDividerAt: 0)
+            }
+        }
+    }
+
+    private func finishSidebarGeometry(for mode: SidebarDisplayMode) {
+        guard let sidebarItem else { return }
+        switch mode {
+        case .expanded:
+            sidebarItem.minimumThickness = InkDesignTokens.Sidebar.minimumExpandedWidth
+            sidebarItem.maximumThickness = InkDesignTokens.Sidebar.maximumExpandedWidth
+        case .compact:
+            sidebarItem.minimumThickness = InkDesignTokens.Sidebar.compactWidth
+            sidebarItem.maximumThickness = InkDesignTokens.Sidebar.compactWidth
+        case .hidden:
+            break
+        }
+    }
+
+    private func updateTabBarInset() {
+        let inset = sidebarMode == .hidden
+            ? InkDesignTokens.Sidebar.collapsedTitlebarInset
+            : InkDesignTokens.Spacing.sm
+        tabBar.setLeadingInset(inset)
     }
 
     // MARK: - 项目操作
@@ -247,6 +361,13 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
         guard projects.indices.contains(index) else { return }
         projects[index].pinned.toggle()
         sortPinnedFirst()
+        persistProjects()
+        refreshChrome()
+    }
+
+    private func setProjectLabel(_ label: InkProjectLabel, at index: Int) {
+        guard projects.indices.contains(index) else { return }
+        projects[index].label = label
         persistProjects()
         refreshChrome()
     }
@@ -429,7 +550,9 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
         let tabs = activeProject.map { project in
             project.sessions.map { sessionTitle($0, project: project) }.joined(separator: "\u{1}")
         } ?? ""
-        let sidebar = projects.map { "\($0.displayName):\($0.sessions.count)" }.joined(separator: "\u{1}")
+        let sidebar = projects.map {
+            "\($0.displayName):\($0.sessions.count):\($0.label.rawValue)"
+        }.joined(separator: "\u{1}")
         return "\(activeProjectIndex)|\(activeProject?.activeSessionIndex ?? -1)|\(tabs)|\(sidebar)"
     }
 
@@ -460,7 +583,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
                 title: project.displayName,
                 subtitle: project.note ?? fallback,
                 active: index == activeProjectIndex,
-                pinned: project.pinned
+                pinned: project.pinned,
+                label: project.label
             )
         })
     }
@@ -481,11 +605,11 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate {
 @MainActor
 final class ShellSplitViewController: NSSplitViewController {
     var onLayoutChange: (() -> Void)?
+    var onToggleSidebar: (() -> Void)?
 
-    /// 普通 split item 不走系统的 sidebar 外观，但仍保留相同的折叠行为。
+    /// 菜单项仍指向系统 selector，具体三态循环交给窗口控制器。
     override func toggleSidebar(_ sender: Any?) {
-        guard let sidebar = splitViewItems.first, sidebar.canCollapse else { return }
-        sidebar.animator().isCollapsed.toggle()
+        onToggleSidebar?()
     }
 
     override func splitViewDidResizeSubviews(_ notification: Notification) {
