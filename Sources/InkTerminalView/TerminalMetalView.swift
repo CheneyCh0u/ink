@@ -174,6 +174,14 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         markDirty()
     }
 
+    /// 当前历史视口覆盖的绝对行范围，供首次搜索选择最近结果。
+    public func searchViewportLineRange(in terminal: Terminal) -> ClosedRange<Int> {
+        let offset = min(scrollOffset, terminal.scrollback.count)
+        let first = terminal.scrollback.count - offset
+        let last = min(terminal.totalLines - 1, first + terminal.grid.size.rows - 1)
+        return first...max(first, last)
+    }
+
     public func markDirty() {
         dirty = true
         // 有输出时让光标立即实心，观感跟系统终端一致。

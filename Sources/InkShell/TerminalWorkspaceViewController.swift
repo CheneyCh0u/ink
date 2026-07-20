@@ -1,5 +1,6 @@
 import AppKit
 import InkConfig
+import InkDesign
 import InkTerminalView
 import TerminalCore
 
@@ -58,6 +59,8 @@ final class TerminalWorkspaceViewController: NSViewController {
     private var paneContainers: [PaneID: TerminalPaneContainerView] = [:]
     private weak var rootView: NSView?
     private var rootConstraints: [NSLayoutConstraint] = []
+    private var searchController: TerminalSearchController?
+    private(set) var activeSearchPaneID: PaneID?
 
     override func loadView() {
         view = NSView(frame: .zero)
@@ -99,6 +102,61 @@ final class TerminalWorkspaceViewController: NSViewController {
 
     func markDirty(_ paneID: PaneID) {
         terminalView(for: paneID)?.markDirty()
+    }
+
+    func refreshSearch(for paneID: PaneID) {
+        guard activeSearchPaneID == paneID else { return }
+        searchController?.refreshForTerminalUpdate()
+    }
+
+    @discardableResult
+    func openSearchInActivePane() -> Bool {
+        guard let tab = currentTab else { return false }
+        let paneID = tab.activePaneID
+        guard let pane = tab.panes[paneID],
+              let container = paneContainers[paneID]
+        else { return false }
+
+        closeSearch(returnFocus: false)
+        let controller = TerminalSearchController(
+            terminalProvider: { [weak session = pane.session] in
+                session?.terminal
+                    ?? Terminal(size: TerminalSize(columns: 1, rows: 1), scrollbackCapacity: 1)
+            },
+            terminalView: container.terminalView
+        )
+        controller.onClose = { [weak self] in self?.closeSearch(returnFocus: true) }
+        searchController = controller
+        activeSearchPaneID = paneID
+
+        let searchBar = controller.searchBar
+        searchBar.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(searchBar)
+        NSLayoutConstraint.activate([
+            searchBar.topAnchor.constraint(
+                equalTo: container.topAnchor,
+                constant: InkDesignTokens.Spacing.xs
+            ),
+            searchBar.trailingAnchor.constraint(
+                equalTo: container.trailingAnchor,
+                constant: -InkDesignTokens.Spacing.xs
+            ),
+        ])
+        searchBar.focus()
+        return true
+    }
+
+    func closeSearch(returnFocus: Bool = true) {
+        guard let controller = searchController else { return }
+        let paneID = activeSearchPaneID
+        searchController = nil
+        activeSearchPaneID = nil
+        controller.onClose = nil
+        controller.close()
+        controller.searchBar.removeFromSuperview()
+        if returnFocus, let paneID, let terminalView = terminalView(for: paneID) {
+            view.window?.makeFirstResponder(terminalView)
+        }
     }
 
     func activate(_ paneID: PaneID) {
@@ -162,6 +220,7 @@ final class TerminalWorkspaceViewController: NSViewController {
     }
 
     private func clearViews() {
+        closeSearch(returnFocus: false)
         for container in paneContainers.values {
             let terminalView = container.terminalView
             terminalView.onInput = nil
