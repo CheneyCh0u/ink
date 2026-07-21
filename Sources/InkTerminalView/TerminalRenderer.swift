@@ -105,7 +105,9 @@ final class TerminalRenderer {
         font: NSFont,
         scale: CGFloat,
         lineHeightMultiplier: CGFloat = 1.0,
-        cellHeightAdjustment: Int = 0
+        cellHeightAdjustment: Int = 0,
+        fontThicken: Bool,
+        fontThickenStrength: Int
     ) {
         // swift build 不编译 .metal（只有 Xcode 构建系统会），shader 以源码
         // 进 bundle、启动时编译一次。失败原因打到 stderr，方便命令行排查。
@@ -129,7 +131,9 @@ final class TerminalRenderer {
             let atlas = GlyphAtlas(
                 device: device, font: font, scale: scale,
                 lineHeightMultiplier: lineHeightMultiplier,
-                cellHeightAdjustment: cellHeightAdjustment
+                cellHeightAdjustment: cellHeightAdjustment,
+                fontThicken: fontThicken,
+                fontThickenStrength: fontThickenStrength
             )
         else { return nil }
 

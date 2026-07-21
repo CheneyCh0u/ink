@@ -43,6 +43,16 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         didSet { if cellHeightAdjustment != oldValue { rebuildRenderer() } }
     }
 
+    /// 使用 CoreGraphics 字体平滑增加单色字形的视觉字重。
+    public var fontThicken = true {
+        didSet { if fontThicken != oldValue { rebuildRenderer() } }
+    }
+
+    /// 字体增粗强度，范围由配置层限制为 0...255。
+    public var fontThickenStrength = 128 {
+        didSet { if fontThickenStrength != oldValue { rebuildRenderer() } }
+    }
+
     /// 终端配色家族。切换时只更新 renderer 的调色板 uniform，不重建 glyph atlas。
     public var terminalTheme: InkTerminalTheme = .neutral {
         didSet {
@@ -248,7 +258,9 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
             font: font,
             scale: scale,
             lineHeightMultiplier: lineHeightMultiplier,
-            cellHeightAdjustment: cellHeightAdjustment
+            cellHeightAdjustment: cellHeightAdjustment,
+            fontThicken: fontThicken,
+            fontThickenStrength: fontThickenStrength
         ) else { return }
         renderer.cursorStyle = cursorStyle
         renderer.apply(palette: terminalTheme.palette(for: effectiveAppearance))

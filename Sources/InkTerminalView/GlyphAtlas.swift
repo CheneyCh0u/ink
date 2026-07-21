@@ -28,6 +28,9 @@ final class GlyphAtlas {
 
     let cellWidth: CGFloat
     let cellHeight: CGFloat
+    /// 单色字形首次栅格化时使用的 CoreGraphics 字体平滑配置。
+    let fontThicken: Bool
+    let fontThickenStrength: Int
     private let baselineFromBottom: CGFloat
     private let scale: CGFloat
 
@@ -54,9 +57,13 @@ final class GlyphAtlas {
         font: NSFont,
         scale: CGFloat,
         lineHeightMultiplier: CGFloat = 1.0,
-        cellHeightAdjustment: Int = 0
+        cellHeightAdjustment: Int = 0,
+        fontThicken: Bool,
+        fontThickenStrength: Int
     ) {
         self.scale = scale
+        self.fontThicken = fontThicken
+        self.fontThickenStrength = fontThickenStrength
 
         let metrics = FontGridMetrics(
             font: font,
@@ -235,18 +242,35 @@ final class GlyphAtlas {
                         | CGBitmapInfo.byteOrder32Little.rawValue
                 )
             } else {
-                // 8bpp 灰度无 alpha：底色 0，白字画上去，灰度值即 coverage。
+                // alpha-only 与 .r8Unorm 图集一一对应：每像素一个 coverage byte。
+                // Swift overlay 不接受 nil 色彩空间；使用 Ghostty 同样的线性灰度空间。
+                let monoColorSpace = CGColorSpace(name: CGColorSpace.linearGray)
+                    ?? CGColorSpaceCreateDeviceGray()
                 context = CGContext(
                     data: raw.baseAddress, width: width, height: height,
                     bitsPerComponent: 8, bytesPerRow: bytesPerRow,
-                    space: CGColorSpaceCreateDeviceGray(),
-                    bitmapInfo: CGImageAlphaInfo.none.rawValue
+                    space: monoColorSpace,
+                    bitmapInfo: CGImageAlphaInfo.alphaOnly.rawValue
                 )
             }
             guard let ctx = context else { return false }
             // CG 原点在左下。字形按 pt 排版，整个上下文放大到物理像素。
             ctx.scaleBy(x: scale, y: scale)
-            ctx.setFillColor(.white)
+            if isColor {
+                ctx.setFillColor(.white)
+            } else {
+                ctx.setAllowsFontSmoothing(true)
+                ctx.setShouldSmoothFonts(fontThicken)
+                ctx.setAllowsFontSubpixelPositioning(true)
+                ctx.setShouldSubpixelPositionFonts(true)
+                ctx.setAllowsFontSubpixelQuantization(false)
+                ctx.setShouldSubpixelQuantizeFonts(false)
+                ctx.setAllowsAntialiasing(true)
+                ctx.setShouldAntialias(true)
+                let strength = CGFloat(fontThickenStrength) / 255
+                ctx.setFillColor(gray: strength, alpha: 1)
+                ctx.setStrokeColor(gray: strength, alpha: 1)
+            }
             ctx.textPosition = CGPoint(x: 0, y: baselineFromBottom / scale)
             CTLineDraw(line, ctx)
             return true
