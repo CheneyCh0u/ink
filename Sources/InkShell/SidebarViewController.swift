@@ -356,30 +356,35 @@ private final class ProjectRowView: NSView, NSDraggingSource {
         textStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
         textStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let hStack = NSStackView(views: [indicator, icon, textStack, closeButton])
-        hStack.orientation = .horizontal
-        hStack.alignment = .centerY
-        hStack.spacing = InkDesignTokens.Spacing.xs
-        hStack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(hStack)
+        for subview in [indicator, icon, textStack, closeButton] {
+            subview.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(subview)
+        }
 
         let sp = InkDesignTokens.Spacing.self
         NSLayoutConstraint.activate([
-            indicator.widthAnchor.constraint(
-                equalToConstant: InkDesignTokens.Sidebar.labelDotDiameter
-            ),
-            indicator.heightAnchor.constraint(
-                equalToConstant: InkDesignTokens.Sidebar.labelDotDiameter
-            ),
-            title.widthAnchor.constraint(equalTo: textStack.widthAnchor),
-            metadataStack.widthAnchor.constraint(equalTo: textStack.widthAnchor),
+            indicator.leadingAnchor.constraint(equalTo: leadingAnchor, constant: sp.xs),
+            indicator.centerYAnchor.constraint(equalTo: centerYAnchor),
+            indicator.widthAnchor.constraint(equalToConstant: InkDesignTokens.Sidebar.labelDotDiameter),
+            indicator.heightAnchor.constraint(equalToConstant: InkDesignTokens.Sidebar.labelDotDiameter),
+
+            icon.leadingAnchor.constraint(equalTo: indicator.trailingAnchor, constant: sp.xs),
+            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 16),
+            icon.heightAnchor.constraint(equalToConstant: 16),
+
+            closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -sp.xs),
+            closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             closeButton.widthAnchor.constraint(
                 equalToConstant: InkDesignTokens.Sidebar.projectCloseButtonWidth
             ),
-            hStack.topAnchor.constraint(equalTo: topAnchor, constant: 6),
-            hStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
-            hStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: sp.xs),
-            hStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -sp.xs),
+
+            textStack.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: sp.xs),
+            textStack.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -sp.xs),
+            textStack.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            textStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+            title.widthAnchor.constraint(equalTo: textStack.widthAnchor),
+            metadataStack.widthAnchor.constraint(equalTo: textStack.widthAnchor),
         ])
 
         installTrackingArea()

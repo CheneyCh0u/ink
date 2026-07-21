@@ -117,7 +117,6 @@ struct ProjectSidebarLayoutTests {
         let initialTitleFrame = title.convert(title.bounds, to: rowView)
         let initialDetailFrame = detail.convert(detail.bounds, to: rowView)
         let initialStatusFrame = status.convert(status.bounds, to: rowView)
-        let closeButtonFrame = closeButton.convert(closeButton.bounds, to: rowView)
         let event = try #require(
             NSEvent.mouseEvent(
                 with: .mouseMoved,
@@ -136,10 +135,6 @@ struct ProjectSidebarLayoutTests {
         #expect(detail.frame.width < detail.intrinsicContentSize.width)
         #expect(status.frame.width >= status.intrinsicContentSize.width - 0.5)
         #expect(status.alignment == .right)
-        #expect(
-            closeButtonFrame.minX - initialStatusFrame.maxX
-                <= InkDesignTokens.Spacing.xs + 0.5
-        )
         #expect(!closeButton.isHidden)
         #expect(closeButton.alphaValue == 0)
 
@@ -193,6 +188,126 @@ struct ProjectSidebarLayoutTests {
         #expect(status.convert(status.bounds, to: rowView) == initialStatusFrame)
         #expect(!closeButton.isHidden)
         #expect(closeButton.alphaValue == 0)
+    }
+
+    @Test("不同长度项目共享固定右侧关闭列")
+    func rowsUseFixedTrailingCloseColumn() throws {
+        let controller = SidebarViewController()
+        controller.view.frame = NSRect(
+            x: 0,
+            y: 0,
+            width: InkDesignTokens.Sidebar.width,
+            height: 700
+        )
+        controller.reload(rows: [
+            .init(
+                title: "~",
+                detail: "",
+                status: "未打开",
+                fullPath: "~",
+                active: false,
+                pinned: false,
+                label: .none
+            ),
+            .init(
+                title: "wise-studio",
+                detail: "~/work/code/very-long-parent-directory/wiselaw",
+                status: "1 个标签",
+                fullPath: "~/work/code/very-long-parent-directory/wiselaw/wise-studio",
+                active: true,
+                pinned: false,
+                label: .red
+            ),
+        ])
+        controller.view.layoutSubtreeIfNeeded()
+
+        let rows = try projectRows(in: controller)
+        let shortButton = try closeButton(in: rows[0])
+        let longButton = try closeButton(in: rows[1])
+        let shortFrame = shortButton.convert(shortButton.bounds, to: rows[0])
+        let longFrame = longButton.convert(longButton.bounds, to: rows[1])
+
+        #expect(abs(shortFrame.minX - longFrame.minX) < 0.5)
+        #expect(
+            abs(shortFrame.maxX - rows[0].bounds.maxX)
+                <= InkDesignTokens.Spacing.xs + 0.5
+        )
+        #expect(
+            abs(longFrame.maxX - rows[1].bounds.maxX)
+                <= InkDesignTokens.Spacing.xs + 0.5
+        )
+    }
+
+    @Test("新增项目第一次悬停不移动布局")
+    func firstHoverAfterCreatingProjectKeepsFramesStable() throws {
+        let controller = SidebarViewController()
+        controller.view.frame = NSRect(
+            x: 0,
+            y: 0,
+            width: InkDesignTokens.Sidebar.width,
+            height: 700
+        )
+        let existing = SidebarViewController.Row(
+            title: "~",
+            detail: "",
+            status: "未打开",
+            fullPath: "~",
+            active: false,
+            pinned: false,
+            label: .none
+        )
+        let created = SidebarViewController.Row(
+            title: "wise-studio",
+            detail: "~/work/code/wiselaw",
+            status: "1 个标签",
+            fullPath: "~/work/code/wiselaw/wise-studio",
+            active: true,
+            pinned: false,
+            label: .red
+        )
+        controller.reload(rows: [existing])
+        controller.reload(rows: [existing, created])
+        controller.view.layoutSubtreeIfNeeded()
+
+        let row = try #require(try projectRows(in: controller).last)
+        let title = try #require(
+            descendants(of: NSTextField.self, in: row)
+                .first { $0.stringValue == created.title }
+        )
+        let button = try closeButton(in: row)
+        let titleFrame = title.convert(title.bounds, to: row)
+        let buttonFrame = button.convert(button.bounds, to: row)
+        let event = try #require(
+            NSEvent.mouseEvent(
+                with: .mouseMoved,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                eventNumber: 0,
+                clickCount: 0,
+                pressure: 0
+            )
+        )
+
+        row.mouseEntered(with: event)
+        controller.view.layoutSubtreeIfNeeded()
+
+        #expect(title.convert(title.bounds, to: row) == titleFrame)
+        #expect(button.convert(button.bounds, to: row) == buttonFrame)
+        #expect(button.alphaValue == 1)
+    }
+
+    private func projectRows(in controller: SidebarViewController) throws -> [NSView] {
+        let stack = try #require(
+            controller.view.subviews.compactMap { $0 as? NSStackView }.first
+        )
+        return stack.arrangedSubviews
+    }
+
+    private func closeButton(in row: NSView) throws -> NSButton {
+        try #require(descendants(of: NSButton.self, in: row).first)
     }
 
     @Test("展开态为所有项目保留圆点列")
