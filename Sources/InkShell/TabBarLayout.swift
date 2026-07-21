@@ -21,7 +21,7 @@ struct TabBarLayout: Equatable {
 
         let token = InkDesignTokens.TabBar.self
         let available = availableWidth.isFinite ? max(0, availableWidth) : 0
-        let active = min(max(activeIndex, 0), count - 1)
+        let active = (0..<count).contains(activeIndex) ? activeIndex : 0
         let preferred = preferredWidths.map { value in
             guard value.isFinite else { return token.idealTabWidth }
             return min(max(value, token.idealTabWidth), token.maximumTabWidth)

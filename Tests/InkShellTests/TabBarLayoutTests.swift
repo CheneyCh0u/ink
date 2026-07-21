@@ -119,4 +119,17 @@ struct TabBarLayoutTests {
         #expect(invalid.widths == [InkDesignTokens.TabBar.minimumTabWidth])
         #expect(invalid.hiddenIndices == [1, 2])
     }
+
+    @Test("任一方向越界的活动索引都回退到第一个标签")
+    func invalidActiveIndexFallsBackToFirstTab() {
+        for active in [-1, 3, 99] {
+            let result = TabBarLayout.resolve(
+                preferredWidths: Array(repeating: 168, count: 3),
+                activeIndex: active,
+                availableWidth: 160
+            )
+
+            #expect(result.visibleRange == 0..<1)
+        }
+    }
 }

@@ -1,8 +1,8 @@
 import AppKit
 import InkDesign
 
-/// 顶部标签栏，Ghostty 式：标签等宽铺满整条带，活动标签白色 pill，
-/// 悬停显示关闭按钮，双击改名，右侧 ⌘n 提示，最右是 +。
+/// 顶部标签栏：标签按内容宽度压缩或进入溢出菜单，活动标签显示 pill，
+/// 悬停显示关闭按钮，双击改名，右侧保留快捷键提示与新建入口。
 /// 系统没有对应控件，这是设计系统里明确允许自绘的地方。
 @MainActor
 final class TabBarView: NSView {
@@ -132,6 +132,8 @@ final class TabBarView: NSView {
     }
 
     func reload(tabs: [Tab]) {
+        overflowButton.menu?.cancelTracking()
+        overflowButton.menu = nil
         stack.arrangedSubviews.forEach {
             stack.removeArrangedSubview($0)
             $0.removeFromSuperview()
@@ -180,14 +182,19 @@ final class TabBarView: NSView {
             previousVisibleRange: previousVisibleRange
         )
 
-        if result != appliedLayout {
-            apply(result)
-            appliedLayout = result
+        let structureUnchanged = appliedLayout?.visibleRange == result.visibleRange
+            && appliedLayout?.hiddenIndices == result.hiddenIndices
+            && widthConstraints.count == result.widths.count
+        if structureUnchanged {
+            updateWidths(result.widths)
+        } else {
+            applyStructure(result)
         }
+        appliedLayout = result
         positionTabRegion(result, leading: leading, trailing: trailing)
     }
 
-    private func apply(_ result: TabBarLayout) {
+    private func applyStructure(_ result: TabBarLayout) {
         stack.arrangedSubviews.forEach {
             stack.removeArrangedSubview($0)
             $0.removeFromSuperview()
@@ -205,6 +212,12 @@ final class TabBarView: NSView {
         }
         previousVisibleRange = result.visibleRange
         rebuildOverflowMenu(hiddenIndices: result.hiddenIndices)
+    }
+
+    private func updateWidths(_ widths: [CGFloat]) {
+        for (constraint, width) in zip(widthConstraints, widths) {
+            constraint.constant = width
+        }
     }
 
     private func positionTabRegion(
@@ -233,6 +246,7 @@ final class TabBarView: NSView {
     }
 
     private func rebuildOverflowMenu(hiddenIndices: [Int]) {
+        overflowButton.menu?.cancelTracking()
         guard !hiddenIndices.isEmpty else {
             overflowButton.menu = nil
             return
@@ -273,7 +287,9 @@ final class TabBarView: NSView {
     }
 
     @objc private func selectOverflowTab(_ sender: NSMenuItem) {
-        guard tabs.indices.contains(sender.tag) else { return }
+        guard let currentMenu = overflowButton.menu,
+              sender.menu === currentMenu,
+              tabs.indices.contains(sender.tag) else { return }
         onSelect?(sender.tag)
     }
 }

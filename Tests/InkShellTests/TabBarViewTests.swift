@@ -114,6 +114,48 @@ struct TabBarViewTests {
         #expect(tabBar.visibleTabIndices.last == before.last! + 1)
     }
 
+    @Test("标签刷新后旧溢出菜单不能选择已移位标签")
+    func staleOverflowMenuCannotSelectShiftedTab() throws {
+        let tabBar = makeTabBar(width: 520, count: 8, active: 0)
+        var selected: Int?
+        tabBar.onSelect = { selected = $0 }
+        let staleMenu = try #require(tabBar.overflowMenu)
+        let staleItemIndex = try #require(staleMenu.items.firstIndex { $0.tag == 6 })
+
+        tabBar.reload(tabs: makeTabs(count: 7, active: 0))
+        tabBar.layoutSubtreeIfNeeded()
+        staleMenu.performActionForItem(at: staleItemIndex)
+
+        #expect(selected == nil)
+
+        let currentMenu = try #require(tabBar.overflowMenu)
+        let currentItemIndex = try #require(currentMenu.items.firstIndex { $0.tag == 6 })
+        currentMenu.performActionForItem(at: currentItemIndex)
+        #expect(selected == 6)
+    }
+
+    @Test("同一可见区间内缩放只更新宽度约束")
+    func liveResizeReusesTabStructure() throws {
+        let tabBar = makeTabBar(width: 520, count: 8, active: 0)
+        let menu = try #require(tabBar.overflowMenu)
+        let stack = try #require(tabBar.subviews.first { $0 is NSStackView } as? NSStackView)
+        let firstTab = try #require(stack.arrangedSubviews.first)
+        let widthConstraint = try #require(firstTab.constraints.first {
+            $0.firstAttribute == .width && $0.secondItem == nil
+        })
+        let initialWidth = widthConstraint.constant
+
+        tabBar.setFrameSize(NSSize(width: 519, height: 38))
+        tabBar.layoutSubtreeIfNeeded()
+
+        let currentWidthConstraint = try #require(firstTab.constraints.first {
+            $0.firstAttribute == .width && $0.secondItem == nil
+        })
+        #expect(tabBar.overflowMenu === menu)
+        #expect(currentWidthConstraint === widthConstraint)
+        #expect(currentWidthConstraint.constant != initialWidth)
+    }
+
     private func makeTabBar(
         width: CGFloat = 800,
         count: Int = 1,
