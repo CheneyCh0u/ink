@@ -39,7 +39,9 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
     private var activeProjectIndex = 0
     private var lastChromeSignature = ""
     private var firstSessionScheduled = false
-    private var config = InkConfig.load()
+    private var config = InkConfig()
+    private let configURL: URL
+    private let configSyncService: ConfigSyncService
     private var configWatcher: ConfigWatcher?
     private var sidebarMode: SidebarDisplayMode = .expanded
     private var isShowingSettings = false
@@ -52,7 +54,20 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
     }
 
     public convenience init() {
-        let initialConfig = InkConfig.load()
+        let configURL = InkConfig.defaultURL
+        let initialConfig = InkConfig.load(from: configURL)
+        self.init(
+            initialConfig: initialConfig,
+            configURL: configURL,
+            configSyncService: ConfigSyncService()
+        )
+    }
+
+    init(
+        initialConfig: InkConfig,
+        configURL: URL,
+        configSyncService: ConfigSyncService
+    ) {
         let window = NSWindow(
             contentRect: NSRect(
                 x: 0,
@@ -73,18 +88,22 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         window.titlebarSeparatorStyle = .none
         window.backgroundColor = InkDesignTokens.Color.canvas
         window.minSize = NSSize(width: 520, height: 320)
-        self.init(window: window)
-        config = initialConfig
+        self.configURL = configURL
+        self.configSyncService = configSyncService
+        self.config = initialConfig
+        super.init(window: window)
         window.delegate = self
         loadProjects()
         buildContent()
         installSplitShortcutMonitor()
         applyConfig(config)
         // 配置热重载：~/.config/ink/config.toml 保存即生效。
-        configWatcher = ConfigWatcher { [weak self] fresh in
-            self?.config = fresh
-            self?.applyConfig(fresh)
-            self?.settingsVC.update(config: fresh)
+        configWatcher = ConfigWatcher(url: configURL) { [weak self] fresh in
+            guard let self, fresh != self.config else { return }
+            self.config = fresh
+            self.applyConfig(fresh)
+            self.settingsVC.update(config: fresh)
+            self.configSyncService.configDidChange(fresh)
         }
         if initialConfig.rememberWindowFrame {
             window.setFrameAutosaveName("InkMainWindow")
@@ -95,6 +114,9 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
             window.center()
         }
     }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("代码构建") }
 
     private func applyConfig(_ config: InkConfig) {
         NSApplication.shared.appearance =
@@ -247,6 +269,19 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         settingsVC.onDone = { [weak self] in self?.hideSettings() }
         settingsVC.onOpenConfig = { [weak self] in self?.openConfigFile() }
         settingsVC.onReset = { [weak self] in self?.saveConfig(InkConfig()) }
+        settingsVC.onAutomaticUploadChange = { [weak self] enabled in
+            guard let self else { return }
+            self.configSyncService.setAutomaticUploadEnabled(
+                enabled,
+                currentConfig: self.config
+            )
+            self.updateConfigSyncControls()
+        }
+        settingsVC.onUploadConfig = { [weak self] in self?.uploadConfigToCloud() }
+        settingsVC.onPullConfig = { [weak self] in self?.pullConfigFromCloud() }
+        configSyncService.onStatusChange = { [weak self] _ in
+            self?.updateConfigSyncControls()
+        }
         workspaceVC.onActivatePane = { [weak self] _ in self?.refreshChrome() }
 
         if activeProject?.tabs.isEmpty ?? true, !firstSessionScheduled {
@@ -255,12 +290,23 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         }
     }
 
-    private func saveConfig(_ fresh: InkConfig) {
+    private enum ConfigChangeOrigin {
+        case local
+        case cloud
+    }
+
+    private func saveConfig(
+        _ fresh: InkConfig,
+        origin: ConfigChangeOrigin = .local
+    ) {
         do {
-            try fresh.save()
+            try fresh.save(to: configURL)
             config = fresh
             applyConfig(fresh)
             settingsVC.update(config: fresh)
+            if origin == .local {
+                configSyncService.configDidChange(fresh)
+            }
         } catch {
             guard let window else { return }
             NSAlert(error: error).beginSheetModal(for: window)
@@ -269,8 +315,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
 
     private func openConfigFile() {
         do {
-            try config.save()
-            NSWorkspace.shared.open(InkConfig.defaultURL)
+            try config.save(to: configURL)
+            NSWorkspace.shared.open(configURL)
         } catch {
             guard let window else { return }
             NSAlert(error: error).beginSheetModal(for: window)
@@ -285,10 +331,73 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         isShowingSettings = true
         tabBar.setSettingsSelected(true)
         settingsVC.update(config: config)
+        updateConfigSyncControls()
         terminalWorkspace.isHidden = true
         settingsVC.view.isHidden = false
         window?.makeFirstResponder(settingsVC.view)
         refreshChrome()
+    }
+
+    private func updateConfigSyncControls() {
+        settingsVC.updateSync(
+            automaticUploadEnabled: configSyncService.automaticUploadEnabled,
+            status: configSyncService.status
+        )
+    }
+
+    private func uploadConfigToCloud() {
+        do {
+            let cloud = try configSyncService.readCloudSnapshot()
+            guard let cloud, cloud.config != config else {
+                try configSyncService.upload(config)
+                return
+            }
+            presentSyncConfirmation(
+                message: "上传并覆盖云端配置？",
+                detail: "本机配置将覆盖云端配置。云端快照修改于 \(cloud.modifiedAt.formatted()).",
+                confirmTitle: "上传并覆盖"
+            ) { [weak self] in
+                guard let self else { return }
+                try? self.configSyncService.upload(self.config)
+            }
+        } catch {
+            updateConfigSyncControls()
+        }
+    }
+
+    private func pullConfigFromCloud() {
+        do {
+            guard let cloud = try configSyncService.readCloudSnapshot(),
+                  cloud.config != config else { return }
+            presentSyncConfirmation(
+                message: "拉取并覆盖本机配置？",
+                detail: "云端配置将覆盖此 Mac 的已知设置；config.toml 的注释和未知字段会保留。",
+                confirmTitle: "拉取并覆盖"
+            ) { [weak self] in
+                self?.saveConfig(cloud.config, origin: .cloud)
+            }
+        } catch {
+            updateConfigSyncControls()
+        }
+    }
+
+    private func presentSyncConfirmation(
+        message: String,
+        detail: String,
+        confirmTitle: String,
+        confirmed: @escaping @MainActor () -> Void
+    ) {
+        guard let window else { return }
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.informativeText = detail
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: confirmTitle)
+        alert.beginSheetModal(for: window) { response in
+            guard response == .alertSecondButtonReturn else { return }
+            MainActor.assumeIsolated { confirmed() }
+        }
     }
 
     private func installSettingsViewIfNeeded() {
