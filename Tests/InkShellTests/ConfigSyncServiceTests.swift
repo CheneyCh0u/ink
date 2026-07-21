@@ -132,6 +132,28 @@ struct ConfigSyncServiceTests {
         }
     }
 
+    @Test("新版云端 schema 明确提示更新 Ink")
+    func newerSchemaRequestsAppUpdate() throws {
+        let fixture = makeFixture()
+        defer { fixture.cleanUp() }
+        let snapshot = ConfigSyncSnapshot(
+            config: InkConfig(),
+            modifiedAt: fixture.now,
+            deviceID: "remote-mac"
+        )
+        var root = try #require(
+            JSONSerialization.jsonObject(with: snapshot.encoded()) as? [String: Any]
+        )
+        root["schemaVersion"] = 2
+        fixture.store.values[ConfigSyncService.snapshotKey] = try JSONSerialization
+            .data(withJSONObject: root)
+
+        #expect(throws: ConfigSyncServiceError.updateRequired) {
+            try fixture.service.readCloudSnapshot()
+        }
+        #expect(fixture.service.status == .failed("云端配置来自新版 Ink，请先更新 Ink"))
+    }
+
     private func cloudConfig(in store: MemoryConfigCloudStore) throws -> InkConfig {
         let data = try #require(store.values[ConfigSyncService.snapshotKey])
         return try ConfigSyncSnapshot.decode(data).config

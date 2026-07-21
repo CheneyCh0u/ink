@@ -49,6 +49,7 @@ enum ConfigSyncServiceError: LocalizedError, Equatable {
     case iCloudUnavailable
     case synchronizeFailed
     case invalidSnapshot
+    case updateRequired
 
     var errorDescription: String? {
         switch self {
@@ -58,6 +59,8 @@ enum ConfigSyncServiceError: LocalizedError, Equatable {
             "无法连接 iCloud"
         case .invalidSnapshot:
             "云端配置无法读取"
+        case .updateRequired:
+            "云端配置来自新版 Ink，请先更新 Ink"
         }
     }
 }
@@ -156,6 +159,8 @@ final class ConfigSyncService {
             let snapshot: ConfigSyncSnapshot
             do {
                 snapshot = try ConfigSyncSnapshot.decode(data)
+            } catch ConfigSyncSnapshotError.unsupportedSchema {
+                throw ConfigSyncServiceError.updateRequired
             } catch {
                 throw ConfigSyncServiceError.invalidSnapshot
             }
