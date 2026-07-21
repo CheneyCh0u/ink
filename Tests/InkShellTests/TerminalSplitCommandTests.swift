@@ -1,4 +1,5 @@
 import AppKit
+import InkConfig
 import InkTerminalView
 import Testing
 @testable import InkShell
@@ -25,7 +26,8 @@ struct TerminalSplitCommandTests {
 
     @Test("Command-W 关闭活动 pane 而不是整个标签")
     func closeCommandRemovesOnlyActivePane() throws {
-        let controller = MainWindowController()
+        let presenter = SplitClosePresenter(result: true)
+        let controller = makeController(presenter: presenter)
         let window = try #require(controller.window)
         window.setFrame(NSRect(x: 300, y: 200, width: 1000, height: 700), display: true)
         window.orderFront(nil)
@@ -39,10 +41,55 @@ struct TerminalSplitCommandTests {
 
         controller.closeActivePane(nil)
         spinRunLoop()
+        #expect(presenter.contents.isEmpty)
         #expect(terminalViews(in: window).count == 1)
         #expect(window.isVisible)
 
         window.close()
+    }
+
+    @Test("活跃前台程序取消后保留分屏，确认后才关闭")
+    func activeProgramRequiresConfirmationBeforeClosingPane() throws {
+        let presenter = SplitClosePresenter(result: false)
+        let controller = makeController(presenter: presenter)
+        let window = try #require(controller.window)
+        window.setFrame(NSRect(x: 300, y: 200, width: 1000, height: 700), display: true)
+        window.orderFront(nil)
+        spinRunLoop()
+
+        controller.newSession(nil)
+        spinRunLoop()
+        controller.splitRight(nil)
+        spinRunLoop()
+        let views = terminalViews(in: window)
+        #expect(views.count == 2)
+        for view in views {
+            view.onInput?(Data("sleep 10\r".utf8))
+        }
+        spinRunLoop(cycles: 12)
+
+        controller.closeActivePane(nil)
+        spinRunLoop()
+        #expect(presenter.contents.count == 1)
+        #expect(presenter.contents.first?.destructiveButtonTitle == "关闭分屏")
+        #expect(terminalViews(in: window).count == 2)
+
+        presenter.result = true
+        controller.closeActivePane(nil)
+        spinRunLoop()
+        #expect(terminalViews(in: window).count == 1)
+
+        window.close()
+    }
+
+    private func makeController(presenter: SplitClosePresenter) -> MainWindowController {
+        MainWindowController(
+            initialConfig: InkConfig(),
+            configURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("ink-close-test-\(UUID().uuidString).toml"),
+            configSyncService: ConfigSyncService(),
+            sessionCloseCoordinator: SessionCloseCoordinator(presenter: presenter)
+        )
     }
 
     private func terminalViews(in window: NSWindow) -> [TerminalMetalView] {
@@ -58,5 +105,20 @@ struct TerminalSplitCommandTests {
         for _ in 0..<cycles {
             RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
         }
+    }
+}
+
+@MainActor
+private final class SplitClosePresenter: SessionClosePresenting {
+    var result: Bool
+    var contents: [SessionCloseAlertContent] = []
+
+    init(result: Bool) {
+        self.result = result
+    }
+
+    func confirm(_ content: SessionCloseAlertContent) -> Bool {
+        contents.append(content)
+        return result
     }
 }
