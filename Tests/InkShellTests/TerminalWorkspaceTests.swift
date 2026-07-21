@@ -175,7 +175,8 @@ struct TerminalWorkspaceTests {
         let workspace = TerminalWorkspaceViewController()
 
         workspace.show(tab: firstTab, config: InkConfig())
-        weak let oldContainer = workspace.paneContainer(for: firstPane.id)
+        weak var oldContainer: TerminalPaneContainerView?
+        oldContainer = workspace.paneContainer(for: firstPane.id)
 
         workspace.show(tab: secondTab, config: InkConfig())
 
