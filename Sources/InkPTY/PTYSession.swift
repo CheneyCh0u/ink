@@ -9,6 +9,12 @@ import Foundation
 /// 主线程调用一次。靠这两条约定省掉锁——`@unchecked Sendable` 的依据在此。
 public final class PTYSession: @unchecked Sendable {
 
+    public enum ForegroundProcess: Equatable, Sendable {
+        case exited
+        case shell(name: String)
+        case program(name: String?)
+    }
+
     /// 子进程输出（原始字节，未做任何解析）。主线程回调。
     public var onOutput: (@MainActor @Sendable (Data) -> Void)?
 
@@ -22,6 +28,8 @@ public final class PTYSession: @unchecked Sendable {
     private let queue = DispatchQueue(label: "ink.pty")
     private var masterFD: Int32 = -1
     private var childPID: pid_t = -1
+    private var shellName: String?
+    private var shellProcessGroupID: pid_t?
     private var readSource: DispatchSourceRead?
     private var exitSource: DispatchSourceProcess?
 
@@ -61,6 +69,7 @@ public final class PTYSession: @unchecked Sendable {
         precondition(masterFD < 0, "PTYSession 只能 start 一次")
 
         let shellPath = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        shellName = URL(fileURLWithPath: shellPath).lastPathComponent
         let userName = NSUserName()
 
         // fork 之后到 exec 之间只能调 async-signal-safe 函数，Swift 运行时的
@@ -129,19 +138,77 @@ public final class PTYSession: @unchecked Sendable {
         }
     }
 
-    /// PTY 前台进程组组长的进程名（"zsh"、"vim"…），标签标题用。
-    /// tcgetpgrp + sysctl 两次系统调用，无需 shell 配合。
-    public func foregroundProcessName() -> String? {
-        guard masterFD >= 0 else { return nil }
-        let pgid = tcgetpgrp(masterFD)
-        guard pgid > 0 else { return nil }
-        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pgid]
+    static func classifyForegroundProcess(
+        childPID: pid_t,
+        shellProcessGroupID: pid_t?,
+        shellName: String?,
+        masterIsOpen: Bool,
+        foregroundPGID: pid_t?,
+        foregroundParentPID: pid_t?,
+        foregroundName: String?
+    ) -> ForegroundProcess {
+        guard childPID > 0, masterIsOpen else { return .exited }
+        guard let foregroundPGID, foregroundPGID > 0 else {
+            return .program(name: nil)
+        }
+        let isSpawnedShell = shellProcessGroupID == foregroundPGID
+            || (shellProcessGroupID == nil
+                && (foregroundPGID == childPID || foregroundParentPID == childPID))
+        if isSpawnedShell, let shellName, foregroundName == shellName {
+            return .shell(name: shellName)
+        }
+        return .program(name: foregroundName)
+    }
+
+    private struct ProcessIdentity {
+        let name: String
+        let parentPID: pid_t
+    }
+
+    private func processIdentity(for pid: pid_t) -> ProcessIdentity? {
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
         var info = kinfo_proc()
         var size = MemoryLayout<kinfo_proc>.stride
         guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return nil }
-        return withUnsafeBytes(of: info.kp_proc.p_comm) { raw in
+        let name: String? = withUnsafeBytes(of: info.kp_proc.p_comm) { raw in
             guard let base = raw.bindMemory(to: CChar.self).baseAddress else { return nil }
             return String(cString: base)
+        }
+        guard let name else { return nil }
+        return ProcessIdentity(name: name, parentPID: info.kp_eproc.e_ppid)
+    }
+
+    /// 关闭时读取一次前台进程。查询失败按仍有未知前台程序处理，避免误终止。
+    public func foregroundProcess() -> ForegroundProcess {
+        guard childPID > 0, masterFD >= 0 else { return .exited }
+        let pgid = tcgetpgrp(masterFD)
+        let validPGID: pid_t? = pgid > 0 ? pgid : nil
+        let identity = validPGID.flatMap(processIdentity(for:))
+        let process = Self.classifyForegroundProcess(
+            childPID: childPID,
+            shellProcessGroupID: shellProcessGroupID,
+            shellName: shellName,
+            masterIsOpen: masterFD >= 0,
+            foregroundPGID: validPGID,
+            foregroundParentPID: identity?.parentPID,
+            foregroundName: identity?.name
+        )
+        if shellProcessGroupID == nil, case .shell = process {
+            shellProcessGroupID = validPGID
+        }
+        return process
+    }
+
+    /// PTY 前台进程组组长的进程名（"zsh"、"vim"…），标签标题用。
+    /// tcgetpgrp + sysctl 两次系统调用，无需 shell 配合。
+    public func foregroundProcessName() -> String? {
+        switch foregroundProcess() {
+        case .exited:
+            nil
+        case let .shell(name), let .program(.some(name)):
+            name
+        case .program(nil):
+            nil
         }
     }
 

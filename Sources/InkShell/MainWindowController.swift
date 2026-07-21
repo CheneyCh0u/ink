@@ -1,6 +1,7 @@
 import AppKit
 import InkConfig
 import InkDesign
+import InkPTY
 import InkTerminalView
 import QuartzCore
 import TerminalCore
@@ -42,6 +43,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
     private var config = InkConfig()
     private let configURL: URL
     private let configSyncService: ConfigSyncService
+    private let sessionCloseCoordinator: SessionCloseCoordinator
     private var configWatcher: ConfigWatcher?
     private var sidebarMode: SidebarDisplayMode = .expanded
     private var isShowingSettings = false
@@ -66,7 +68,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
     init(
         initialConfig: InkConfig,
         configURL: URL,
-        configSyncService: ConfigSyncService
+        configSyncService: ConfigSyncService,
+        sessionCloseCoordinator: SessionCloseCoordinator = SessionCloseCoordinator()
     ) {
         let window = NSWindow(
             contentRect: NSRect(
@@ -90,6 +93,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         window.minSize = NSSize(width: 520, height: 320)
         self.configURL = configURL
         self.configSyncService = configSyncService
+        self.sessionCloseCoordinator = sessionCloseCoordinator
         self.config = initialConfig
         super.init(window: window)
         window.delegate = self
@@ -628,6 +632,15 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
     func removeProject(at index: Int) {
         guard projects.indices.contains(index) else { return }
         let project = projects[index]
+        let panes = project.tabs.flatMap(\.allPanes)
+        confirmClose(target: .project, panes: panes) { [weak self] in
+            self?.removeProjectWithoutConfirmation(at: index)
+        }
+    }
+
+    private func removeProjectWithoutConfirmation(at index: Int) {
+        guard projects.indices.contains(index) else { return }
+        let project = projects[index]
         // 先解除回调再终止，避免 onExit 重入标签与布局管理。
         for tab in project.tabs {
             terminate(tab: tab)
@@ -691,11 +704,14 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
             return
         }
         let paneID = tab.activePaneID
-        guard let pane = tab.removePane(paneID) else { return }
-        pane.session.detach()
-        pane.session.terminate()
-        attachActiveTab()
-        refreshChrome()
+        guard let pane = tab.panes[paneID] else { return }
+        confirmClose(target: .pane, panes: [pane]) { [weak self, weak tab] in
+            guard let self, let tab, let removed = tab.removePane(paneID) else { return }
+            removed.session.detach()
+            removed.session.terminate()
+            self.attachActiveTab()
+            self.refreshChrome()
+        }
     }
 
     /// Command-F 只在当前聚焦 pane 打开搜索；已有同 pane 搜索时回到输入框。
@@ -844,9 +860,37 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
 
     private func closeTab(at index: Int) {
         guard let project = activeProject,
-              let tab = project.removeTab(at: index) else { return }
-        terminate(tab: tab)
-        normalizeAfterTabRemoval()
+              project.tabs.indices.contains(index) else { return }
+        let tab = project.tabs[index]
+        confirmClose(target: .tab, panes: tab.allPanes) { [weak self, weak project, weak tab] in
+            guard let self, let project, let tab,
+                  let currentIndex = project.tabs.firstIndex(where: { $0 === tab }),
+                  let removed = project.removeTab(at: currentIndex) else { return }
+            self.terminate(tab: removed)
+            self.normalizeAfterTabRemoval()
+        }
+    }
+
+    private var allPanes: [TerminalPane] {
+        projects.flatMap(\.tabs).flatMap(\.allPanes)
+    }
+
+    private func foregroundProcesses(
+        in panes: [TerminalPane]
+    ) -> [PTYSession.ForegroundProcess] {
+        panes.map { $0.session.foregroundProcess }
+    }
+
+    private func confirmClose(
+        target: SessionCloseTarget,
+        panes: [TerminalPane],
+        action: () -> Void
+    ) {
+        sessionCloseCoordinator.perform(
+            target: target,
+            processes: foregroundProcesses(in: panes),
+            action: action
+        )
     }
 
     private func terminate(tab: TerminalTab) {
@@ -960,6 +1004,18 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
     }
 
     // MARK: - 窗口
+
+    func requestApplicationTermination() -> Bool {
+        sessionCloseCoordinator.requestApplicationTermination(
+            processes: foregroundProcesses(in: allPanes)
+        )
+    }
+
+    public func windowShouldClose(_ sender: NSWindow) -> Bool {
+        sessionCloseCoordinator.allowWindowClose(
+            processes: foregroundProcesses(in: allPanes)
+        )
+    }
 
     public func windowWillClose(_ notification: Notification) {
         cancelSplitShortcut()

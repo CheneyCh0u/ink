@@ -67,6 +67,10 @@ public final class TerminalSession {
         pty.foregroundProcessName()
     }
 
+    var foregroundProcess: PTYSession.ForegroundProcess {
+        pty.foregroundProcess()
+    }
+
     /// 创建分屏时继承当前前台进程的工作目录，查询失败由外壳回退项目目录。
     public var foregroundWorkingDirectory: String? {
         pty.foregroundWorkingDirectory()
