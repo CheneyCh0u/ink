@@ -101,7 +101,14 @@ final class TerminalRenderer {
         CGSize(width: atlas.cellWidth / scale, height: atlas.cellHeight / scale)
     }
 
-    init?(font: NSFont, scale: CGFloat, lineHeightMultiplier: CGFloat = 1.0) {
+    init?(
+        font: NSFont,
+        scale: CGFloat,
+        lineHeightMultiplier: CGFloat = 1.0,
+        cellHeightAdjustment: Int = 0,
+        fontThicken: Bool,
+        fontThickenStrength: Int
+    ) {
         // swift build 不编译 .metal（只有 Xcode 构建系统会），shader 以源码
         // 进 bundle、启动时编译一次。失败原因打到 stderr，方便命令行排查。
         guard
@@ -123,7 +130,10 @@ final class TerminalRenderer {
             let fragmentFn = library.makeFunction(name: "cell_fragment"),
             let atlas = GlyphAtlas(
                 device: device, font: font, scale: scale,
-                lineHeightMultiplier: lineHeightMultiplier
+                lineHeightMultiplier: lineHeightMultiplier,
+                cellHeightAdjustment: cellHeightAdjustment,
+                fontThicken: fontThicken,
+                fontThickenStrength: fontThickenStrength
             )
         else { return nil }
 

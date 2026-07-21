@@ -8,13 +8,57 @@ import Testing
 @MainActor
 struct GlyphAtlasTests {
 
-    private func makeAtlas() -> GlyphAtlas? {
+    @Test("slot 超过固定纹理或容量为零时拒绝布局")
+    func rejectsUnsafeSlotDimensions() {
+        #expect(GlyphAtlasSlotLayout(
+            cellWidth: 1_025,
+            cellHeight: 40,
+            textureSize: 2_048
+        ) == nil)
+        #expect(GlyphAtlasSlotLayout(
+            cellWidth: 20,
+            cellHeight: 2_049,
+            textureSize: 2_048
+        ) == nil)
+        #expect(GlyphAtlasSlotLayout(
+            cellWidth: 0,
+            cellHeight: 40,
+            textureSize: 2_048
+        ) == nil)
+    }
+
+    @Test("合法 slot 始终保留非零容量")
+    func validSlotLayoutHasCapacity() throws {
+        let layout = try #require(GlyphAtlasSlotLayout(
+            cellWidth: 20,
+            cellHeight: 40,
+            textureSize: 2_048
+        ))
+
+        #expect(layout.slotWidth == 40)
+        #expect(layout.slotHeight == 40)
+        #expect(layout.slotColumns > 0)
+        #expect(layout.slotCapacity > 0)
+    }
+
+    private func makeAtlas(fontThicken: Bool = true, strength: Int = 128) -> GlyphAtlas? {
         guard let device = MTLCreateSystemDefaultDevice() else { return nil }
         return GlyphAtlas(
             device: device,
             font: NSFont.monospacedSystemFont(ofSize: 14, weight: .regular),
-            scale: 2
+            scale: 2,
+            fontThicken: fontThicken,
+            fontThickenStrength: strength
         )
+    }
+
+    @Test("字体增粗参数保留在 atlas 栅格化配置中")
+    func fontThickeningOptions() throws {
+        guard let atlas = makeAtlas(fontThicken: true, strength: 128) else { return }
+        #expect(atlas.fontThicken)
+        #expect(atlas.fontThickenStrength == 128)
+        #expect(try #require(atlas.entry(for: "A", bold: false, italic: false)).isColor == false)
+        #expect(try #require(atlas.entry(for: "🚀", bold: false, italic: false)).isColor)
     }
 
     @Test("单 emoji、ZWJ 序列都走彩色图集；拉丁与中文走单色")

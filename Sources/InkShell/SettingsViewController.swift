@@ -30,6 +30,13 @@ final class SettingsViewController: NSViewController {
     private let lineHeightControl = NumericSettingControl(
         value: 1.2, range: 0.8...2, increment: 0.05, decimals: 2, suffix: "×"
     )
+    private let cellHeightControl = NumericSettingControl(
+        value: 1, range: -10...20, increment: 1, decimals: 0, suffix: "px"
+    )
+    private let fontThickenSwitch = NSSwitch()
+    private let fontThickenStrengthControl = NumericSettingControl(
+        value: 128, range: 0...255, increment: 1, decimals: 0, suffix: ""
+    )
     private let themePopUp = NSPopUpButton()
     private let cursorControl = NSSegmentedControl()
     private let cursorBlinkSwitch = NSSwitch()
@@ -157,6 +164,9 @@ final class SettingsViewController: NSViewController {
                 makeRow(title: "字体", detail: "只列出系统中可用的等宽字体。", control: fontCombo),
                 makeRow(title: "字号", detail: nil, control: fontSizeControl),
                 makeRow(title: "行高", detail: "调整字符行之间的呼吸感。", control: lineHeightControl),
+                makeRow(title: "Cell 高度", detail: "微调每行的像素高度。", control: cellHeightControl),
+                makeRow(title: "字体增粗", detail: "让细字重在终端中更清晰。", control: fontThickenSwitch),
+                makeRow(title: "增粗强度", detail: nil, control: fontThickenStrengthControl),
                 preview,
             ]
         ))
@@ -310,10 +320,17 @@ final class SettingsViewController: NSViewController {
         configureSegmented(sidebarControl, labels: ["展开", "图标", "隐藏"], action: #selector(controlChanged))
         configureSegmented(cursorControl, labels: ["方块", "竖线", "下划线"], action: #selector(controlChanged))
 
-        for toggle in [rememberFrameSwitch, cursorBlinkSwitch, optionMetaSwitch, copyOnSelectSwitch] {
+        for toggle in [
+            rememberFrameSwitch,
+            fontThickenSwitch,
+            cursorBlinkSwitch,
+            optionMetaSwitch,
+            copyOnSelectSwitch,
+        ] {
             toggle.target = self
             toggle.action = #selector(controlChanged)
         }
+        fontThickenSwitch.setAccessibilityLabel("字体增粗")
 
         fontCombo.removeAllItems()
         fontCombo.addItem(withObjectValue: "系统等宽")
@@ -338,7 +355,17 @@ final class SettingsViewController: NSViewController {
         themePopUp.action = #selector(controlChanged)
         themePopUp.setAccessibilityLabel("终端配色")
 
-        for number in [windowWidthControl, windowHeightControl, fontSizeControl, lineHeightControl, scrollbackControl] {
+        cellHeightControl.setAccessibilityLabel("Cell 高度")
+        fontThickenStrengthControl.setAccessibilityLabel("增粗强度")
+        for number in [
+            windowWidthControl,
+            windowHeightControl,
+            fontSizeControl,
+            lineHeightControl,
+            cellHeightControl,
+            fontThickenStrengthControl,
+            scrollbackControl,
+        ] {
             number.onChange = { [weak self] in self?.controlChanged() }
         }
     }
@@ -386,6 +413,10 @@ final class SettingsViewController: NSViewController {
         }
         fontSizeControl.value = config.fontSize
         lineHeightControl.value = config.lineHeight
+        cellHeightControl.value = Double(config.fontCellHeightAdjustment)
+        fontThickenSwitch.state = config.fontThicken ? .on : .off
+        fontThickenStrengthControl.value = Double(config.fontThickenStrength)
+        fontThickenStrengthControl.isEnabled = config.fontThicken
         let themeIndex = InkConfig.TerminalTheme.allCases.firstIndex(of: config.terminalTheme) ?? 0
         themePopUp.selectItem(at: themeIndex)
         cursorControl.selectedSegment = switch config.cursorStyle {
@@ -414,6 +445,9 @@ final class SettingsViewController: NSViewController {
             : selectedFamily
         config.fontSize = fontSizeControl.value
         config.lineHeight = lineHeightControl.value
+        config.fontCellHeightAdjustment = Int(cellHeightControl.value.rounded())
+        config.fontThicken = fontThickenSwitch.state == .on
+        config.fontThickenStrength = Int(fontThickenStrengthControl.value.rounded())
         let themes = InkConfig.TerminalTheme.allCases
         config.terminalTheme = themes.indices.contains(themePopUp.indexOfSelectedItem)
             ? themes[themePopUp.indexOfSelectedItem]
@@ -425,6 +459,7 @@ final class SettingsViewController: NSViewController {
         config.scrollbackLines = Int(scrollbackControl.value.rounded())
         windowWidthControl.isEnabled = !config.rememberWindowFrame
         windowHeightControl.isEnabled = !config.rememberWindowFrame
+        fontThickenStrengthControl.isEnabled = config.fontThicken
         updatePreview()
         onChange?(config)
     }

@@ -3,6 +3,7 @@ import InkConfig
 import TerminalCore
 import Testing
 @testable import InkShell
+@testable import InkTerminalView
 
 @Suite("终端分屏工作区")
 @MainActor
@@ -198,6 +199,33 @@ struct TerminalWorkspaceTests {
         config.terminalTheme = .plum
         workspace.apply(config: config)
         #expect(terminalView.terminalTheme == .plum)
+    }
+
+    @Test("字体度量配置应用到已有 pane")
+    func fontMetricsHotReloadUpdatesExistingPane() throws {
+        let pane = makePane()
+        let tab = TerminalTab(initialPane: pane)
+        let workspace = TerminalWorkspaceViewController()
+        var config = InkConfig()
+        config.fontCellHeightAdjustment = 3
+        config.fontThicken = false
+        config.fontThickenStrength = 90
+
+        workspace.show(tab: tab, config: config)
+        let terminalView = try #require(workspace.terminalView(for: pane.id))
+        #expect(terminalView.cellHeightAdjustment == 3)
+        #expect(terminalView.fontThicken == false)
+        #expect(terminalView.fontThickenStrength == 90)
+        let rebuildsBeforeHotReload = terminalView.rendererRebuildAttemptCount
+
+        config.fontCellHeightAdjustment = -2
+        config.fontThicken = true
+        config.fontThickenStrength = 160
+        workspace.apply(config: config)
+        #expect(terminalView.rendererRebuildAttemptCount - rebuildsBeforeHotReload == 1)
+        #expect(terminalView.cellHeightAdjustment == -2)
+        #expect(terminalView.fontThicken)
+        #expect(terminalView.fontThickenStrength == 160)
     }
 
     private func makePane() -> TerminalPane {

@@ -85,6 +85,30 @@ scrollback 槽表采用惰性 256 行分页 COW。后台值快照与主终端共
 后台任务取消会传递到扫描任务，扫描每 128 行/匹配检查一次取消状态，避免
 快速改查询时积压过期全量扫描。超长软折逻辑行的增量重扫也会转入后台。
 
+## 字体度量与增粗
+
+2026-07-21 在 Apple M4 Pro、macOS 27.0、2x 缩放下，对 debug 构建运行
+15 秒 Time Profiler。场景为启动 Ink 后保持终端提示符静止，由光标闪烁触发
+后续帧；trace 位于 `/tmp/ink-font-metrics.trace`，导出的聚合调用栈位于
+`/tmp/ink-font-metrics-time-profile.xml`。
+
+采样在 1.408 秒和 1.940 秒捕获到 `GlyphAtlas.rasterize`，均属于启动后的
+字形图集首次填充。2.540 秒至 15.864 秒持续捕获到 `TerminalMetalView.frameTick`
+和 `TerminalRenderer.render`，这些稳定帧的调用栈没有再出现
+`GlyphAtlas.rasterize` 或 glyph 绘制。整段采样没有出现 `CTLineDraw` 和
+`CGContextSetShouldSmoothFonts`。本次证据支持增粗停留在 atlas 未命中的首次
+栅格化路径，没有进入稳定帧循环。
+
+`xctrace record` 在达到时限并保存 trace 后返回 54；trace 的目录、TOC 和
+`time-profile` 表均可正常导出。TOC 记录的时长为 15.884850 秒，结束原因为
+`Time limit reached`。
+
+同日将当前 `.build/arm64-apple-macosx/debug/ink` 原样放入临时 `.app`，使用
+ad-hoc 签名和 bundle id `com.cheneychou.ink.font-verify-44` 后通过
+Computer Use 启动。终端显示 `/tmp/ink-emoji-44.txt` 时，Maple Mono 文字正常，
+🚀、😀 和 👨‍👩‍👧 保持彩色。截图位于 `/tmp/ink-font-verify-44.png`。这次检查只
+确认当前 debug 二进制的真实界面与彩色 emoji 路径，不代表和 Ghostty 像素级一致。
+
 ## 未完成项
 
 - **120fps 稳定性**：需要 Instruments（Metal System Trace / Time

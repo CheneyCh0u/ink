@@ -4,9 +4,12 @@ import Foundation
 ///
 /// ```toml
 /// [font]
-/// family = "JetBrains Mono"  # 缺省用系统 SF Mono
-/// size = 14.0
-/// line_height = 1.2
+/// family = "Maple Mono NF CN"  # 空字符串用系统 SF Mono
+/// size = 15
+/// line_height = 1
+/// adjust_cell_height = 1
+/// thicken = true
+/// thicken_strength = 128
 ///
 /// [terminal]
 /// theme = "neutral"     # warm | graphite | pine | plum | neutral
@@ -59,10 +62,12 @@ public struct InkConfig: Equatable, Sendable {
     public var windowWidth = 1280
     public var windowHeight = 800
     /// 等宽字体族名。nil = 系统 SF Mono。字体不存在时静默回退系统字体。
-    public var fontFamily: String?
-    public var fontSize: Double = 14
-    /// 行高倍数。SF Mono 原生行距紧凑，1.2 接近 JetBrains Mono 的呼吸感。
-    public var lineHeight: Double = 1.2
+    public var fontFamily: String? = "Maple Mono NF CN"
+    public var fontSize: Double = 15
+    public var lineHeight: Double = 1
+    public var fontCellHeightAdjustment = 1
+    public var fontThicken = true
+    public var fontThickenStrength = 128
     /// 终端配色家族；浅色或深色变体跟随界面外观。
     public var terminalTheme: TerminalTheme = .neutral
     public var cursorStyle: CursorStyle = .block
@@ -104,14 +109,25 @@ public struct InkConfig: Equatable, Sendable {
         if let height = values.int("window.height"), (400...2160).contains(height) {
             config.windowHeight = height
         }
-        if let family = values.string("font.family"), !family.isEmpty {
-            config.fontFamily = family
+        if let family = values.string("font.family") {
+            config.fontFamily = family.isEmpty ? nil : family
         }
         if let size = values.double("font.size"), (6...72).contains(size) {
             config.fontSize = size
         }
         if let lh = values.double("font.line_height"), (0.8...2.0).contains(lh) {
             config.lineHeight = lh
+        }
+        if let adjustment = values.int("font.adjust_cell_height"),
+           (-10...20).contains(adjustment) {
+            config.fontCellHeightAdjustment = adjustment
+        }
+        if let thicken = values.bool("font.thicken") {
+            config.fontThicken = thicken
+        }
+        if let strength = values.int("font.thicken_strength"),
+           (0...255).contains(strength) {
+            config.fontThickenStrength = strength
         }
         if let theme = values.string("terminal.theme"),
            let parsed = TerminalTheme(rawValue: theme) {
@@ -157,6 +173,9 @@ public struct InkConfig: Equatable, Sendable {
             ("font.family", quote(fontFamily ?? "")),
             ("font.size", format(fontSize)),
             ("font.line_height", format(lineHeight)),
+            ("font.adjust_cell_height", "\(fontCellHeightAdjustment)"),
+            ("font.thicken", fontThicken ? "true" : "false"),
+            ("font.thicken_strength", "\(fontThickenStrength)"),
             ("terminal.theme", quote(terminalTheme.rawValue)),
             ("cursor.style", quote(cursorStyle.rawValue)),
             ("cursor.blink", cursorBlink ? "true" : "false"),
