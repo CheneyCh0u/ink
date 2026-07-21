@@ -3,6 +3,7 @@ import InkConfig
 import TerminalCore
 import Testing
 @testable import InkShell
+@testable import InkTerminalView
 
 @Suite("终端分屏工作区")
 @MainActor
@@ -215,11 +216,13 @@ struct TerminalWorkspaceTests {
         #expect(terminalView.cellHeightAdjustment == 3)
         #expect(terminalView.fontThicken == false)
         #expect(terminalView.fontThickenStrength == 90)
+        let rebuildsBeforeHotReload = terminalView.rendererRebuildAttemptCount
 
         config.fontCellHeightAdjustment = -2
         config.fontThicken = true
         config.fontThickenStrength = 160
         workspace.apply(config: config)
+        #expect(terminalView.rendererRebuildAttemptCount - rebuildsBeforeHotReload == 1)
         #expect(terminalView.cellHeightAdjustment == -2)
         #expect(terminalView.fontThicken)
         #expect(terminalView.fontThickenStrength == 160)

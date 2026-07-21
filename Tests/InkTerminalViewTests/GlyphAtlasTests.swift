@@ -8,6 +8,39 @@ import Testing
 @MainActor
 struct GlyphAtlasTests {
 
+    @Test("slot 超过固定纹理或容量为零时拒绝布局")
+    func rejectsUnsafeSlotDimensions() {
+        #expect(GlyphAtlasSlotLayout(
+            cellWidth: 1_025,
+            cellHeight: 40,
+            textureSize: 2_048
+        ) == nil)
+        #expect(GlyphAtlasSlotLayout(
+            cellWidth: 20,
+            cellHeight: 2_049,
+            textureSize: 2_048
+        ) == nil)
+        #expect(GlyphAtlasSlotLayout(
+            cellWidth: 0,
+            cellHeight: 40,
+            textureSize: 2_048
+        ) == nil)
+    }
+
+    @Test("合法 slot 始终保留非零容量")
+    func validSlotLayoutHasCapacity() throws {
+        let layout = try #require(GlyphAtlasSlotLayout(
+            cellWidth: 20,
+            cellHeight: 40,
+            textureSize: 2_048
+        ))
+
+        #expect(layout.slotWidth == 40)
+        #expect(layout.slotHeight == 40)
+        #expect(layout.slotColumns > 0)
+        #expect(layout.slotCapacity > 0)
+    }
+
     private func makeAtlas(fontThicken: Bool = true, strength: Int = 128) -> GlyphAtlas? {
         guard let device = MTLCreateSystemDefaultDevice() else { return nil }
         return GlyphAtlas(

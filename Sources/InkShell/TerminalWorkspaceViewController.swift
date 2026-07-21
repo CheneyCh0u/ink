@@ -271,12 +271,14 @@ final class TerminalWorkspaceViewController: NSViewController {
     }
 
     private func apply(config: InkConfig, to terminalView: TerminalMetalView) {
-        terminalView.fontFamily = config.fontFamily
-        terminalView.lineHeightMultiplier = CGFloat(config.lineHeight)
-        terminalView.fontSize = CGFloat(config.fontSize)
-        terminalView.cellHeightAdjustment = config.fontCellHeightAdjustment
-        terminalView.fontThicken = config.fontThicken
-        terminalView.fontThickenStrength = config.fontThickenStrength
+        terminalView.apply(fontConfiguration: TerminalFontConfiguration(
+            fontFamily: config.fontFamily,
+            fontSize: CGFloat(config.fontSize),
+            lineHeightMultiplier: CGFloat(config.lineHeight),
+            cellHeightAdjustment: config.fontCellHeightAdjustment,
+            fontThicken: config.fontThicken,
+            fontThickenStrength: config.fontThickenStrength
+        ))
         terminalView.terminalTheme =
             InkTerminalTheme(rawValue: config.terminalTheme.rawValue) ?? .neutral
         terminalView.cursorStyle = switch config.cursorStyle {

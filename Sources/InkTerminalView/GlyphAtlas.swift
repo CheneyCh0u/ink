@@ -1,6 +1,36 @@
 import AppKit
 import Metal
 
+/// 把 cell 度量转换为固定 atlas 的槽位；非法输入在任何除法或上传前失败。
+struct GlyphAtlasSlotLayout: Equatable {
+    let slotWidth: Int
+    let slotHeight: Int
+    let slotColumns: Int
+    let slotCapacity: Int
+
+    init?(cellWidth: CGFloat, cellHeight: CGFloat, textureSize: Int) {
+        guard textureSize > 0,
+              cellWidth.isFinite,
+              cellHeight.isFinite,
+              cellWidth >= 1,
+              cellHeight >= 1,
+              cellWidth * 2 <= CGFloat(textureSize),
+              cellHeight <= CGFloat(textureSize)
+        else { return nil }
+
+        let slotWidth = Int(cellWidth) * 2
+        let slotHeight = Int(cellHeight)
+        let slotColumns = textureSize / slotWidth
+        let slotRows = textureSize / slotHeight
+        guard slotColumns > 0, slotRows > 0 else { return nil }
+
+        self.slotWidth = slotWidth
+        self.slotHeight = slotHeight
+        self.slotColumns = slotColumns
+        slotCapacity = slotColumns * slotRows
+    }
+}
+
 /// 字形图集：CoreText 栅格化 → 定宽槽位 → 两张纹理。
 ///
 /// - 单色字形进 A8 纹理（fragment 拿 `.r` 当 coverage）
@@ -31,8 +61,7 @@ final class GlyphAtlas {
     /// 单色字形首次栅格化时使用的 CoreGraphics 字体平滑配置。
     let fontThicken: Bool
     let fontThickenStrength: Int
-    private let baselineFromBottom: CGFloat
-    private let scale: CGFloat
+    private let rasterizer: GlyphBitmapRasterizer
 
     // MARK: - 纹理与槽位
 
@@ -50,8 +79,6 @@ final class GlyphAtlas {
     private var colorNext = 0
     private var entries: [Key: Entry] = [:]
 
-    private let fonts: (regular: NSFont, bold: NSFont, italic: NSFont, boldItalic: NSFont)
-
     init?(
         device: MTLDevice,
         font: NSFont,
@@ -61,7 +88,6 @@ final class GlyphAtlas {
         fontThicken: Bool,
         fontThickenStrength: Int
     ) {
-        self.scale = scale
         self.fontThicken = fontThicken
         self.fontThickenStrength = fontThickenStrength
 
@@ -73,18 +99,23 @@ final class GlyphAtlas {
         )
         cellWidth = metrics.cellWidth
         cellHeight = metrics.cellHeight
-        baselineFromBottom = metrics.baselineFromBottom
-
-        slotWidth = Int(cellWidth) * 2
-        slotHeight = Int(cellHeight)
-        slotColumns = Self.textureSize / slotWidth
-        slotCapacity = slotColumns * (Self.textureSize / slotHeight)
-
-        let manager = NSFontManager.shared
-        let bold = manager.convert(font, toHaveTrait: .boldFontMask)
-        let italic = manager.convert(font, toHaveTrait: .italicFontMask)
-        let boldItalic = manager.convert(bold, toHaveTrait: .italicFontMask)
-        fonts = (font, bold, italic, boldItalic)
+        guard let slotLayout = GlyphAtlasSlotLayout(
+            cellWidth: cellWidth,
+            cellHeight: cellHeight,
+            textureSize: Self.textureSize
+        ) else { return nil }
+        slotWidth = slotLayout.slotWidth
+        slotHeight = slotLayout.slotHeight
+        slotColumns = slotLayout.slotColumns
+        slotCapacity = slotLayout.slotCapacity
+        rasterizer = GlyphBitmapRasterizer(
+            font: font,
+            scale: scale,
+            lineHeightMultiplier: lineHeightMultiplier,
+            cellHeightAdjustment: cellHeightAdjustment,
+            fontThicken: fontThicken,
+            fontThickenStrength: fontThickenStrength
+        )
 
         let monoDesc = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .r8Unorm,
@@ -125,36 +156,10 @@ final class GlyphAtlas {
            BlockElements.contains(scalar) {
             return rasterizeBlockElement(scalar)
         }
-        let font: NSFont =
-            switch (bold, italic) {
-            case (false, false): fonts.regular
-            case (true, false): fonts.bold
-            case (false, true): fonts.italic
-            case (true, true): fonts.boldItalic
-            }
-
-        let attributed = NSAttributedString(string: text, attributes: [
-            .font: font,
-            kCTForegroundColorFromContextAttributeName as NSAttributedString.Key: true,
-        ])
-        let line = CTLineCreateWithAttributedString(attributed)
-
-        // 彩色判定：看字体的 colorGlyphs trait，不比家族名——ZWJ 序列可能
-        // 落到私有变体字体（家族名不是 "Apple Color Emoji"），比名字会漏，
-        // 漏了的 emoji 会被当 alpha 蒙版染成前景色的剪影。
-        var isColor = false
-        if let runs = CTLineGetGlyphRuns(line) as? [CTRun] {
-            for run in runs {
-                let attrs = CTRunGetAttributes(run) as NSDictionary
-                if let runFont = attrs[kCTFontAttributeName] {
-                    let traits = CTFontGetSymbolicTraits(runFont as! CTFont)
-                    if traits.contains(.traitColorGlyphs) {
-                        isColor = true
-                        break
-                    }
-                }
-            }
+        guard let bitmap = rasterizer.rasterize(text: text, bold: bold, italic: italic) else {
+            return nil
         }
+        let isColor = bitmap.format == .colorBGRA
 
         // 槽位打满整体重置：缓存清空后按需回填，一帧内自愈。
         if (isColor ? colorNext : monoNext) >= slotCapacity {
@@ -167,13 +172,12 @@ final class GlyphAtlas {
         let slotX = (slot % slotColumns) * slotWidth
         let slotY = (slot / slotColumns) * slotHeight
 
-        guard let bitmap = drawLine(line, isColor: isColor) else { return nil }
         guard let texture = isColor ? ensureColorTexture() : monoTexture else { return nil }
         texture.replace(
             region: MTLRegionMake2D(slotX, slotY, slotWidth, slotHeight),
             mipmapLevel: 0,
-            withBytes: bitmap,
-            bytesPerRow: slotWidth * (isColor ? 4 : 1)
+            withBytes: bitmap.bytes,
+            bytesPerRow: bitmap.bytesPerRow
         )
         if isColor { colorNext += 1 } else { monoNext += 1 }
 
@@ -224,60 +228,4 @@ final class GlyphAtlas {
         )
     }
 
-    /// 把 CTLine 画进槽位大小的位图。返回行主序像素（顶行在前，可直接进纹理）。
-    private func drawLine(_ line: CTLine, isColor: Bool) -> [UInt8]? {
-        let width = slotWidth
-        let height = slotHeight
-        let bytesPerRow = width * (isColor ? 4 : 1)
-        var bitmap = [UInt8](repeating: 0, count: bytesPerRow * height)
-
-        let ok = bitmap.withUnsafeMutableBytes { raw -> Bool in
-            let context: CGContext?
-            if isColor {
-                context = CGContext(
-                    data: raw.baseAddress, width: width, height: height,
-                    bitsPerComponent: 8, bytesPerRow: bytesPerRow,
-                    space: CGColorSpaceCreateDeviceRGB(),
-                    bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
-                        | CGBitmapInfo.byteOrder32Little.rawValue
-                )
-            } else {
-                // alpha-only 与 .r8Unorm 图集一一对应：每像素一个 coverage byte。
-                // Swift overlay 不接受 nil 色彩空间；使用 Ghostty 同样的线性灰度空间。
-                let monoColorSpace = CGColorSpace(name: CGColorSpace.linearGray)
-                    ?? CGColorSpaceCreateDeviceGray()
-                context = CGContext(
-                    data: raw.baseAddress, width: width, height: height,
-                    bitsPerComponent: 8, bytesPerRow: bytesPerRow,
-                    space: monoColorSpace,
-                    bitmapInfo: CGImageAlphaInfo.alphaOnly.rawValue
-                )
-            }
-            guard let ctx = context else { return false }
-            // CG 原点在左下。字形按 pt 排版，整个上下文放大到物理像素。
-            ctx.scaleBy(x: scale, y: scale)
-            if isColor {
-                ctx.setFillColor(.white)
-            } else {
-                ctx.setAllowsFontSmoothing(true)
-                ctx.setShouldSmoothFonts(fontThicken)
-                ctx.setAllowsFontSubpixelPositioning(true)
-                ctx.setShouldSubpixelPositionFonts(true)
-                ctx.setAllowsFontSubpixelQuantization(false)
-                ctx.setShouldSubpixelQuantizeFonts(false)
-                ctx.setAllowsAntialiasing(true)
-                ctx.setShouldAntialias(true)
-                let strength = CGFloat(fontThickenStrength) / 255
-                ctx.setFillColor(gray: strength, alpha: 1)
-                ctx.setStrokeColor(gray: strength, alpha: 1)
-            }
-            ctx.textPosition = CGPoint(x: 0, y: baselineFromBottom / scale)
-            CTLineDraw(line, ctx)
-            return true
-        }
-        guard ok else { return nil }
-        // CG 位图内存顶行在前，与 Metal 纹理的行序一致，直接上传。
-        // （坐标系 y 朝上只影响绘制时的定位，不影响内存行序。）
-        return bitmap
-    }
 }

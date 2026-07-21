@@ -23,34 +23,73 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
 
     // MARK: - 配置项（外壳从 InkConfig 映射进来）
 
-    /// 终端字号。变更即重建渲染器与 atlas。
-    public var fontSize: CGFloat = 14 {
-        didSet { if fontSize != oldValue { rebuildRenderer() } }
+    public private(set) var fontConfiguration = TerminalFontConfiguration()
+
+    /// 终端字号。单项调用保留原有的立即重建行为。
+    public var fontSize: CGFloat {
+        get { fontConfiguration.fontSize }
+        set {
+            var next = fontConfiguration
+            next.fontSize = newValue
+            apply(fontConfiguration: next)
+        }
     }
 
     /// 等宽字体族。nil = 系统 SF Mono；名字无效静默回退。
     public var fontFamily: String? {
-        didSet { if fontFamily != oldValue { rebuildRenderer() } }
+        get { fontConfiguration.fontFamily }
+        set {
+            var next = fontConfiguration
+            next.fontFamily = newValue
+            apply(fontConfiguration: next)
+        }
     }
 
     /// 行高倍数（1.0 = 字体原生行高）。
-    public var lineHeightMultiplier: CGFloat = 1.2 {
-        didSet { if lineHeightMultiplier != oldValue { rebuildRenderer() } }
+    public var lineHeightMultiplier: CGFloat {
+        get { fontConfiguration.lineHeightMultiplier }
+        set {
+            var next = fontConfiguration
+            next.lineHeightMultiplier = newValue
+            apply(fontConfiguration: next)
+        }
     }
 
     /// 每个 cell 额外增加的物理像素高度。
-    public var cellHeightAdjustment = 1 {
-        didSet { if cellHeightAdjustment != oldValue { rebuildRenderer() } }
+    public var cellHeightAdjustment: Int {
+        get { fontConfiguration.cellHeightAdjustment }
+        set {
+            var next = fontConfiguration
+            next.cellHeightAdjustment = newValue
+            apply(fontConfiguration: next)
+        }
     }
 
     /// 使用 CoreGraphics 字体平滑增加单色字形的视觉字重。
-    public var fontThicken = true {
-        didSet { if fontThicken != oldValue { rebuildRenderer() } }
+    public var fontThicken: Bool {
+        get { fontConfiguration.fontThicken }
+        set {
+            var next = fontConfiguration
+            next.fontThicken = newValue
+            apply(fontConfiguration: next)
+        }
     }
 
-    /// 字体增粗强度，范围由配置层限制为 0...255。
-    public var fontThickenStrength = 128 {
-        didSet { if fontThickenStrength != oldValue { rebuildRenderer() } }
+    /// 字体增粗强度。
+    public var fontThickenStrength: Int {
+        get { fontConfiguration.fontThickenStrength }
+        set {
+            var next = fontConfiguration
+            next.fontThickenStrength = newValue
+            apply(fontConfiguration: next)
+        }
+    }
+
+    /// 一次替换全部字体配置，变化时最多重建一次 renderer 与 atlas。
+    public func apply(fontConfiguration: TerminalFontConfiguration) {
+        guard fontConfiguration != self.fontConfiguration else { return }
+        self.fontConfiguration = fontConfiguration
+        rebuildRenderer()
     }
 
     /// 终端配色家族。切换时只更新 renderer 的调色板 uniform，不重建 glyph atlas。
@@ -88,6 +127,8 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     private var cursorOn = true
     private var lastBlinkFlip = CACurrentMediaTime()
     private var lastGridSize: TerminalSize?
+    /// 记录重建事务边界，供回归测试确认批量字体应用没有退化为多次重建。
+    private(set) var rendererRebuildAttemptCount = 0
 
     /// 当前按视图尺寸算出的格数（布局未就绪时为 nil）。
     public var currentGridSize: TerminalSize? { lastGridSize }
@@ -250,6 +291,7 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     }
 
     private func rebuildRenderer() {
+        rendererRebuildAttemptCount &+= 1
         guard let window else { return }
         let scale = window.backingScaleFactor
         let font = fontFamily.flatMap { NSFont(name: $0, size: fontSize) }

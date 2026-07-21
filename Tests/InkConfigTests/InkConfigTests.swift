@@ -92,6 +92,20 @@ struct InkConfigTests {
         #expect(config == InkConfig())
     }
 
+    @Test("空字体族迁移为显式系统等宽选择")
+    func emptyFontFamilyLoadsAsSystemMonospace() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ink-empty-font-family-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent("config.toml")
+        try """
+        [font]
+        family = ""
+        """.write(to: file, atomically: true, encoding: .utf8)
+
+        #expect(InkConfig.load(from: file).fontFamily == nil)
+    }
+
     @Test("合法配置逐项覆盖，非法值回默认")
     func loadAndClamp() throws {
         let dir = FileManager.default.temporaryDirectory
