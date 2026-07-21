@@ -117,6 +117,7 @@ struct ProjectSidebarLayoutTests {
         let initialTitleFrame = title.convert(title.bounds, to: rowView)
         let initialDetailFrame = detail.convert(detail.bounds, to: rowView)
         let initialStatusFrame = status.convert(status.bounds, to: rowView)
+        let closeButtonFrame = closeButton.convert(closeButton.bounds, to: rowView)
         let event = try #require(
             NSEvent.mouseEvent(
                 with: .mouseMoved,
@@ -134,6 +135,11 @@ struct ProjectSidebarLayoutTests {
         #expect(detail.lineBreakMode == NSLineBreakMode.byTruncatingHead)
         #expect(detail.frame.width < detail.intrinsicContentSize.width)
         #expect(status.frame.width >= status.intrinsicContentSize.width - 0.5)
+        #expect(status.alignment == .right)
+        #expect(
+            closeButtonFrame.minX - initialStatusFrame.maxX
+                <= InkDesignTokens.Spacing.xs + 0.5
+        )
         #expect(!closeButton.isHidden)
         #expect(closeButton.alphaValue == 0)
 

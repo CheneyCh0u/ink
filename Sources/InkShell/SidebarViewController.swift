@@ -329,6 +329,7 @@ private final class ProjectRowView: NSView, NSDraggingSource {
         let status = NSTextField(labelWithString: row.status)
         status.font = InkDesignTokens.Typography.label
         status.textColor = InkDesignTokens.Color.textSecondary
+        status.alignment = .right
         status.setContentHuggingPriority(.required, for: .horizontal)
         status.setContentCompressionResistancePriority(.required, for: .horizontal)
 
