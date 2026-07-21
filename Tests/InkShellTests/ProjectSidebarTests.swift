@@ -6,6 +6,26 @@ import Testing
 
 @Suite("项目侧边栏")
 struct ProjectSidebarTests {
+    @Test("项目侧边栏拆分最终目录名与父路径")
+    @MainActor
+    func projectSidebarPathComponents() {
+        let project = Project(
+            directory: URL(fileURLWithPath: "/Users/cheney/work/code/wiselaw/wise-studio")
+        )
+
+        #expect(project.sidebarTitle == "wise-studio")
+        #expect(project.sidebarParentPath == "~/work/code/wiselaw")
+    }
+
+    @Test("用户主目录在侧边栏继续显示波浪号")
+    @MainActor
+    func homeProjectSidebarPath() {
+        let project = Project(directory: FileManager.default.homeDirectoryForCurrentUser)
+
+        #expect(project.sidebarTitle == "~")
+        #expect(project.sidebarParentPath.isEmpty)
+    }
+
     @Test("旧版项目元数据缺少颜色时仍可解码")
     func legacyProjectMetadataDecodes() throws {
         let data = Data(#"{"path":"~/work/ink","pinned":false,"note":null}"#.utf8)
