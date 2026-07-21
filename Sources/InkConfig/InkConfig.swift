@@ -40,6 +40,9 @@ import Foundation
 /// ```
 public struct InkConfig: Equatable, Sendable {
 
+    public static let defaultFontSize = 15.0
+    public static let fontSizeRange = 6.0...72.0
+
     public enum AppearanceMode: String, CaseIterable, Sendable {
         case system, light, dark
     }
@@ -63,7 +66,7 @@ public struct InkConfig: Equatable, Sendable {
     public var windowHeight = 800
     /// 等宽字体族名。nil = 系统 SF Mono。字体不存在时静默回退系统字体。
     public var fontFamily: String? = "Maple Mono NF CN"
-    public var fontSize: Double = 15
+    public var fontSize = InkConfig.defaultFontSize
     public var lineHeight: Double = 1
     public var fontCellHeightAdjustment = 1
     public var fontThicken = true
@@ -112,7 +115,7 @@ public struct InkConfig: Equatable, Sendable {
         if let family = values.string("font.family") {
             config.fontFamily = family.isEmpty ? nil : family
         }
-        if let size = values.double("font.size"), (6...72).contains(size) {
+        if let size = values.double("font.size"), Self.fontSizeRange.contains(size) {
             config.fontSize = size
         }
         if let lh = values.double("font.line_height"), (0.8...2.0).contains(lh) {
