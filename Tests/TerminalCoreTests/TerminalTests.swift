@@ -192,9 +192,32 @@ struct TerminalSemanticTests {
     func osc133Semantic() {
         var (parser, term) = makeTerminal()
         feed("\u{1B}]133;A\u{07}$ ", &parser, &term)
-        #expect(term.grid.info(ofRow: 0).semantic == SemanticMark.prompt.rawValue)
+        #expect(term.grid.info(ofRow: 0).semanticMark == .prompt)
+        #expect(term.grid.info(ofRow: 0).semanticTransitionColumn == 0)
+        feed("\u{1B}]133;B\u{07}echo hi", &parser, &term)
+        #expect(term.grid.info(ofRow: 0).semanticMark == .command)
+        #expect(term.grid.info(ofRow: 0).semanticTransitionColumn == 2)
         feed("\u{1B}]133;C\u{07}\r\nout", &parser, &term)
-        #expect(term.grid.info(ofRow: 1).semantic == SemanticMark.output.rawValue)
+        #expect(term.grid.info(ofRow: 0).semanticMark == .output)
+        #expect(term.grid.info(ofRow: 0).semanticTransitionColumn == 9)
+        #expect(term.grid.info(ofRow: 1).semanticMark == .output)
+        #expect(term.grid.info(ofRow: 1).semanticTransitionColumn == nil)
+    }
+
+    @Test("未知 OSC 133 子命令不伪造语义转换点")
+    func unknownOSC133DoesNotStampTransition() {
+        var (parser, term) = makeTerminal()
+        feed("\u{1B}]133;A\u{07}$ \u{1B}]133;Z\u{07}", &parser, &term)
+        #expect(term.grid.info(ofRow: 0).semanticMark == .prompt)
+        #expect(term.grid.info(ofRow: 0).semanticTransitionColumn == 0)
+    }
+
+    @Test("延迟折行时 OSC 133 边界落在行尾之后")
+    func osc133AfterPendingWrap() {
+        var (parser, term) = makeTerminal(columns: 4, rows: 3)
+        feed("1234\u{1B}]133;B\u{07}x", &parser, &term)
+        #expect(term.grid.info(ofRow: 0).semanticTransitionColumn == 4)
+        #expect(term.grid.info(ofRow: 1).semanticMark == .command)
     }
 
     @Test("DSR 光标位置查询有应答——TUI 探测卡死的根源")

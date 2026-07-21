@@ -68,6 +68,19 @@ struct ReflowTests {
         #expect(term.grid.info(ofRow: 1).semantic == SemanticMark.output.rawValue)
     }
 
+    @Test("语义转换列随 reflow 移到对应重折块")
+    func semanticTransitionSurvivesReflow() {
+        var (parser, term) = makeTerminal(columns: 20, rows: 4)
+        feed("123456789012\u{1B}]133;B\u{07}command", &parser, &term)
+
+        term.resize(to: TerminalSize(columns: 10, rows: 4))
+
+        #expect(term.grid.info(ofRow: 0).semanticMark == .prompt)
+        #expect(term.grid.info(ofRow: 0).semanticTransitionColumn == nil)
+        #expect(term.grid.info(ofRow: 1).semanticMark == .command)
+        #expect(term.grid.info(ofRow: 1).semanticTransitionColumn == 2)
+    }
+
     @Test("备用屏不 reflow，只裁剪")
     func altScreenSkipsReflow() {
         var (parser, term) = makeTerminal(columns: 20, rows: 4)

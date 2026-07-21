@@ -67,18 +67,59 @@ public struct Cell: Sendable, Equatable {
 }
 
 /// 每行 2 字节元数据：reflow 与 OSC 133 的落点，见 docs/grid-design.md。
+///
+/// 位布局：bit 0 是软折行，bit 1...2 是当前语义，bit 3...15 是可选的
+/// 语义转换列加一。复用原有 16 位后，即使 10 万行历史也不增加常驻内存；
+/// 13 位列号可覆盖最多 8191 列，远高于实际终端宽度。
 public struct RowInfo: Sendable, Equatable {
-    public var flags: UInt8
-    /// OSC 133 语义：`SemanticMark` 的原始值。
-    public var semantic: UInt8
+    private var rawValue: UInt16
 
     /// 本行是上一行的软折行延续。M6 reflow 靠它把逻辑行拼回去。
     public static let wrapped: UInt8 = 1 << 0
+    private static let flagMask: UInt16 = 0b1
+    private static let semanticShift: UInt16 = 1
+    private static let semanticMask: UInt16 = 0b11 << semanticShift
+    private static let transitionShift: UInt16 = 3
+    private static let transitionMask: UInt16 = 0x1FFF << transitionShift
+    private static let maxTransitionColumn = 8190
+
+    public var flags: UInt8 {
+        get { UInt8(rawValue & Self.flagMask) }
+        set { rawValue = (rawValue & ~Self.flagMask) | UInt16(newValue & Self.wrapped) }
+    }
+
+    /// OSC 133 语义：`SemanticMark` 的原始值。保留原接口供冷路径查询。
+    public var semantic: UInt8 {
+        get { UInt8((rawValue & Self.semanticMask) >> Self.semanticShift) }
+        set {
+            rawValue = (rawValue & ~Self.semanticMask)
+                | ((UInt16(newValue) & 0b11) << Self.semanticShift)
+        }
+    }
+
+    public var semanticMark: SemanticMark {
+        SemanticMark(rawValue: semantic) ?? .none
+    }
+
+    /// 本行从该列开始进入 `semanticMark`；nil 表示整行继承该语义。
+    public var semanticTransitionColumn: Int? {
+        get {
+            let encoded = Int((rawValue & Self.transitionMask) >> Self.transitionShift)
+            return encoded == 0 ? nil : encoded - 1
+        }
+        set {
+            let encoded = newValue.map { min(max($0, 0), Self.maxTransitionColumn) + 1 } ?? 0
+            rawValue = (rawValue & ~Self.transitionMask)
+                | (UInt16(encoded) << Self.transitionShift)
+        }
+    }
 
     @inline(__always)
-    public init(flags: UInt8 = 0, semantic: UInt8 = 0) {
+    public init(flags: UInt8 = 0, semantic: UInt8 = 0, semanticTransitionColumn: Int? = nil) {
+        rawValue = 0
         self.flags = flags
         self.semantic = semantic
+        self.semanticTransitionColumn = semanticTransitionColumn
     }
 
     @inline(__always)
@@ -93,4 +134,15 @@ public enum SemanticMark: UInt8, Sendable {
     case prompt = 1
     case command = 2
     case output = 3
+
+    /// OSC 133 标准顺序里，转换点之前的段落语义。用于 reflow 后转换点
+    /// 跨越物理行边界时给前一块恢复正确分类。
+    var predecessor: SemanticMark {
+        switch self {
+        case .prompt: .output
+        case .command: .prompt
+        case .output: .command
+        case .none: .output
+        }
+    }
 }

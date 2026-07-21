@@ -104,6 +104,35 @@ final class TerminalWorkspaceViewController: NSViewController {
         terminalView(for: paneID)?.markDirty()
     }
 
+    private var activeTerminalView: TerminalMetalView? {
+        guard let paneID = currentTab?.activePaneID else { return nil }
+        return terminalView(for: paneID)
+    }
+
+    @discardableResult
+    func previousCommandInActivePane() -> Bool {
+        activeTerminalView?.navigateToPreviousCommand() ?? false
+    }
+
+    @discardableResult
+    func nextCommandInActivePane() -> Bool {
+        activeTerminalView?.navigateToNextCommand() ?? false
+    }
+
+    @discardableResult
+    func copyCommandInActivePane() -> Bool {
+        activeTerminalView?.copyCurrentCommand() ?? false
+    }
+
+    @discardableResult
+    func copyCommandOutputInActivePane() -> Bool {
+        activeTerminalView?.copyCurrentCommandOutput() ?? false
+    }
+
+    var canPerformCommandBlockAction: Bool {
+        activeTerminalView?.hasCommandBlocks ?? false
+    }
+
     func refreshSearch(for paneID: PaneID) {
         guard activeSearchPaneID == paneID else { return }
         searchController?.scheduleRefreshForTerminalUpdate()

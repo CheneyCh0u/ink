@@ -720,6 +720,26 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         _ = workspaceVC.openSearch(for: window?.firstResponder)
     }
 
+    @objc public func previousCommand(_ sender: Any?) {
+        guard !isShowingSettings else { return }
+        _ = workspaceVC.previousCommandInActivePane()
+    }
+
+    @objc public func nextCommand(_ sender: Any?) {
+        guard !isShowingSettings else { return }
+        _ = workspaceVC.nextCommandInActivePane()
+    }
+
+    @objc public func copyCommand(_ sender: Any?) {
+        guard !isShowingSettings else { return }
+        _ = workspaceVC.copyCommandInActivePane()
+    }
+
+    @objc public func copyCommandOutput(_ sender: Any?) {
+        guard !isShowingSettings else { return }
+        _ = workspaceVC.copyCommandOutputInActivePane()
+    }
+
     private func splitActivePane(direction: PaneSplitDirection) {
         guard !isShowingSettings,
               let project = activeProject,
@@ -1049,6 +1069,13 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         }
         if action == #selector(findInActivePane(_:)) {
             return !isShowingSettings && workspaceVC.canOpenSearch(for: window?.firstResponder)
+        }
+        let commandBlockActions = [
+            #selector(previousCommand(_:)), #selector(nextCommand(_:)),
+            #selector(copyCommand(_:)), #selector(copyCommandOutput(_:)),
+        ]
+        if commandBlockActions.contains(action) {
+            return !isShowingSettings && workspaceVC.canPerformCommandBlockAction
         }
         return true
     }

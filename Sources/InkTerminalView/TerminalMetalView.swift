@@ -22,6 +22,12 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     public var searchResultsProvider: (() -> ([TerminalSearchMatch], Int?))?
     /// 危险粘贴确认可替换，测试不弹真实窗口。
     var safePastePresenter: any SafePastePresenting = NSAlertSafePastePresenter()
+    /// 默认按需写系统剪贴板；测试替换闭包，避免创建视图就触碰全局 AppKit 状态。
+    var pasteboardWriter: (String) -> Bool = { text in
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        return pasteboard.setString(text, forType: .string)
+    }
 
     // MARK: - 配置项（外壳从 InkConfig 映射进来）
 
@@ -166,6 +172,12 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     private var selection: SelectionRange?
     private var searchResults: [TerminalSearchMatch] = []
     private var currentSearchIndex: Int?
+    private var commandNavigationAnchor: (lineID: UInt64, layoutRevision: UInt64)?
+
+    var commandNavigationLine: Int? {
+        guard let terminal = terminalProvider?() else { return nil }
+        return resolvedCommandNavigationLine(in: terminal)
+    }
 
     /// 仅供搜索定位测试读取；搜索和普通滚轮共用同一个历史视口。
     var searchScrollOffset: Int { scrollOffset }
@@ -210,6 +222,7 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         markedText = ""
         searchResults.removeAll(keepingCapacity: false)
         currentSearchIndex = nil
+        commandNavigationAnchor = nil
         searchResultsProvider = nil
         markDirty()
     }
@@ -237,6 +250,109 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
             terminal.scrollback.count
         ))
         markDirty()
+    }
+
+    /// 从当前导航锚点向前跳；首次调用从终端末尾选择最近的完整命令。
+    @discardableResult
+    public func navigateToPreviousCommand() -> Bool {
+        guard let terminal = terminalProvider?() else { return false }
+        let blocks = terminal.commandBlocks()
+        if commandNavigationAnchor != nil,
+           resolvedCommandNavigationLine(in: terminal) == nil {
+            commandNavigationAnchor = nil
+        }
+        let reference = resolvedCommandNavigationLine(in: terminal) ?? terminal.totalLines
+        guard let block = blocks.last(where: { $0.commandRange.start.line < reference }) else {
+            return false
+        }
+        revealCommand(block, in: terminal)
+        return true
+    }
+
+    /// 从当前导航锚点向后跳；首次调用以当前视口顶部为起点。
+    @discardableResult
+    public func navigateToNextCommand() -> Bool {
+        guard let terminal = terminalProvider?() else { return false }
+        let blocks = terminal.commandBlocks()
+        if commandNavigationAnchor != nil,
+           resolvedCommandNavigationLine(in: terminal) == nil {
+            commandNavigationAnchor = nil
+        }
+        let reference = resolvedCommandNavigationLine(in: terminal)
+            ?? searchViewportLineRange(in: terminal).lowerBound
+        guard let block = blocks.first(where: { $0.commandRange.start.line > reference }) else {
+            return false
+        }
+        revealCommand(block, in: terminal)
+        return true
+    }
+
+    @discardableResult
+    public func copyCurrentCommand() -> Bool {
+        copyCommandPart(\.commandRange)
+    }
+
+    @discardableResult
+    public func copyCurrentCommandOutput() -> Bool {
+        guard let terminal = terminalProvider?(),
+              let block = currentCommandBlock(in: terminal),
+              let range = block.outputRange else { return false }
+        return writeToPasteboard(terminal.extractText(in: range))
+    }
+
+    public var hasCommandBlocks: Bool {
+        !(terminalProvider?().commandBlocks().isEmpty ?? true)
+    }
+
+    private func copyCommandPart(_ keyPath: KeyPath<CommandBlock, SemanticTextRange>) -> Bool {
+        guard let terminal = terminalProvider?(),
+              let block = currentCommandBlock(in: terminal) else { return false }
+        return writeToPasteboard(terminal.extractText(in: block[keyPath: keyPath]))
+    }
+
+    private func currentCommandBlock(in terminal: Terminal) -> CommandBlock? {
+        let blocks = terminal.commandBlocks()
+        if commandNavigationAnchor != nil {
+            guard let line = resolvedCommandNavigationLine(in: terminal) else {
+                commandNavigationAnchor = nil
+                return nil
+            }
+            return blocks.first { $0.commandRange.start.line == line }
+        }
+        let viewportEnd = searchViewportLineRange(in: terminal).upperBound
+        return blocks.last { $0.commandRange.start.line <= viewportEnd }
+    }
+
+    private func revealCommand(_ block: CommandBlock, in terminal: Terminal) {
+        let line = block.commandRange.start.line
+        let oldestLineID = terminal.scrollback.totalAppendedLines
+            - UInt64(terminal.scrollback.count)
+        commandNavigationAnchor = (
+            lineID: oldestLineID + UInt64(line),
+            layoutRevision: terminal.searchLayoutRevision
+        )
+        let desiredStart = line - terminal.grid.size.rows / 2
+        scrollOffset = max(0, min(
+            terminal.scrollback.count - desiredStart,
+            terminal.scrollback.count
+        ))
+        selection = nil
+        markDirty()
+    }
+
+    private func resolvedCommandNavigationLine(in terminal: Terminal) -> Int? {
+        guard let anchor = commandNavigationAnchor,
+              anchor.layoutRevision == terminal.searchLayoutRevision else { return nil }
+        let oldestLineID = terminal.scrollback.totalAppendedLines
+            - UInt64(terminal.scrollback.count)
+        guard anchor.lineID >= oldestLineID else { return nil }
+        let line = Int(anchor.lineID - oldestLineID)
+        return line < terminal.totalLines ? line : nil
+    }
+
+    private func writeToPasteboard(_ text: String) -> Bool {
+        guard !text.isEmpty else { return false }
+        return pasteboardWriter(text)
     }
 
     public func clearSearchResults() {
@@ -398,6 +514,7 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
 
         let target = scrollOffset + deltaRows // 向上滚 delta 为正，翻历史
         scrollOffset = max(0, min(target, terminal.scrollback.count))
+        commandNavigationAnchor = nil
         markDirty()
     }
 
@@ -519,10 +636,7 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     @objc public func copy(_ sender: Any?) {
         guard let selection, let terminal = terminalProvider?() else { return }
         let text = terminal.extractText(in: selection)
-        guard !text.isEmpty else { return }
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
+        _ = writeToPasteboard(text)
     }
 
 
@@ -545,6 +659,7 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         if scrollOffset != 0 || selection != nil {
             scrollOffset = 0
             selection = nil
+            commandNavigationAnchor = nil
             markDirty()
         }
         // ⌃ 组合键（⌃C 等）直发终端，不给输入法机会。
