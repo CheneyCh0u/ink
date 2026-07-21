@@ -166,7 +166,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         viewMenu.addItem(.separator())
         let sidebarItem = NSMenuItem(
             title: "切换侧边栏",
-            action: #selector(NSSplitViewController.toggleSidebar(_:)),
+            action: #selector(MainWindowController.toggleSidebarMode(_:)),
             keyEquivalent: "s"
         )
         sidebarItem.keyEquivalentModifierMask = [.command, .control]

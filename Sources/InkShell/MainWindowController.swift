@@ -453,6 +453,11 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         setSidebarMode(sidebarMode.next, animated: true)
     }
 
+    /// 使用专属 selector，避免 `NSWindow.toggleSidebar(_:)` 提前截获菜单动作。
+    @objc func toggleSidebarMode(_ sender: Any?) {
+        toggleSidebarMode()
+    }
+
     private func setSidebarMode(_ mode: SidebarDisplayMode, animated: Bool) {
         guard let sidebarItem else { return }
         sidebarMode = mode
@@ -1107,16 +1112,8 @@ final class ShellSplitViewController: NSSplitViewController {
     var onLayoutChange: (() -> Void)?
     var onToggleSidebar: (() -> Void)?
 
-    /// 菜单项仍指向系统 selector，具体三态循环交给窗口控制器。
     override func toggleSidebar(_ sender: Any?) {
         onToggleSidebar?()
-    }
-
-    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
-        if item.action == #selector(toggleSidebar(_:)) {
-            return true
-        }
-        return super.validateUserInterfaceItem(item)
     }
 
     override func splitViewDidResizeSubviews(_ notification: Notification) {
