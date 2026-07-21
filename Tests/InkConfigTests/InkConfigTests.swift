@@ -75,6 +75,17 @@ struct MiniTOMLTests {
 
 @Suite("InkConfig")
 struct InkConfigTests {
+    @Test("默认字体度量与参考 Ghostty 配置一致")
+    func ghosttyCompatibleFontDefaults() {
+        let config = InkConfig()
+        #expect(config.fontFamily == "Maple Mono NF CN")
+        #expect(config.fontSize == 15)
+        #expect(config.lineHeight == 1)
+        #expect(config.fontCellHeightAdjustment == 1)
+        #expect(config.fontThicken)
+        #expect(config.fontThickenStrength == 128)
+    }
+
     @Test("文件缺失回默认值")
     func missingFileGivesDefaults() {
         let config = InkConfig.load(from: URL(fileURLWithPath: "/nonexistent/ink.toml"))
@@ -90,6 +101,9 @@ struct InkConfigTests {
         try """
         [font]
         size = 16
+        adjust_cell_height = -2
+        thicken = false
+        thicken_strength = 64
 
         [terminal]
         theme = "pine"
@@ -107,6 +121,9 @@ struct InkConfigTests {
 
         let config = InkConfig.load(from: file)
         #expect(config.fontSize == 16)
+        #expect(config.fontCellHeightAdjustment == -2)
+        #expect(config.fontThicken == false)
+        #expect(config.fontThickenStrength == 64)
         #expect(config.terminalTheme == .pine)
         #expect(config.cursorStyle == .underline)
         #expect(config.cursorBlink == false)
@@ -139,6 +156,9 @@ struct InkConfigTests {
         config.fontFamily = "Menlo"
         config.fontSize = 16
         config.lineHeight = 1.35
+        config.fontCellHeightAdjustment = -3
+        config.fontThicken = false
+        config.fontThickenStrength = 96
         config.terminalTheme = .warm
         config.cursorStyle = .bar
         config.cursorBlink = false
@@ -152,6 +172,23 @@ struct InkConfigTests {
         #expect(text.contains(#"future_option = "keep""#))
         #expect(text.contains("size = 16 # 保留行尾注释"))
         #expect(InkConfig.load(from: file) == config)
+    }
+
+    @Test("越界字体度量回退默认值")
+    func invalidFontMetricsUseDefaults() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ink-font-metrics-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let file = dir.appendingPathComponent("config.toml")
+        try """
+        [font]
+        adjust_cell_height = 21
+        thicken_strength = 256
+        """.write(to: file, atomically: true, encoding: .utf8)
+
+        let config = InkConfig.load(from: file)
+        #expect(config.fontCellHeightAdjustment == 1)
+        #expect(config.fontThickenStrength == 128)
     }
 
     @Test("未知终端主题回退为中性炭")
