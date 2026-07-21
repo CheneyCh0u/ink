@@ -565,7 +565,7 @@ menu、以真实 `MainWindowController` 打开 key window 并进入 modal sessio
 - [ ] **Step 5: 提交原生菜单**
 
 ```bash
-git add Sources/InkShell/AppDelegate.swift Tests/InkShellTests/FontSizeMenuTests.swift
+git add Sources/InkShell/AppDelegate.swift Sources/InkShell/MainWindowController.swift Tests/InkShellTests/FontSizeMenuTests.swift
 git commit -m "feat(shell): 增加原生字号快捷键" -m "将 ⌘0 交还字号恢复，并用 ⌃⌘S 保留侧边栏切换入口。\n\nRefs #60"
 ```
 
