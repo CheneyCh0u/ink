@@ -85,6 +85,23 @@ scrollback 槽表采用惰性 256 行分页 COW。后台值快照与主终端共
 后台任务取消会传递到扫描任务，扫描每 128 行/匹配检查一次取消状态，避免
 快速改查询时积压过期全量扫描。超长软折逻辑行的增量重扫也会转入后台。
 
+## OSC 133 命令块语义旁路
+
+2026-07-21 在 Apple M4 Pro、macOS 27.0 上对 Release `ink-bench` 运行
+Time Profiler。采样覆盖各 10 万行的 reflow、搜索、ASCII 短行、ASCII 满宽、
+彩色与中文场景，进程正常退出；trace 时长 1.915 秒，位于
+`/tmp/ink-osc133-issue58.trace`，导出表位于
+`/tmp/ink-osc133-issue58-time-profile.xml`。
+
+采样仍集中在 `Parser.feed`、`Grid.scrollUp` 与 `ScrollbackBuffer.append`；
+没有采到 `pruneSemanticOverflow` 或 `appendSemanticOverflow`。普通输出的语义
+旁路表为空，整屏滚动只增加一次空表快速判断。Release 基准的 ASCII 吞吐为
+73–82 MB/s，彩色 99 MB/s，中文 125 MB/s；内存数字与既有基线一致。
+
+同行多 OSC 转换才分配旁路项。scrollback 环淘汰用头索引推进，每累计约 256 个
+失效项才批量压缩，避免逐行搬数组；小容量环反复 400 次的回归测试同时约束活动
+项与滞留前缀，不允许内存随会话时长无限增长。
+
 ## 字体度量与增粗
 
 2026-07-21 在 Apple M4 Pro、macOS 27.0、2x 缩放下，对 debug 构建运行

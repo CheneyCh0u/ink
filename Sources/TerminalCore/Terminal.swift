@@ -1,3 +1,15 @@
+struct SemanticOverflowTransition: Sendable {
+    let lineID: UInt64
+    let column: UInt16
+    let mark: SemanticMark
+
+    init(lineID: UInt64, column: Int, mark: SemanticMark) {
+        self.lineID = lineID
+        self.column = UInt16(clamping: column)
+        self.mark = mark
+    }
+}
+
 /// 终端语义层：消费 `Parser` 的动作，维护 grid、scrollback、光标与模式。
 ///
 /// 纯 Swift 值类型，不依赖任何 UI——VT 兼容性全部在这里用单元测试验证
@@ -42,6 +54,10 @@ public struct Terminal: Sendable {
     public private(set) var title = ""
     /// OSC 133 当前段落语义，新行产生时自动继承（详见任务 #8）。
     public private(set) var currentSemantic: SemanticMark = .none
+    /// 同一物理行出现多个 OSC 133 转换时，只把被覆盖且无法推导的早期点
+    /// 放进稀疏旁路表；常规每行单转换仍完全落在 2 字节 RowInfo 内。
+    var semanticOverflowTransitions: [SemanticOverflowTransition] = []
+    var semanticOverflowStart = 0
     /// 待写回 PTY 的应答（DSR / DA 等查询的回复）。TUI 启动时会探测终端
     /// 并**等待回音**，没有应答通道它们会直接卡死。会话层每次 feed 后取走。
     private var responseBuffer: [UInt8] = []
@@ -95,6 +111,7 @@ public struct Terminal: Sendable {
     private mutating func reflow(to newSize: TerminalSize) {
         let oldGrid = grid
         let oldSb = scrollback
+        let oldOverflow = semanticOverflowTransitions[semanticOverflowStart...]
         let sbCount = oldSb.count
         let totalRows = sbCount + oldGrid.size.rows
         let cursorAbs = sbCount + oldGrid.cursorRow
@@ -107,6 +124,15 @@ public struct Terminal: Sendable {
         var tailInfo: [RowInfo] = []
         var emitted = 0
         var newCursor: (abs: Int, col: Int)?
+        var newOverflow: [SemanticOverflowTransition] = []
+
+        let oldestOldLineID = oldSb.totalAppendedLines - UInt64(oldSb.count)
+        var overflowByAbsoluteLine: [Int: [SemanticOverflowTransition]] = [:]
+        for transition in oldOverflow where transition.lineID >= oldestOldLineID {
+            let line = Int(transition.lineID - oldestOldLineID)
+            guard line < totalRows else { continue }
+            overflowByAbsoluteLine[line, default: []].append(transition)
+        }
 
         func emitRow(_ cells: [Cell], _ info: RowInfo) {
             if tailCells.count == newRows {
@@ -162,9 +188,33 @@ public struct Terminal: Sendable {
                 next += 1
             }
 
-            // 按新宽度切块。
-            let semantic = headInfo.semantic
+            // 收集逻辑行内的全部语义转换。RowInfo 保存每个物理行的最后一个点，
+            // 同行更早的少数点来自稀疏旁路表。
+            var transitions: [(offset: Int, mark: SemanticMark, order: Int)] = []
             var start = 0
+            var sourceOffset = 0
+            var order = 0
+            var scan = abs
+            while scan < next {
+                let (rowCells, info) = sourceRow(scan)
+                for transition in overflowByAbsoluteLine[scan] ?? [] {
+                    transitions.append((sourceOffset + Int(transition.column), transition.mark, order))
+                    order += 1
+                }
+                if let column = info.semanticTransitionColumn {
+                    transitions.append((sourceOffset + column, info.semanticMark, order))
+                    order += 1
+                }
+                sourceOffset += rowCells.count
+                scan += 1
+            }
+            transitions.sort {
+                $0.offset == $1.offset ? $0.order < $1.order : $0.offset < $1.offset
+            }
+
+            // 按新宽度切块。
+            var transitionIndex = 0
+            var semantic = transitions.first?.mark.predecessor ?? headInfo.semanticMark
             var isFirst = true
             var lastChunkStart = 0
             repeat {
@@ -179,7 +229,32 @@ public struct Terminal: Sendable {
                     newCursor = (emitted, offset - start)
                 }
                 lastChunkStart = start
-                emitRow(chunk, RowInfo(flags: flags, semantic: semantic))
+                let rowID = UInt64(emitted)
+                var rowTransitions: [(offset: Int, mark: SemanticMark)] = []
+                while transitionIndex < transitions.count {
+                    let transition = transitions[transitionIndex]
+                    let belongsHere = transition.offset < end
+                        || (transition.offset == end && end == cells.count)
+                    guard belongsHere else { break }
+                    if transition.offset >= start {
+                        rowTransitions.append((transition.offset - start, transition.mark))
+                    }
+                    semantic = transition.mark
+                    transitionIndex += 1
+                }
+                for transition in rowTransitions.dropLast() {
+                    newOverflow.append(SemanticOverflowTransition(
+                        lineID: rowID,
+                        column: transition.offset,
+                        mark: transition.mark
+                    ))
+                }
+                let finalTransition = rowTransitions.last
+                emitRow(chunk, RowInfo(
+                    flags: flags,
+                    semantic: semantic.rawValue,
+                    semanticTransitionColumn: finalTransition?.offset
+                ))
                 isFirst = false
                 start = end
             } while start < cells.count
@@ -207,6 +282,10 @@ public struct Terminal: Sendable {
         }
         grid = newGrid
         scrollback = newSb
+        let retainedRows = newSb.count + tailCells.count
+        let firstRetainedID = UInt64(max(0, emitted - retainedRows))
+        semanticOverflowTransitions = newOverflow.filter { $0.lineID >= firstRetainedID }
+        semanticOverflowStart = 0
         savedCursor = nil
     }
 
@@ -459,14 +538,19 @@ public struct Terminal: Sendable {
             title = String(decoding: payload, as: UTF8.self)
         case 133:
             // 语义标记（任务 #8 细化）：A 提示符 / B 命令 / C 输出 / D 结束。
+            let mark: SemanticMark
             switch payload.first.map({ Character(UnicodeScalar($0)) }) {
-            case "A": currentSemantic = .prompt
-            case "B": currentSemantic = .command
-            case "C": currentSemantic = .output
-            case "D": currentSemantic = .none
-            default: break
+            case "A": mark = .prompt
+            case "B": mark = .command
+            case "C": mark = .output
+            case "D": mark = .none
+            default: return
             }
-            stampSemantic()
+            currentSemantic = mark
+            // DECAWM 的延迟折行状态下，光标仍停在末格，但语义边界实际位于
+            // 行尾之后；下一可打印字符才会进入 wrapped 延续行。
+            let transitionColumn = pendingWrap ? grid.size.columns : grid.cursorCol
+            stampSemantic(mark, at: transitionColumn)
         default:
             break // OSC 8 超链接、52 剪贴板是 P1（roadmap）
         }
@@ -498,6 +582,9 @@ public struct Terminal: Sendable {
         let evicted = grid.scrollUp(top: scrollTop, bottom: scrollBottom)
         if !modes.alternateScreen, scrollTop == 0, scrollBottom == grid.size.rows - 1 {
             scrollback.append(evicted)
+            if semanticOverflowStart < semanticOverflowTransitions.count {
+                pruneSemanticOverflow()
+            }
         }
     }
 
@@ -538,10 +625,58 @@ public struct Terminal: Sendable {
         pendingWrap = false
     }
 
-    private mutating func stampSemantic() {
+    private mutating func stampSemantic(_ mark: SemanticMark? = nil, at transitionColumn: Int? = nil) {
         var info = grid.info(ofRow: grid.cursorRow)
+        if let mark,
+           mark == .prompt,
+           info.semanticMark == .none,
+           info.semanticTransitionColumn != nil {
+            // D 后紧接 A 时位置相同；保留 D 作为命令块结束证据，prompt 状态
+            // 仍由 currentSemantic 继承到后续行，下一次 B 会覆盖本行。
+            return
+        }
+        let lineID = scrollback.totalAppendedLines + UInt64(grid.cursorRow)
+        if let mark,
+           let oldColumn = info.semanticTransitionColumn,
+           (info.semanticMark == .command && mark == .output)
+            || (info.semanticMark == .output && mark == .prompt)
+            || (info.semanticMark == .output && mark == .none)
+            || (info.semanticMark == .none && mark == .command) {
+            appendSemanticOverflow(SemanticOverflowTransition(
+                lineID: lineID,
+                column: oldColumn,
+                mark: info.semanticMark
+            ))
+        }
         info.semantic = currentSemantic.rawValue
+        info.semanticTransitionColumn = transitionColumn
         grid.setInfo(info, forRow: grid.cursorRow)
+    }
+
+    private mutating func appendSemanticOverflow(_ transition: SemanticOverflowTransition) {
+        if semanticOverflowStart == semanticOverflowTransitions.count
+            || semanticOverflowTransitions.last!.lineID <= transition.lineID {
+            semanticOverflowTransitions.append(transition)
+            return
+        }
+        let index = semanticOverflowTransitions[semanticOverflowStart...].firstIndex {
+            $0.lineID > transition.lineID
+        } ?? semanticOverflowTransitions.endIndex
+        semanticOverflowTransitions.insert(transition, at: index)
+    }
+
+    private mutating func pruneSemanticOverflow() {
+        let oldestLineID = scrollback.totalAppendedLines - UInt64(scrollback.count)
+        while semanticOverflowStart < semanticOverflowTransitions.count,
+              semanticOverflowTransitions[semanticOverflowStart].lineID < oldestLineID {
+            semanticOverflowStart += 1
+        }
+        // 失效前缀按批次回收，避免每次滚一行都搬数组；额外滞留最多约 255 项。
+        if semanticOverflowStart >= 256,
+           semanticOverflowStart * 2 >= semanticOverflowTransitions.count {
+            semanticOverflowTransitions.removeFirst(semanticOverflowStart)
+            semanticOverflowStart = 0
+        }
     }
 
     // MARK: - 擦除与编辑
@@ -556,7 +691,22 @@ public struct Terminal: Sendable {
             for r in 0..<grid.cursorRow { grid.clearRow(r) }
         case 2:
             grid.clearAll()
+            let gridBase = scrollback.totalAppendedLines
+            semanticOverflowTransitions = semanticOverflowTransitions[semanticOverflowStart...]
+                .filter { $0.lineID < gridBase }
+            semanticOverflowStart = 0
         case 3:
+            let gridBase = scrollback.totalAppendedLines
+            semanticOverflowTransitions = semanticOverflowTransitions[semanticOverflowStart...]
+                .compactMap { transition in
+                guard transition.lineID >= gridBase else { return nil }
+                return SemanticOverflowTransition(
+                    lineID: transition.lineID - gridBase,
+                    column: Int(transition.column),
+                    mark: transition.mark
+                )
+            }
+            semanticOverflowStart = 0
             scrollback.removeAll() // xterm 扩展：连历史一起清
             searchLayoutRevision &+= 1
         default:

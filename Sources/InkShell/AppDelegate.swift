@@ -114,6 +114,35 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(.separator())
         editMenu.addItem(withTitle: "拷贝", action: #selector(TerminalMetalView.copy(_:)), keyEquivalent: "c")
         editMenu.addItem(withTitle: "粘贴", action: #selector(TerminalMetalView.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(.separator())
+        let previousCommand = NSMenuItem(
+            title: "上一条命令",
+            action: #selector(MainWindowController.previousCommand(_:)),
+            keyEquivalent: "\u{F700}"
+        )
+        previousCommand.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(previousCommand)
+        let nextCommand = NSMenuItem(
+            title: "下一条命令",
+            action: #selector(MainWindowController.nextCommand(_:)),
+            keyEquivalent: "\u{F701}"
+        )
+        nextCommand.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(nextCommand)
+        let copyCommand = NSMenuItem(
+            title: "拷贝命令",
+            action: #selector(MainWindowController.copyCommand(_:)),
+            keyEquivalent: "c"
+        )
+        copyCommand.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(copyCommand)
+        let copyOutput = NSMenuItem(
+            title: "拷贝命令输出",
+            action: #selector(MainWindowController.copyCommandOutput(_:)),
+            keyEquivalent: "o"
+        )
+        copyOutput.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(copyOutput)
         editItem.submenu = editMenu
         mainMenu.addItem(editItem)
 
