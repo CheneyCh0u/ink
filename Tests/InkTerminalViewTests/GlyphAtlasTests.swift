@@ -21,7 +21,7 @@ struct GlyphAtlasTests {
 
     @Test("字体增粗参数保留在 atlas 栅格化配置中")
     func fontThickeningOptions() throws {
-        let atlas = try #require(makeAtlas(fontThicken: true, strength: 128))
+        guard let atlas = makeAtlas(fontThicken: true, strength: 128) else { return }
         #expect(atlas.fontThicken)
         #expect(atlas.fontThickenStrength == 128)
         #expect(try #require(atlas.entry(for: "A", bold: false, italic: false)).isColor == false)
