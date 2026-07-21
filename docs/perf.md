@@ -103,6 +103,12 @@ scrollback 槽表采用惰性 256 行分页 COW。后台值快照与主终端共
 `time-profile` 表均可正常导出。TOC 记录的时长为 15.884850 秒，结束原因为
 `Time limit reached`。
 
+同日将当前 `.build/arm64-apple-macosx/debug/ink` 原样放入临时 `.app`，使用
+ad-hoc 签名和 bundle id `com.cheneychou.ink.font-verify-44` 后通过
+Computer Use 启动。终端显示 `/tmp/ink-emoji-44.txt` 时，Maple Mono 文字正常，
+🚀、😀 和 👨‍👩‍👧 保持彩色。截图位于 `/tmp/ink-font-verify-44.png`。这次检查只
+确认当前 debug 二进制的真实界面与彩色 emoji 路径，不代表和 Ghostty 像素级一致。
+
 ## 未完成项
 
 - **120fps 稳定性**：需要 Instruments（Metal System Trace / Time

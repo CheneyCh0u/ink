@@ -102,8 +102,8 @@ Reduce Transparency 开启或测试快照。
 
 外壳字体使用系统字体。终端默认使用 Maple Mono NF CN 15pt；系统缺少该字体或
 `[font] family` 配置无效时，回退到系统等宽字体。默认字体度量为
-`line_height = 1.0`、`adjust_cell_height = 1`，并通过 `thicken = true` 和
-`thicken_strength = 128` 增粗字形。
+`line_height = 1.0`；`adjust_cell_height = 1` 表示增加 1 个物理像素。字形通过
+`thicken = true` 和 `thicken_strength = 128` 增粗。
 
 Ink 不打包 Maple Mono NF CN。字体由用户系统提供，避免增加应用体积和常驻内存；
 若将来需要内嵌字体，仍须按依赖纪律先讨论。
