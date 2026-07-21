@@ -100,9 +100,13 @@ Reduce Transparency 开启或测试快照。
 - 点击反馈：`140ms`
 - 状态变化：`180ms`
 
-外壳字体使用系统字体；终端默认系统等宽字体（SF Mono），可经
-`[font] family` 配置替换，行高倍数默认 1.2。这样既保持 macOS 原生感，
-也避免额外字体常驻内存和应用体积。
+外壳字体使用系统字体。终端默认使用 Maple Mono NF CN 15pt；系统缺少该字体或
+`[font] family` 配置无效时，回退到系统等宽字体。默认字体度量为
+`line_height = 1.0`、`adjust_cell_height = 1`，并通过 `thicken = true` 和
+`thicken_strength = 128` 增粗字形。
+
+Ink 不打包 Maple Mono NF CN。字体由用户系统提供，避免增加应用体积和常驻内存；
+若将来需要内嵌字体，仍须按依赖纪律先讨论。
 
 > 备考：Ghostty 把 JetBrains Mono 编译进二进制（系统字体目录查不到），
 > 对比字体渲染时注意参照应用的字体来源。若将来要内嵌字体，JetBrains
