@@ -1005,6 +1005,18 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
 
     // MARK: - 窗口
 
+    func requestApplicationTermination() -> Bool {
+        sessionCloseCoordinator.requestApplicationTermination(
+            processes: foregroundProcesses(in: allPanes)
+        )
+    }
+
+    public func windowShouldClose(_ sender: NSWindow) -> Bool {
+        sessionCloseCoordinator.allowWindowClose(
+            processes: foregroundProcesses(in: allPanes)
+        )
+    }
+
     public func windowWillClose(_ notification: Notification) {
         cancelSplitShortcut()
         workspaceVC.closeSearch(returnFocus: false)

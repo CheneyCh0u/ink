@@ -23,6 +23,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
+    public func applicationShouldTerminate(
+        _ sender: NSApplication
+    ) -> NSApplication.TerminateReply {
+        guard let mainWindowController else { return .terminateNow }
+        return mainWindowController.requestApplicationTermination()
+            ? .terminateNow
+            : .terminateCancel
+    }
+
     // MARK: - 菜单
 
     private func buildMenu() {

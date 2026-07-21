@@ -82,6 +82,36 @@ struct TerminalSplitCommandTests {
         window.close()
     }
 
+    @Test("Command-Q 汇总活跃会话且窗口关闭不重复确认")
+    func applicationQuitAggregatesPanesWithoutDuplicateWindowPrompt() throws {
+        let presenter = SplitClosePresenter(result: false)
+        let controller = makeController(presenter: presenter)
+        let window = try #require(controller.window)
+        window.setFrame(NSRect(x: 300, y: 200, width: 1000, height: 700), display: true)
+        window.orderFront(nil)
+        spinRunLoop()
+
+        controller.newSession(nil)
+        spinRunLoop()
+        controller.splitRight(nil)
+        spinRunLoop()
+        for view in terminalViews(in: window) {
+            view.onInput?(Data("sleep 10\r".utf8))
+        }
+        spinRunLoop(cycles: 12)
+
+        #expect(!controller.requestApplicationTermination())
+        #expect(presenter.contents.count == 1)
+        #expect(presenter.contents.first?.destructiveButtonTitle == "退出 Ink")
+
+        presenter.result = true
+        #expect(controller.requestApplicationTermination())
+        #expect(controller.windowShouldClose(window))
+        #expect(presenter.contents.count == 2)
+
+        window.close()
+    }
+
     private func makeController(presenter: SplitClosePresenter) -> MainWindowController {
         MainWindowController(
             initialConfig: InkConfig(),
