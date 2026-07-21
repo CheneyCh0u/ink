@@ -274,6 +274,9 @@ final class TerminalWorkspaceViewController: NSViewController {
         terminalView.fontFamily = config.fontFamily
         terminalView.lineHeightMultiplier = CGFloat(config.lineHeight)
         terminalView.fontSize = CGFloat(config.fontSize)
+        terminalView.cellHeightAdjustment = config.fontCellHeightAdjustment
+        terminalView.fontThicken = config.fontThicken
+        terminalView.fontThickenStrength = config.fontThickenStrength
         terminalView.terminalTheme =
             InkTerminalTheme(rawValue: config.terminalTheme.rawValue) ?? .neutral
         terminalView.cursorStyle = switch config.cursorStyle {
