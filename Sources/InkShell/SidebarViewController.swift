@@ -144,6 +144,10 @@ final class SidebarViewController: NSViewController {
 
     func reload(rows: [Row]) {
         self.rows = rows
+        if let hoveredRowPath,
+           !rows.contains(where: { $0.fullPath == hoveredRowPath }) {
+            self.hoveredRowPath = nil
+        }
         rebuildRows()
     }
 

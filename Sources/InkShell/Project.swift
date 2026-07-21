@@ -31,8 +31,7 @@ final class Project {
 
     /// 侧边栏主标题只保留最终目录名，用户主目录沿用熟悉的 `~`。
     var sidebarTitle: String {
-        if directory.standardizedFileURL
-            == FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL {
+        if isHomeDirectory {
             return "~"
         }
         return directory.lastPathComponent
@@ -40,9 +39,14 @@ final class Project {
 
     /// 侧边栏副标题使用缩写后的父路径；用户主目录没有父路径提示。
     var sidebarParentPath: String {
-        guard sidebarTitle != "~" else { return "" }
+        guard !isHomeDirectory else { return "" }
         return (directory.deletingLastPathComponent().path as NSString)
             .abbreviatingWithTildeInPath
+    }
+
+    private var isHomeDirectory: Bool {
+        directory.standardizedFileURL
+            == FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL
     }
 
     var activeTab: TerminalTab? {

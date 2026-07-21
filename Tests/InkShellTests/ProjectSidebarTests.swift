@@ -10,7 +10,8 @@ struct ProjectSidebarTests {
     @MainActor
     func projectSidebarPathComponents() {
         let project = Project(
-            directory: URL(fileURLWithPath: "/Users/cheney/work/code/wiselaw/wise-studio")
+            directory: FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("work/code/wiselaw/wise-studio")
         )
 
         #expect(project.sidebarTitle == "wise-studio")
@@ -24,6 +25,18 @@ struct ProjectSidebarTests {
 
         #expect(project.sidebarTitle == "~")
         #expect(project.sidebarParentPath.isEmpty)
+    }
+
+    @Test("名称为波浪号的普通目录仍显示父路径")
+    @MainActor
+    func literalTildeDirectorySidebarPath() {
+        let project = Project(
+            directory: FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("work/~")
+        )
+
+        #expect(project.sidebarTitle == "~")
+        #expect(project.sidebarParentPath == "~/work")
     }
 
     @Test("旧版项目元数据缺少颜色时仍可解码")
@@ -274,8 +287,18 @@ struct ProjectSidebarLayoutTests {
             descendants(of: NSTextField.self, in: row)
                 .first { $0.stringValue == created.title }
         )
+        let detail = try #require(
+            descendants(of: NSTextField.self, in: row)
+                .first { $0.stringValue == created.detail }
+        )
+        let status = try #require(
+            descendants(of: NSTextField.self, in: row)
+                .first { $0.stringValue == created.status }
+        )
         let button = try closeButton(in: row)
         let titleFrame = title.convert(title.bounds, to: row)
+        let detailFrame = detail.convert(detail.bounds, to: row)
+        let statusFrame = status.convert(status.bounds, to: row)
         let buttonFrame = button.convert(button.bounds, to: row)
         let event = try #require(
             NSEvent.mouseEvent(
@@ -295,8 +318,58 @@ struct ProjectSidebarLayoutTests {
         controller.view.layoutSubtreeIfNeeded()
 
         #expect(title.convert(title.bounds, to: row) == titleFrame)
+        #expect(detail.convert(detail.bounds, to: row) == detailFrame)
+        #expect(status.convert(status.bounds, to: row) == statusFrame)
         #expect(button.convert(button.bounds, to: row) == buttonFrame)
         #expect(button.alphaValue == 1)
+    }
+
+    @Test("删除悬停项目后重新添加时关闭按钮保持隐藏")
+    func readdedHoveredRowStartsWithHiddenCloseButton() throws {
+        let controller = SidebarViewController()
+        controller.view.frame = NSRect(
+            x: 0,
+            y: 0,
+            width: InkDesignTokens.Sidebar.width,
+            height: 700
+        )
+        let row = SidebarViewController.Row(
+            title: "wise-studio",
+            detail: "~/work/code/wiselaw",
+            status: "1 个标签",
+            fullPath: "~/work/code/wiselaw/wise-studio",
+            active: true,
+            pinned: false,
+            label: .red
+        )
+        controller.reload(rows: [row])
+        controller.view.layoutSubtreeIfNeeded()
+
+        let initialRow = try #require(try projectRows(in: controller).first)
+        let event = try #require(
+            NSEvent.mouseEvent(
+                with: .mouseMoved,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                eventNumber: 0,
+                clickCount: 0,
+                pressure: 0
+            )
+        )
+        initialRow.mouseEntered(with: event)
+
+        controller.reload(rows: [])
+        controller.reload(rows: [row])
+        controller.view.layoutSubtreeIfNeeded()
+
+        let readdedRow = try #require(try projectRows(in: controller).first)
+        let button = try closeButton(in: readdedRow)
+        #expect(button.alphaValue == 0)
+        #expect(!button.isEnabled)
+        #expect(button.isAccessibilityHidden())
     }
 
     private func projectRows(in controller: SidebarViewController) throws -> [NSView] {

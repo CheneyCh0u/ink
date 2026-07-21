@@ -319,7 +319,7 @@ Run: `git push`
 - Consumes: `ProjectRowView` 的 `indicator`、`icon`、`textStack`、`closeButton`
 - Produces: 关闭按钮相对项目行固定的 trailing 坐标；`mouseEntered(with:)` 只改变按钮状态
 
-- [ ] **Step 1: 用失败测试替换错误的内容相邻断言**
+- [x] **Step 1: 用失败测试替换错误的内容相邻断言**
 
 从 `longPathUsesStableProjectNameLayout()` 删除把 X 固定在状态文字后面的错误断言：
 
@@ -448,14 +448,14 @@ func firstHoverAfterCreatingProjectKeepsFramesStable() throws {
 }
 ```
 
-- [ ] **Step 2: 运行测试确认 RED**
+- [x] **Step 2: 运行测试确认 RED**
 
 Run: `swift test --filter ProjectSidebarLayoutTests`
 
 Expected: `不同长度项目共享固定右侧关闭列` FAIL；当前最外层 `NSStackView` 按每行内容
 固有宽度放置关闭按钮，短标题和长标题的按钮 `minX` 不一致，按钮也不贴近行 trailing。
 
-- [ ] **Step 3: 用明确锚点替换最外层水平栈**
+- [x] **Step 3: 用明确锚点替换最外层水平栈**
 
 保留 `metadataStack` 与 `textStack`，删除最外层 `hStack`。把四列直接加入项目行：
 
@@ -495,14 +495,14 @@ NSLayoutConstraint.activate([
 `InkDesignTokens.Sidebar.labelDotDiameter`，图标尺寸为 `16`。不改变 compact 分支、按钮
 透明度逻辑、点击、拖拽或菜单行为。
 
-- [ ] **Step 4: 运行布局测试确认 GREEN**
+- [x] **Step 4: 运行布局测试确认 GREEN**
 
 Run: `swift test --filter ProjectSidebarLayoutTests`
 
 Expected: 全部 PASS；两行按钮横坐标一致且贴近行右侧，新增行第一次 hover 的标题与按钮
 frame 不变。
 
-- [ ] **Step 5: 运行 Shell 测试并提交结构修复**
+- [x] **Step 5: 运行 Shell 测试并提交结构修复**
 
 Run: `swift test --filter InkShellTests`
 
@@ -524,13 +524,13 @@ git commit -m "fix(sidebar): 将项目关闭按钮固定到行右侧" \
 - Consumes: Task 4 的提交
 - Produces: PR #43 的最终验证证据与用户可检查的 debug 进程
 
-- [ ] **Step 1: 运行完整自动验证**
+- [x] **Step 1: 运行完整自动验证**
 
 Run: `swift test && swift build && git diff --check`
 
 Expected: 169 项或更多测试全部 PASS，构建零警告，diff check 无输出。
 
-- [ ] **Step 2: 只重启当前分支 debug 可执行文件**
+- [x] **Step 2: 只重启当前分支 debug 可执行文件**
 
 先运行：
 
@@ -547,7 +547,7 @@ ps -axo pid=,args= | rg \
 
 再次执行进程查询。Expected: 只剩一个 Ink 进程，路径精确指向上述 debug 产物。
 
-- [ ] **Step 3: 按 PID 验证真实窗口**
+- [x] **Step 3: 按 PID 验证真实窗口**
 
 不要按应用名调用会自动启动 `/Applications/Ink.app` 的工具。使用 debug PID 查询
 `CGWindowListCopyWindowInfo`，取得该 PID 的窗口号后直接截图。检查：
@@ -557,7 +557,7 @@ ps -axo pid=,args= | rg \
 3. 新建第二个项目后，第一次 hover、点击、移出均无文字或 X 横移。
 4. 安装版进程未运行。
 
-- [ ] **Step 4: 推送并更新 PR #43**
+- [x] **Step 4: 推送并更新 PR #43**
 
 Run: `git push`
 
