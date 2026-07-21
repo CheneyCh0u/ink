@@ -20,6 +20,8 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     public var onFocus: (() -> Void)?
     /// 搜索控制器按需提供结果，避免视图长期共享数组导致增量更新触发全量 CoW。
     public var searchResultsProvider: (() -> ([TerminalSearchMatch], Int?))?
+    /// 危险粘贴确认可替换，测试不弹真实窗口。
+    var safePastePresenter: any SafePastePresenting = NSAlertSafePastePresenter()
 
     // MARK: - 配置项（外壳从 InkConfig 映射进来）
 
@@ -581,15 +583,37 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     }
 
     @objc public func paste(_ sender: Any?) {
-        guard var text = NSPasteboard.general.string(forType: .string) else { return }
-        if terminalProvider?().modes.bracketedPaste ?? false {
-            // 剥掉内容里的结束标记，防转义注入（粘贴文本伪造 201~ 提前结束
-            // 包裹，后续内容会被 shell 当按键执行——安全问题）。
-            text = text.replacingOccurrences(of: "\u{1B}[201~", with: "")
-            onInput?(Data("\u{1B}[200~\(text)\u{1B}[201~".utf8))
-        } else {
-            // 无包裹时换行转 CR：shell 行编辑器认 CR，直发 LF 会被吞。
-            onInput?(Data(text.replacingOccurrences(of: "\n", with: "\r").utf8))
+        guard let text = NSPasteboard.general.string(forType: .string) else { return }
+        paste(text: text)
+    }
+
+    func paste(text: String) {
+        while true {
+            let bracketedPaste = terminalProvider?().modes.bracketedPaste ?? false
+            guard let assessment = SafePaste.assessment(
+                for: text,
+                bracketedPaste: bracketedPaste
+            ) else {
+                onInput?(SafePaste.encoded(text, bracketedPaste: bracketedPaste))
+                return
+            }
+
+            switch safePastePresenter.choose(for: assessment) {
+            case .paste:
+                let currentMode = terminalProvider?().modes.bracketedPaste ?? false
+                guard currentMode == bracketedPaste else { continue }
+                onInput?(SafePaste.encoded(text, bracketedPaste: currentMode))
+                return
+            case .singleLine:
+                let currentMode = terminalProvider?().modes.bracketedPaste ?? false
+                onInput?(SafePaste.encoded(
+                    SafePaste.singleLine(text),
+                    bracketedPaste: currentMode
+                ))
+                return
+            case .cancel:
+                return
+            }
         }
     }
 
