@@ -317,6 +317,26 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         }
     }
 
+    @objc public func increaseFontSize(_ sender: Any?) {
+        performFontSizeCommand(.increase)
+    }
+
+    @objc public func decreaseFontSize(_ sender: Any?) {
+        performFontSizeCommand(.decrease)
+    }
+
+    @objc public func resetFontSize(_ sender: Any?) {
+        performFontSizeCommand(.reset)
+    }
+
+    private func performFontSizeCommand(_ command: FontSizeCommand) {
+        let target = command.updatedValue(from: config.fontSize)
+        guard target != config.fontSize else { return }
+        var fresh = config
+        fresh.fontSize = target
+        saveConfig(fresh)
+    }
+
     private func openConfigFile() {
         do {
             try config.save(to: configURL)
@@ -431,6 +451,11 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
 
     private func toggleSidebarMode() {
         setSidebarMode(sidebarMode.next, animated: true)
+    }
+
+    /// 使用专属 selector，避免 `NSWindow.toggleSidebar(_:)` 提前截获菜单动作。
+    @objc func toggleSidebarMode(_ sender: Any?) {
+        toggleSidebarMode()
     }
 
     private func setSidebarMode(_ mode: SidebarDisplayMode, animated: Bool) {
@@ -1087,7 +1112,6 @@ final class ShellSplitViewController: NSSplitViewController {
     var onLayoutChange: (() -> Void)?
     var onToggleSidebar: (() -> Void)?
 
-    /// 菜单项仍指向系统 selector，具体三态循环交给窗口控制器。
     override func toggleSidebar(_ sender: Any?) {
         onToggleSidebar?()
     }

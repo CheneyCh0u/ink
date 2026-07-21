@@ -149,10 +149,28 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         let viewItem = NSMenuItem()
         let viewMenu = NSMenu(title: "显示")
         viewMenu.addItem(
-            withTitle: "切换侧边栏",
-            action: #selector(NSSplitViewController.toggleSidebar(_:)),
+            withTitle: "放大字号",
+            action: #selector(MainWindowController.increaseFontSize(_:)),
+            keyEquivalent: "+"
+        )
+        viewMenu.addItem(
+            withTitle: "缩小字号",
+            action: #selector(MainWindowController.decreaseFontSize(_:)),
+            keyEquivalent: "-"
+        )
+        viewMenu.addItem(
+            withTitle: "恢复默认字号",
+            action: #selector(MainWindowController.resetFontSize(_:)),
             keyEquivalent: "0"
         )
+        viewMenu.addItem(.separator())
+        let sidebarItem = NSMenuItem(
+            title: "切换侧边栏",
+            action: #selector(MainWindowController.toggleSidebarMode(_:)),
+            keyEquivalent: "s"
+        )
+        sidebarItem.keyEquivalentModifierMask = [.command, .control]
+        viewMenu.addItem(sidebarItem)
         viewItem.submenu = viewMenu
         mainMenu.addItem(viewItem)
 

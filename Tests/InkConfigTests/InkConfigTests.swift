@@ -75,6 +75,13 @@ struct MiniTOMLTests {
 
 @Suite("InkConfig")
 struct InkConfigTests {
+    @Test("字号默认值与有效范围有单一配置契约")
+    func fontSizeContract() {
+        #expect(InkConfig.defaultFontSize == 15)
+        #expect(InkConfig.fontSizeRange == 6...72)
+        #expect(InkConfig().fontSize == InkConfig.defaultFontSize)
+    }
+
     @Test("默认字体度量与参考 Ghostty 配置一致")
     func ghosttyCompatibleFontDefaults() {
         let config = InkConfig()
