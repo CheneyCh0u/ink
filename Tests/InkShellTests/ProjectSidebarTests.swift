@@ -72,8 +72,8 @@ struct ProjectSidebarTests {
 @Suite("项目侧边栏布局", .serialized)
 @MainActor
 struct ProjectSidebarLayoutTests {
-    @Test("点击长目录重建项目行时保持关闭按钮可见")
-    func longPathKeepsCloseButtonVisibleAcrossSelectionReload() throws {
+    @Test("点击长目录时项目文字区域保持稳定")
+    func longPathUsesStableProjectNameLayout() throws {
         let controller = SidebarViewController()
         controller.view.frame = NSRect(
             x: 0,
@@ -81,29 +81,42 @@ struct ProjectSidebarLayoutTests {
             width: InkDesignTokens.Sidebar.width,
             height: 700
         )
-        let longPath = "~/work/code/wiselaw/wise-studio"
-        controller.reload(rows: [
-            .init(
-                title: longPath,
-                subtitle: "1 个会话",
-                active: false,
-                pinned: true,
-                label: .red
-            ),
-        ])
+        let titleText = "wise-studio"
+        let detailText = "~/work/code/very-long-parent-directory/wiselaw"
+        let statusText = "1 个标签"
+        let fullPath = "\(detailText)/\(titleText)"
+        let row = SidebarViewController.Row(
+            title: titleText,
+            detail: detailText,
+            status: statusText,
+            fullPath: fullPath,
+            active: false,
+            pinned: true,
+            label: .red
+        )
+        controller.reload(rows: [row])
         controller.view.layoutSubtreeIfNeeded()
 
         var rowStack = try #require(
             controller.view.subviews.compactMap { $0 as? NSStackView }.first
         )
-        let rowView = try #require(rowStack.arrangedSubviews.first)
-        let title = try #require(
+        var rowView = try #require(rowStack.arrangedSubviews.first)
+        var title = try #require(
             descendants(of: NSTextField.self, in: rowView)
-                .first { $0.stringValue == longPath }
+                .first { $0.stringValue == titleText }
         )
-        let icon = try #require(descendants(of: NSImageView.self, in: rowView).first)
-        let titleFrameBeforeHover = title.frame
-        let iconFrameBeforeHover = icon.frame
+        var detail = try #require(
+            descendants(of: NSTextField.self, in: rowView)
+                .first { $0.stringValue == detailText }
+        )
+        var status = try #require(
+            descendants(of: NSTextField.self, in: rowView)
+                .first { $0.stringValue == statusText }
+        )
+        var closeButton = try #require(descendants(of: NSButton.self, in: rowView).first)
+        let initialTitleFrame = title.convert(title.bounds, to: rowView)
+        let initialDetailFrame = detail.convert(detail.bounds, to: rowView)
+        let initialStatusFrame = status.convert(status.bounds, to: rowView)
         let event = try #require(
             NSEvent.mouseEvent(
                 with: .mouseMoved,
@@ -117,16 +130,26 @@ struct ProjectSidebarLayoutTests {
                 pressure: 0
             )
         )
+
+        #expect(detail.lineBreakMode == NSLineBreakMode.byTruncatingHead)
+        #expect(detail.frame.width < detail.intrinsicContentSize.width)
+        #expect(status.frame.width >= status.intrinsicContentSize.width - 0.5)
+        #expect(!closeButton.isHidden)
+        #expect(closeButton.alphaValue == 0)
+
         rowView.mouseEntered(with: event)
         controller.view.layoutSubtreeIfNeeded()
-        #expect(descendants(of: NSButton.self, in: rowView).first?.isHidden == false)
-        #expect(title.frame == titleFrameBeforeHover)
-        #expect(icon.frame == iconFrameBeforeHover)
+        #expect(title.convert(title.bounds, to: rowView) == initialTitleFrame)
+        #expect(detail.convert(detail.bounds, to: rowView) == initialDetailFrame)
+        #expect(status.convert(status.bounds, to: rowView) == initialStatusFrame)
+        #expect(closeButton.alphaValue == 1)
 
         controller.reload(rows: [
             .init(
-                title: longPath,
-                subtitle: "1 个会话",
+                title: titleText,
+                detail: detailText,
+                status: statusText,
+                fullPath: fullPath,
                 active: true,
                 pinned: true,
                 label: .red
@@ -136,22 +159,34 @@ struct ProjectSidebarLayoutTests {
         rowStack = try #require(
             controller.view.subviews.compactMap { $0 as? NSStackView }.first
         )
-        let reloadedRow = try #require(rowStack.arrangedSubviews.first)
-        let reloadedTitle = try #require(
-            descendants(of: NSTextField.self, in: reloadedRow)
-                .first { $0.stringValue == longPath }
+        rowView = try #require(rowStack.arrangedSubviews.first)
+        title = try #require(
+            descendants(of: NSTextField.self, in: rowView)
+                .first { $0.stringValue == titleText }
         )
-        let reloadedIcon = try #require(descendants(of: NSImageView.self, in: reloadedRow).first)
+        detail = try #require(
+            descendants(of: NSTextField.self, in: rowView)
+                .first { $0.stringValue == detailText }
+        )
+        status = try #require(
+            descendants(of: NSTextField.self, in: rowView)
+                .first { $0.stringValue == statusText }
+        )
+        closeButton = try #require(descendants(of: NSButton.self, in: rowView).first)
 
-        #expect(descendants(of: NSButton.self, in: reloadedRow).first?.isHidden == false)
-        #expect(reloadedTitle.frame == titleFrameBeforeHover)
-        #expect(reloadedIcon.frame == iconFrameBeforeHover)
+        #expect(title.convert(title.bounds, to: rowView) == initialTitleFrame)
+        #expect(detail.convert(detail.bounds, to: rowView) == initialDetailFrame)
+        #expect(status.convert(status.bounds, to: rowView) == initialStatusFrame)
+        #expect(!closeButton.isHidden)
+        #expect(closeButton.alphaValue == 1)
 
-        reloadedRow.mouseExited(with: event)
+        rowView.mouseExited(with: event)
         controller.view.layoutSubtreeIfNeeded()
-        #expect(descendants(of: NSButton.self, in: reloadedRow).first?.isHidden == true)
-        #expect(reloadedTitle.frame == titleFrameBeforeHover)
-        #expect(reloadedIcon.frame == iconFrameBeforeHover)
+        #expect(title.convert(title.bounds, to: rowView) == initialTitleFrame)
+        #expect(detail.convert(detail.bounds, to: rowView) == initialDetailFrame)
+        #expect(status.convert(status.bounds, to: rowView) == initialStatusFrame)
+        #expect(!closeButton.isHidden)
+        #expect(closeButton.alphaValue == 0)
     }
 
     @Test("展开态为所有项目保留圆点列")
@@ -229,7 +264,9 @@ struct ProjectSidebarLayoutTests {
         controller.reload(rows: [
             .init(
                 title: "~",
-                subtitle: "1 个会话",
+                detail: "",
+                status: "1 个标签",
+                fullPath: "~",
                 active: true,
                 pinned: false,
                 label: .none
@@ -258,15 +295,19 @@ struct ProjectSidebarLayoutTests {
         controller.view.frame = NSRect(x: 0, y: 0, width: width, height: 700)
         controller.reload(rows: [
             .init(
-                title: "~/ink",
-                subtitle: "1 个会话",
+                title: "ink",
+                detail: "~/work/code",
+                status: "1 个标签",
+                fullPath: "~/work/code/ink",
                 active: true,
                 pinned: false,
                 label: .red
             ),
             .init(
-                title: "~/notes",
-                subtitle: "无会话",
+                title: "notes",
+                detail: "~/work",
+                status: "未打开",
+                fullPath: "~/work/notes",
                 active: false,
                 pinned: false,
                 label: .none

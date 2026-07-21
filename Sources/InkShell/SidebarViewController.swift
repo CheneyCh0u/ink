@@ -30,7 +30,9 @@ final class SidebarViewController: NSViewController {
 
     struct Row {
         let title: String
-        let subtitle: String
+        let detail: String
+        let status: String
+        let fullPath: String
         let active: Bool
         let pinned: Bool
         let label: InkProjectLabel
@@ -60,7 +62,7 @@ final class SidebarViewController: NSViewController {
     private let footerSeparator = NSBox()
     private let sectionTitle = NSTextField(labelWithString: "项目")
     private var rows: [Row] = []
-    private var hoveredRowTitle: String?
+    private var hoveredRowPath: String?
     private var expandedRowsTop: NSLayoutConstraint?
     private var compactRowsTop: NSLayoutConstraint?
 
@@ -154,7 +156,7 @@ final class SidebarViewController: NSViewController {
                 index: index,
                 compact: displayMode == .compact,
                 indicatorStyle: displayMode.labelIndicatorStyle,
-                revealsCloseButton: row.title == hoveredRowTitle
+                revealsCloseButton: row.fullPath == hoveredRowPath
             )
             rowView.onClick = { [weak self] in self?.onSelect?(index) }
             rowView.onRemove = { [weak self] in self?.onRemove?(index) }
@@ -164,9 +166,9 @@ final class SidebarViewController: NSViewController {
             rowView.onHoverChanged = { [weak self] hovered in
                 guard let self else { return }
                 if hovered {
-                    self.hoveredRowTitle = row.title
-                } else if self.hoveredRowTitle == row.title {
-                    self.hoveredRowTitle = nil
+                    self.hoveredRowPath = row.fullPath
+                } else if self.hoveredRowPath == row.fullPath {
+                    self.hoveredRowPath = nil
                 }
             }
             rowStack.addArrangedSubview(rowView)
@@ -272,10 +274,10 @@ private final class ProjectRowView: NSView, NSDraggingSource {
         layer?.cornerRadius = InkDesignTokens.Radius.item
         layer?.cornerCurve = .continuous
         updateLayerColors()
-        toolTip = compact ? "\(row.title)\n\(row.subtitle)" : nil
+        toolTip = compact ? "\(row.fullPath)\n\(row.status)" : row.fullPath
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
-        setAccessibilityLabel(row.title)
+        setAccessibilityLabel(row.fullPath)
 
         let icon = NSImageView(image: NSImage(
             systemSymbolName: row.pinned ? "pin.fill" : "folder",
@@ -315,12 +317,20 @@ private final class ProjectRowView: NSView, NSDraggingSource {
         let title = NSTextField(labelWithString: row.title)
         title.font = InkDesignTokens.Typography.bodyEmphasized
         title.textColor = InkDesignTokens.Color.textPrimary
-        title.lineBreakMode = .byTruncatingHead
+        title.lineBreakMode = .byTruncatingTail
+        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let subtitle = NSTextField(labelWithString: row.subtitle)
-        subtitle.font = InkDesignTokens.Typography.label
-        subtitle.textColor = InkDesignTokens.Color.textSecondary
-        subtitle.lineBreakMode = .byTruncatingTail
+        let detail = NSTextField(labelWithString: row.detail)
+        detail.font = InkDesignTokens.Typography.label
+        detail.textColor = InkDesignTokens.Color.textSecondary
+        detail.lineBreakMode = .byTruncatingHead
+        detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let status = NSTextField(labelWithString: row.status)
+        status.font = InkDesignTokens.Typography.label
+        status.textColor = InkDesignTokens.Color.textSecondary
+        status.setContentHuggingPriority(.required, for: .horizontal)
+        status.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         closeButton.isBordered = false
         closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "移除项目")?
@@ -328,14 +338,24 @@ private final class ProjectRowView: NSView, NSDraggingSource {
         closeButton.contentTintColor = InkDesignTokens.Color.textSecondary
         closeButton.target = self
         closeButton.action = #selector(removeAction)
-        closeButton.isHidden = !revealsCloseButton
+        closeButton.isHidden = false
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        setCloseButtonRevealed(revealsCloseButton)
 
-        let textStack = NSStackView(views: [title, subtitle])
+        let metadataStack = NSStackView(views: [detail, status])
+        metadataStack.orientation = .horizontal
+        metadataStack.alignment = .centerY
+        metadataStack.spacing = InkDesignTokens.Spacing.xs
+        metadataStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let textStack = NSStackView(views: [title, metadataStack])
         textStack.orientation = .vertical
         textStack.alignment = .leading
         textStack.spacing = 1
+        textStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        textStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let hStack = NSStackView(views: [indicator, icon, textStack, NSView(), closeButton])
+        let hStack = NSStackView(views: [indicator, icon, textStack, closeButton])
         hStack.orientation = .horizontal
         hStack.alignment = .centerY
         hStack.spacing = InkDesignTokens.Spacing.xs
@@ -349,6 +369,11 @@ private final class ProjectRowView: NSView, NSDraggingSource {
             ),
             indicator.heightAnchor.constraint(
                 equalToConstant: InkDesignTokens.Sidebar.labelDotDiameter
+            ),
+            title.widthAnchor.constraint(equalTo: textStack.widthAnchor),
+            metadataStack.widthAnchor.constraint(equalTo: textStack.widthAnchor),
+            closeButton.widthAnchor.constraint(
+                equalToConstant: InkDesignTokens.Sidebar.projectCloseButtonWidth
             ),
             hStack.topAnchor.constraint(equalTo: topAnchor, constant: 6),
             hStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
@@ -381,15 +406,21 @@ private final class ProjectRowView: NSView, NSDraggingSource {
         }
     }
 
+    private func setCloseButtonRevealed(_ revealed: Bool) {
+        closeButton.alphaValue = revealed ? 1 : 0
+        closeButton.isEnabled = revealed
+        closeButton.setAccessibilityHidden(!revealed)
+    }
+
     override func mouseEntered(with event: NSEvent) {
         if !compact {
-            closeButton.isHidden = false
+            setCloseButtonRevealed(true)
             onHoverChanged?(true)
         }
     }
 
     override func mouseExited(with event: NSEvent) {
-        closeButton.isHidden = true
+        if !compact { setCloseButtonRevealed(false) }
         onHoverChanged?(false)
     }
 
