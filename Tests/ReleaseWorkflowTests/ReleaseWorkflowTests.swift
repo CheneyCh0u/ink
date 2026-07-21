@@ -41,4 +41,25 @@ struct ReleaseWorkflowTests {
             )
         }
     }
+
+    @Test("应用签名携带 iCloud KVS entitlement")
+    func packageIncludesKVSContainer() throws {
+        let entitlementURL = projectRoot.appendingPathComponent("Resources/Ink.entitlements")
+        let data = try Data(contentsOf: entitlementURL)
+        let plist = try #require(
+            PropertyListSerialization.propertyList(from: data, format: nil)
+                as? [String: Any]
+        )
+        #expect(
+            plist["com.apple.developer.ubiquity-kvstore-identifier"] as? String
+                == "FS3WL6385L.com.cheneychou.ink"
+        )
+
+        let script = try String(
+            contentsOf: projectRoot.appendingPathComponent("scripts/package-app.sh"),
+            encoding: .utf8
+        )
+        #expect(script.contains("entitlements_path=\"$project_root/Resources/Ink.entitlements\""))
+        #expect(script.contains("--entitlements \"$entitlements_path\""))
+    }
 }

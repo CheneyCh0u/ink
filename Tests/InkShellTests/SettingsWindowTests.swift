@@ -209,7 +209,7 @@ struct SettingsWindowTests {
         spinRunLoop()
 
         let contentView = try #require(window.contentView)
-        let sectionTitles = ["外观", "窗口", "终端", "光标", "交互", "高级"]
+        let sectionTitles = ["外观", "窗口", "终端", "光标", "交互", "iCloud", "高级"]
         let panels = try sectionTitles.map { title in
             let label = try #require(
                 allSubviews(in: contentView)

@@ -10,6 +10,9 @@ final class SettingsViewController: NSViewController {
     var onDone: (() -> Void)?
     var onOpenConfig: (() -> Void)?
     var onReset: (() -> Void)?
+    var onAutomaticUploadChange: ((Bool) -> Void)?
+    var onUploadConfig: (() -> Void)?
+    var onPullConfig: (() -> Void)?
 
     private var config: InkConfig
     private var suppressChanges = false
@@ -42,6 +45,10 @@ final class SettingsViewController: NSViewController {
     private let cursorBlinkSwitch = NSSwitch()
     private let optionMetaSwitch = NSSwitch()
     private let copyOnSelectSwitch = NSSwitch()
+    private let automaticUploadSwitch = NSSwitch()
+    private let syncStatusLabel = NSTextField(wrappingLabelWithString: "尚未上传")
+    private let uploadConfigButton = NSButton()
+    private let pullConfigButton = NSButton()
     private let scrollbackControl = NumericSettingControl(
         value: 100_000, range: 100...2_000_000, increment: 1_000, decimals: 0, suffix: "行"
     )
@@ -92,6 +99,17 @@ final class SettingsViewController: NSViewController {
         self.config = config
         guard isViewLoaded else { return }
         updateControls()
+    }
+
+    func updateSync(automaticUploadEnabled: Bool, status: ConfigSyncStatus) {
+        guard isViewLoaded else { return }
+        automaticUploadSwitch.state = automaticUploadEnabled ? .on : .off
+        let busy = status == .uploading || status == .reading
+        automaticUploadSwitch.isEnabled = !busy
+        uploadConfigButton.isEnabled = !busy
+        pullConfigButton.isEnabled = !busy
+        syncStatusLabel.stringValue = syncStatusText(status)
+        syncStatusLabel.setAccessibilityValue(syncStatusLabel.stringValue)
     }
 
     private func makeHeader() -> NSView {
@@ -182,6 +200,17 @@ final class SettingsViewController: NSViewController {
             rows: [
                 makeRow(title: "Option 作为 Meta", detail: "关闭后保留 macOS 的重音字符输入。", control: optionMetaSwitch),
                 makeRow(title: "选中即复制", detail: "鼠标选中文本后立即写入剪贴板。", control: copyOnSelectSwitch),
+            ]
+        ))
+        content.addArrangedSubview(makeSection(
+            title: "iCloud",
+            rows: [
+                makeRow(
+                    title: "自动上传配置",
+                    detail: "修改设置后上传到 iCloud。",
+                    control: automaticUploadSwitch
+                ),
+                makeSyncActionsRow(),
             ]
         ))
         content.addArrangedSubview(makeSection(
@@ -315,6 +344,42 @@ final class SettingsViewController: NSViewController {
         return row
     }
 
+    private func makeSyncActionsRow() -> NSView {
+        let row = NSView()
+        syncStatusLabel.font = InkDesignTokens.Typography.label
+        syncStatusLabel.textColor = InkDesignTokens.Color.textSecondary
+        syncStatusLabel.setAccessibilityLabel("iCloud 同步状态")
+
+        let actions = NSStackView(views: [uploadConfigButton, pullConfigButton])
+        actions.orientation = .horizontal
+        actions.alignment = .centerY
+        actions.spacing = InkDesignTokens.Spacing.sm
+        syncStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+        actions.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(syncStatusLabel)
+        row.addSubview(actions)
+        NSLayoutConstraint.activate([
+            row.heightAnchor.constraint(
+                greaterThanOrEqualToConstant: InkDesignTokens.Settings.rowMinimumHeight
+            ),
+            syncStatusLabel.leadingAnchor.constraint(
+                equalTo: row.leadingAnchor,
+                constant: InkDesignTokens.Spacing.md
+            ),
+            syncStatusLabel.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            syncStatusLabel.trailingAnchor.constraint(
+                lessThanOrEqualTo: actions.leadingAnchor,
+                constant: -InkDesignTokens.Spacing.md
+            ),
+            actions.trailingAnchor.constraint(
+                equalTo: row.trailingAnchor,
+                constant: -InkDesignTokens.Spacing.md
+            ),
+            actions.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+        ])
+        return row
+    }
+
     private func configureControls() {
         configureSegmented(appearanceControl, labels: ["跟随系统", "浅色", "深色"], action: #selector(controlChanged))
         configureSegmented(sidebarControl, labels: ["展开", "图标", "隐藏"], action: #selector(controlChanged))
@@ -330,6 +395,22 @@ final class SettingsViewController: NSViewController {
             toggle.target = self
             toggle.action = #selector(controlChanged)
         }
+        automaticUploadSwitch.target = self
+        automaticUploadSwitch.action = #selector(automaticUploadChanged)
+        automaticUploadSwitch.setAccessibilityLabel("自动上传配置")
+
+        configureSyncButton(
+            uploadConfigButton,
+            title: "上传到云端",
+            symbol: "arrow.up.to.line",
+            action: #selector(uploadConfigAction)
+        )
+        configureSyncButton(
+            pullConfigButton,
+            title: "拉取云端配置",
+            symbol: "arrow.down.to.line",
+            action: #selector(pullConfigAction)
+        )
         fontThickenSwitch.setAccessibilityLabel("字体增粗")
 
         fontCombo.removeAllItems()
@@ -383,6 +464,21 @@ final class SettingsViewController: NSViewController {
         }
         control.target = self
         control.action = action
+    }
+
+    private func configureSyncButton(
+        _ button: NSButton,
+        title: String,
+        symbol: String,
+        action: Selector
+    ) {
+        button.title = title
+        button.bezelStyle = .rounded
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+        button.imagePosition = .imageLeading
+        button.target = self
+        button.action = action
+        button.setAccessibilityLabel(title)
     }
 
     private func updateControls() {
@@ -474,6 +570,43 @@ final class SettingsViewController: NSViewController {
     }
 
     @objc private func openConfigAction() { onOpenConfig?() }
+
+    @objc private func automaticUploadChanged() {
+        onAutomaticUploadChange?(automaticUploadSwitch.state == .on)
+    }
+
+    @objc private func uploadConfigAction() { onUploadConfig?() }
+
+    @objc private func pullConfigAction() { onPullConfig?() }
+
+    private func syncStatusText(_ status: ConfigSyncStatus) -> String {
+        switch status {
+        case .idle:
+            "尚未上传"
+        case .uploading:
+            "正在上传…"
+        case .reading:
+            "正在读取…"
+        case let .uploaded(date):
+            "已上传 · \(displayTime(date))"
+        case let .cloudSnapshot(date, isCurrentDevice):
+            "云端配置来自\(isCurrentDevice ? "此 Mac" : "其它 Mac") · \(displayTime(date))"
+        case .cloudEmpty:
+            "云端暂无配置"
+        case .unavailable:
+            "iCloud 不可用"
+        case let .failed(reason):
+            "同步失败：\(reason)"
+        }
+    }
+
+    private func displayTime(_ date: Date) -> String {
+        if abs(date.timeIntervalSinceNow) < 60 { return "刚刚" }
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
 
     @objc private func resetAction() {
         guard let window = view.window else {
