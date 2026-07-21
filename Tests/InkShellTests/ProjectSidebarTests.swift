@@ -52,6 +52,88 @@ struct ProjectSidebarTests {
 @Suite("项目侧边栏布局", .serialized)
 @MainActor
 struct ProjectSidebarLayoutTests {
+    @Test("点击长目录重建项目行时保持关闭按钮可见")
+    func longPathKeepsCloseButtonVisibleAcrossSelectionReload() throws {
+        let controller = SidebarViewController()
+        controller.view.frame = NSRect(
+            x: 0,
+            y: 0,
+            width: InkDesignTokens.Sidebar.width,
+            height: 700
+        )
+        let longPath = "~/work/code/wiselaw/wise-studio"
+        controller.reload(rows: [
+            .init(
+                title: longPath,
+                subtitle: "1 个会话",
+                active: false,
+                pinned: true,
+                label: .red
+            ),
+        ])
+        controller.view.layoutSubtreeIfNeeded()
+
+        var rowStack = try #require(
+            controller.view.subviews.compactMap { $0 as? NSStackView }.first
+        )
+        let rowView = try #require(rowStack.arrangedSubviews.first)
+        let title = try #require(
+            descendants(of: NSTextField.self, in: rowView)
+                .first { $0.stringValue == longPath }
+        )
+        let icon = try #require(descendants(of: NSImageView.self, in: rowView).first)
+        let titleFrameBeforeHover = title.frame
+        let iconFrameBeforeHover = icon.frame
+        let event = try #require(
+            NSEvent.mouseEvent(
+                with: .mouseMoved,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                eventNumber: 0,
+                clickCount: 0,
+                pressure: 0
+            )
+        )
+        rowView.mouseEntered(with: event)
+        controller.view.layoutSubtreeIfNeeded()
+        #expect(descendants(of: NSButton.self, in: rowView).first?.isHidden == false)
+        #expect(title.frame == titleFrameBeforeHover)
+        #expect(icon.frame == iconFrameBeforeHover)
+
+        controller.reload(rows: [
+            .init(
+                title: longPath,
+                subtitle: "1 个会话",
+                active: true,
+                pinned: true,
+                label: .red
+            ),
+        ])
+        controller.view.layoutSubtreeIfNeeded()
+        rowStack = try #require(
+            controller.view.subviews.compactMap { $0 as? NSStackView }.first
+        )
+        let reloadedRow = try #require(rowStack.arrangedSubviews.first)
+        let reloadedTitle = try #require(
+            descendants(of: NSTextField.self, in: reloadedRow)
+                .first { $0.stringValue == longPath }
+        )
+        let reloadedIcon = try #require(descendants(of: NSImageView.self, in: reloadedRow).first)
+
+        #expect(descendants(of: NSButton.self, in: reloadedRow).first?.isHidden == false)
+        #expect(reloadedTitle.frame == titleFrameBeforeHover)
+        #expect(reloadedIcon.frame == iconFrameBeforeHover)
+
+        reloadedRow.mouseExited(with: event)
+        controller.view.layoutSubtreeIfNeeded()
+        #expect(descendants(of: NSButton.self, in: reloadedRow).first?.isHidden == true)
+        #expect(reloadedTitle.frame == titleFrameBeforeHover)
+        #expect(reloadedIcon.frame == iconFrameBeforeHover)
+    }
+
     @Test("展开态为所有项目保留圆点列")
     func expandedRowsReserveDotColumn() {
         let controller = makeLabelController(mode: .expanded)
@@ -78,6 +160,7 @@ struct ProjectSidebarLayoutTests {
             abs($0.frame.width - InkDesignTokens.Sidebar.labelRailWidth) < 0.5
                 && abs($0.frame.height - InkDesignTokens.Sidebar.labelRailHeight) < 0.5
         })
+        #expect(descendants(of: NSButton.self, in: controller.view).count == 1)
     }
 
     @Test("展开态底部只保留全宽新建项目")

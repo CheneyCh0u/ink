@@ -60,6 +60,7 @@ final class SidebarViewController: NSViewController {
     private let footerSeparator = NSBox()
     private let sectionTitle = NSTextField(labelWithString: "项目")
     private var rows: [Row] = []
+    private var hoveredRowTitle: String?
     private var expandedRowsTop: NSLayoutConstraint?
     private var compactRowsTop: NSLayoutConstraint?
 
@@ -152,13 +153,22 @@ final class SidebarViewController: NSViewController {
                 row: row,
                 index: index,
                 compact: displayMode == .compact,
-                indicatorStyle: displayMode.labelIndicatorStyle
+                indicatorStyle: displayMode.labelIndicatorStyle,
+                revealsCloseButton: row.title == hoveredRowTitle
             )
             rowView.onClick = { [weak self] in self?.onSelect?(index) }
             rowView.onRemove = { [weak self] in self?.onRemove?(index) }
             rowView.onTogglePin = { [weak self] in self?.onTogglePin?(index) }
             rowView.onEditNote = { [weak self] in self?.onEditNote?(index) }
             rowView.onSetLabel = { [weak self] label in self?.onSetLabel?(index, label) }
+            rowView.onHoverChanged = { [weak self] hovered in
+                guard let self else { return }
+                if hovered {
+                    self.hoveredRowTitle = row.title
+                } else if self.hoveredRowTitle == row.title {
+                    self.hoveredRowTitle = nil
+                }
+            }
             rowStack.addArrangedSubview(rowView)
             rowView.widthAnchor.constraint(equalTo: rowStack.widthAnchor).isActive = true
         }
@@ -234,6 +244,7 @@ private final class ProjectRowView: NSView, NSDraggingSource {
     var onTogglePin: (() -> Void)?
     var onEditNote: (() -> Void)?
     var onSetLabel: ((InkProjectLabel) -> Void)?
+    var onHoverChanged: ((Bool) -> Void)?
 
     private let index: Int
     private let pinned: Bool
@@ -248,7 +259,8 @@ private final class ProjectRowView: NSView, NSDraggingSource {
         row: SidebarViewController.Row,
         index: Int,
         compact: Bool,
-        indicatorStyle: ProjectLabelIndicatorStyle
+        indicatorStyle: ProjectLabelIndicatorStyle,
+        revealsCloseButton: Bool
     ) {
         self.index = index
         self.pinned = row.pinned
@@ -316,7 +328,7 @@ private final class ProjectRowView: NSView, NSDraggingSource {
         closeButton.contentTintColor = InkDesignTokens.Color.textSecondary
         closeButton.target = self
         closeButton.action = #selector(removeAction)
-        closeButton.isHidden = true
+        closeButton.isHidden = !revealsCloseButton
 
         let textStack = NSStackView(views: [title, subtitle])
         textStack.orientation = .vertical
@@ -370,11 +382,15 @@ private final class ProjectRowView: NSView, NSDraggingSource {
     }
 
     override func mouseEntered(with event: NSEvent) {
-        if !compact { closeButton.isHidden = false }
+        if !compact {
+            closeButton.isHidden = false
+            onHoverChanged?(true)
+        }
     }
 
     override func mouseExited(with event: NSEvent) {
         closeButton.isHidden = true
+        onHoverChanged?(false)
     }
 
     // 点击选中放到 mouseUp，给拖拽让路。
