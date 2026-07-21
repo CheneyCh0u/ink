@@ -5,6 +5,24 @@ import Testing
 @Suite("PTY 前台目录", .serialized)
 struct PTYSessionTests {
 
+    @Test("PTY 子环境移除宿主 NO_COLOR 并保留其他变量")
+    func childEnvironmentRemovesHostNoColor() {
+        let environment = PTYSession.childEnvironment(from: [
+            "NO_COLOR": "1",
+            "TERM": "dumb",
+            "COLORTERM": "",
+            "LANG": "en_US.UTF-8",
+            "INK_SENTINEL": "preserved",
+        ])
+
+        #expect(environment["NO_COLOR"] == nil)
+        #expect(environment["TERM"] == "xterm-256color")
+        #expect(environment["COLORTERM"] == "truecolor")
+        #expect(environment["TERM_PROGRAM"] == "ink")
+        #expect(environment["LANG"] == "en_US.UTF-8")
+        #expect(environment["INK_SENTINEL"] == "preserved")
+    }
+
     @Test("前台 shell 改变目录后返回实时工作目录")
     func foregroundWorkingDirectoryTracksShell() throws {
         let session = PTYSession()

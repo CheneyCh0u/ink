@@ -36,6 +36,20 @@ public final class PTYSession: @unchecked Sendable {
 
     // MARK: - 生命周期
 
+    static func childEnvironment(
+        from hostEnvironment: [String: String]
+    ) -> [String: String] {
+        var environment = hostEnvironment
+        environment.removeValue(forKey: "NO_COLOR")
+        environment["TERM"] = "xterm-256color"
+        environment["COLORTERM"] = "truecolor"
+        environment["TERM_PROGRAM"] = "ink"
+        if environment["LANG"] == nil {
+            environment["LANG"] = "zh_CN.UTF-8"
+        }
+        return environment
+    }
+
     /// 启动登录 shell。与 Terminal.app / Ghostty 一致，经 `/usr/bin/login`
     /// 启动：注册 utmpx（`w`/`who` 可见）并打印 "Last login" 横幅。
     ///
@@ -51,13 +65,9 @@ public final class PTYSession: @unchecked Sendable {
 
         // fork 之后到 exec 之间只能调 async-signal-safe 函数，Swift 运行时的
         // 分配都不行。所以 argv / envp 全部在 fork 之前备成 C 缓冲。
-        var environment = ProcessInfo.processInfo.environment
-        environment["TERM"] = "xterm-256color"
-        environment["COLORTERM"] = "truecolor"
-        environment["TERM_PROGRAM"] = "ink"
-        if environment["LANG"] == nil {
-            environment["LANG"] = "zh_CN.UTF-8"
-        }
+        let environment = Self.childEnvironment(
+            from: ProcessInfo.processInfo.environment
+        )
 
         let cShell = strdup("/usr/bin/login")
         let loginArgs = ["login", "-fpl", userName, shellPath, "-l"]
