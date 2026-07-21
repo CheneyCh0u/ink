@@ -33,6 +33,7 @@ fi
 archive_name="Ink-${tag}.zip"
 archive_path="$output_dir/$archive_name"
 checksum_path="${archive_path}.sha256"
+entitlements_path="$project_root/Resources/Ink.entitlements"
 if [[ -e "$archive_path" || -e "$checksum_path" ]]; then
     echo "错误：输出文件已存在，请先移走：$archive_path" >&2
     exit 1
@@ -67,6 +68,7 @@ required_paths=(
     "$x86_64_bin_dir/ink"
     "$project_root/Sources/ink/Resources/AppIcon.icns"
     "$project_root/Sources/InkTerminalView/Shaders.metal"
+    "$entitlements_path"
 )
 for path in "${required_paths[@]}"; do
     if [[ ! -e "$path" ]]; then
@@ -147,7 +149,7 @@ PLIST
 plutil -lint "$contents_path/Info.plist"
 
 signing_identity="${CODE_SIGN_IDENTITY:--}"
-signing_args=(--force --deep --sign "$signing_identity")
+signing_args=(--force --deep --sign "$signing_identity" --entitlements "$entitlements_path")
 if [[ "$signing_identity" != "-" ]]; then
     signing_args+=(--options runtime --timestamp)
 fi

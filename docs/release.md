@@ -74,6 +74,11 @@ scripts/tag-release.sh
 可验证，但从互联网下载后仍可能出现 Gatekeeper 提示。正式对外分发前需要另建
 Issue，配置签名证书与 Apple notarization。
 
+打包脚本会从 `Resources/Ink.entitlements` 附加 iCloud KVS entitlement。ad-hoc 签名
+只能保证产物携带该声明，不能保证 iCloud 服务可用；配置同步的正式分发还需要为
+`com.cheneychou.ink` 配置匹配的 Apple App ID、iCloud capability、签名身份与
+provisioning。缺少这些条件时 Ink 必须显示“iCloud 不可用”，本地配置功能不受影响。
+
 ## 本地验证打包
 
 本地可以使用任意有效格式的测试标签生成产物，不会创建 Git tag 或 GitHub
