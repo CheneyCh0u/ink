@@ -38,6 +38,11 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         didSet { if lineHeightMultiplier != oldValue { rebuildRenderer() } }
     }
 
+    /// 每个 cell 额外增加的物理像素高度。
+    public var cellHeightAdjustment = 1 {
+        didSet { if cellHeightAdjustment != oldValue { rebuildRenderer() } }
+    }
+
     /// 终端配色家族。切换时只更新 renderer 的调色板 uniform，不重建 glyph atlas。
     public var terminalTheme: InkTerminalTheme = .neutral {
         didSet {
@@ -87,15 +92,17 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
         let font = fontFamily.flatMap { NSFont(name: $0, size: fontSize) }
             ?? InkDesignTokens.Typography.terminal(size: fontSize)
-        let advance = ("0" as NSString).size(withAttributes: [.font: font]).width
-        let cellWidth = ceil(advance * scale) / scale
-        let naturalHeight = ceil(NSLayoutManager().defaultLineHeight(for: font) * scale)
-        let cellHeight = ceil(naturalHeight * max(0.8, lineHeightMultiplier)) / scale
+        let metrics = FontGridMetrics(
+            font: font,
+            scale: scale,
+            lineHeightMultiplier: lineHeightMultiplier,
+            cellHeightAdjustment: cellHeightAdjustment
+        )
         let inset = InkDesignTokens.Spacing.sm * 2
         let pixelSafety = 1 / scale
         return CGSize(
-            width: CGFloat(columns) * cellWidth + inset + pixelSafety,
-            height: CGFloat(rows) * cellHeight + inset + pixelSafety
+            width: CGFloat(columns) * metrics.cellWidth / scale + inset + pixelSafety,
+            height: CGFloat(rows) * metrics.cellHeight / scale + inset + pixelSafety
         )
     }
 
@@ -238,7 +245,10 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         let font = fontFamily.flatMap { NSFont(name: $0, size: fontSize) }
             ?? InkDesignTokens.Typography.terminal(size: fontSize)
         guard let renderer = TerminalRenderer(
-            font: font, scale: scale, lineHeightMultiplier: lineHeightMultiplier
+            font: font,
+            scale: scale,
+            lineHeightMultiplier: lineHeightMultiplier,
+            cellHeightAdjustment: cellHeightAdjustment
         ) else { return }
         renderer.cursorStyle = cursorStyle
         renderer.apply(palette: terminalTheme.palette(for: effectiveAppearance))
