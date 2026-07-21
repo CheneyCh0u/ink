@@ -4,7 +4,7 @@
 
 **Goal:** 在关闭范围内仍有非 shell 前台程序时，用一次 macOS 原生确认阻止误终止，并让空闲 shell 继续直接关闭。
 
-**Architecture:** InkPTY 在关闭时生成一次前台进程快照，以启动 shell 的进程身份而非名称白名单区分空闲 shell 与前台作业。InkShell 用纯值模型聚合快照并生成文案，由可注入的协调器统一执行或取消关闭；`MainWindowController` 只负责收集目标 pane，`AppDelegate` 只负责把 Command-Q 结果映射为 AppKit 终止答复。
+**Architecture:** InkPTY 在关闭时生成一次前台进程快照，以本次实际配置的 shell basename 而非名称白名单区分空闲 shell 与前台作业。InkShell 用纯值模型聚合快照并生成文案，由可注入的协调器统一执行或取消关闭；`MainWindowController` 只负责收集目标 pane，`AppDelegate` 只负责把 Command-Q 结果映射为 AppKit 终止答复。
 
 **Tech Stack:** Swift 6 strict concurrency、AppKit `NSAlert`、SwiftPM、swift-testing；最低 macOS 14.0；不新增第三方依赖。
 
@@ -55,7 +55,7 @@ func classifiesForegroundProcessBySpawnedShellIdentity() {
         childPID: 42,
         shellName: "nu",
         masterIsOpen: true,
-        foregroundPGID: 42,
+        foregroundPGID: 43,
         foregroundName: "nu"
     ) == .shell(name: "nu"))
 
@@ -140,9 +140,7 @@ static func classifyForegroundProcess(
     guard let foregroundPGID, foregroundPGID > 0 else {
         return .program(name: nil)
     }
-    if foregroundPGID == childPID,
-       let shellName,
-       foregroundName == shellName {
+    if let shellName, foregroundName == shellName {
         return .shell(name: shellName)
     }
     return .program(name: foregroundName)

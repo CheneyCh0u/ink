@@ -29,9 +29,10 @@ Issue #52。Ink 当前在关闭分屏、标签、项目、窗口或执行 Comman
 
 ## 活跃程序判定
 
-`PTYSession` 启动时记录实际 shell 的进程身份，并在用户发起关闭时读取控制终端的
-前台进程组。判定不依赖 `zsh`、`bash`、`fish` 等固定名称名单，因此兼容用户配置
-的其他 shell。
+`PTYSession` 启动时记录实际配置的 shell 名称，并在用户发起关闭时读取控制终端的
+前台进程组组长。`/usr/bin/login` 会 fork 实际 shell，因此不假设两者 PID 相同；
+判定只与本次配置的 shell basename 比较，不依赖 `zsh`、`bash`、`fish` 等固定名称
+名单，因此兼容用户配置的其他 shell。
 
 - 前台仍是启动的 shell：会话空闲，无需确认；
 - 前台进程组已切换到作业，或 shell 被 `exec` 成其他程序：需要确认；

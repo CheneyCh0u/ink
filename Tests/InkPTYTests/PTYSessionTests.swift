@@ -23,6 +23,82 @@ struct PTYSessionTests {
         #expect(environment["INK_SENTINEL"] == "preserved")
     }
 
+    @Test("前台进程按实际 shell 身份分类")
+    func classifiesForegroundProcessBySpawnedShellIdentity() {
+        #expect(PTYSession.classifyForegroundProcess(
+            childPID: 42,
+            shellName: "nu",
+            masterIsOpen: true,
+            foregroundPGID: 43,
+            foregroundName: "nu"
+        ) == .shell(name: "nu"))
+
+        #expect(PTYSession.classifyForegroundProcess(
+            childPID: 42,
+            shellName: "nu",
+            masterIsOpen: true,
+            foregroundPGID: 99,
+            foregroundName: "claude"
+        ) == .program(name: "claude"))
+
+        #expect(PTYSession.classifyForegroundProcess(
+            childPID: 42,
+            shellName: "nu",
+            masterIsOpen: true,
+            foregroundPGID: 42,
+            foregroundName: "vim"
+        ) == .program(name: "vim"))
+    }
+
+    @Test("退出与查询失败采用安全分类")
+    func classifiesExitedAndUnknownForegroundProcess() {
+        #expect(PTYSession.classifyForegroundProcess(
+            childPID: -1,
+            shellName: "zsh",
+            masterIsOpen: false,
+            foregroundPGID: nil,
+            foregroundName: nil
+        ) == .exited)
+
+        #expect(PTYSession.classifyForegroundProcess(
+            childPID: 42,
+            shellName: "zsh",
+            masterIsOpen: true,
+            foregroundPGID: nil,
+            foregroundName: nil
+        ) == .program(name: nil))
+    }
+
+    @Test("真实 PTY 区分空闲 shell 与前台作业")
+    func foregroundProcessTracksJobControl() throws {
+        let session = PTYSession()
+        try session.start(columns: 80, rows: 24)
+        defer { session.terminate() }
+
+        let shellDeadline = ContinuousClock.now + .seconds(3)
+        var sawShell = false
+        while ContinuousClock.now < shellDeadline {
+            if case .shell = session.foregroundProcess() {
+                sawShell = true
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        #expect(sawShell)
+
+        session.write(Data("sleep 2\n".utf8))
+        let jobDeadline = ContinuousClock.now + .seconds(1)
+        var sawSleep = false
+        while ContinuousClock.now < jobDeadline {
+            if case .program(name: "sleep") = session.foregroundProcess() {
+                sawSleep = true
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        #expect(sawSleep)
+    }
+
     @Test("前台 shell 改变目录后返回实时工作目录")
     func foregroundWorkingDirectoryTracksShell() throws {
         let session = PTYSession()
