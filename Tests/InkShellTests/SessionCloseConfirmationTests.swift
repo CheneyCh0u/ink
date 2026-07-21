@@ -88,6 +88,8 @@ struct SessionCloseConfirmationTests {
         #expect(coordinator.requestApplicationTermination(processes: processes))
         #expect(coordinator.allowWindowClose(processes: processes))
         #expect(presenter.contents.count == 1)
+        #expect(coordinator.allowWindowClose(processes: processes))
+        #expect(presenter.contents.count == 2)
     }
 
     @Test("取消 Command-Q 后窗口关闭仍需重新确认")
@@ -101,12 +103,41 @@ struct SessionCloseConfirmationTests {
         #expect(coordinator.allowWindowClose(processes: processes))
         #expect(presenter.contents.count == 2)
     }
+
+    @Test("显示确认期间忽略重复关闭请求")
+    func confirmationRejectsReentrantCloseRequest() {
+        let presenter = RecordingClosePresenter(result: true)
+        let coordinator = SessionCloseCoordinator(presenter: presenter)
+        var outerCloseCount = 0
+        var nestedCloseCount = 0
+        var nestedResult = true
+        presenter.onConfirm = {
+            nestedResult = coordinator.perform(
+                target: .pane,
+                processes: [.program(name: "vim")]
+            ) {
+                nestedCloseCount += 1
+            }
+        }
+
+        #expect(coordinator.perform(
+            target: .pane,
+            processes: [.program(name: "vim")]
+        ) {
+            outerCloseCount += 1
+        })
+        #expect(!nestedResult)
+        #expect(nestedCloseCount == 0)
+        #expect(outerCloseCount == 1)
+        #expect(presenter.contents.count == 1)
+    }
 }
 
 @MainActor
 private final class RecordingClosePresenter: SessionClosePresenting {
     var result: Bool
     var contents: [SessionCloseAlertContent] = []
+    var onConfirm: (() -> Void)?
 
     init(result: Bool) {
         self.result = result
@@ -114,6 +145,9 @@ private final class RecordingClosePresenter: SessionClosePresenting {
 
     func confirm(_ content: SessionCloseAlertContent) -> Bool {
         contents.append(content)
+        let callback = onConfirm
+        onConfirm = nil
+        callback?()
         return result
     }
 }

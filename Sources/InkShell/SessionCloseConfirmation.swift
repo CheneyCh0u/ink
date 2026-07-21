@@ -96,6 +96,7 @@ final class NSAlertSessionClosePresenter: SessionClosePresenting {
 final class SessionCloseCoordinator {
     private let presenter: any SessionClosePresenting
     private var applicationTerminationApproved = false
+    private var isPresentingConfirmation = false
 
     init(presenter: any SessionClosePresenting = NSAlertSessionClosePresenter()) {
         self.presenter = presenter
@@ -110,7 +111,7 @@ final class SessionCloseCoordinator {
         if let content = SessionCloseConfirmation.content(
             target: target,
             processes: processes
-        ), !presenter.confirm(content) {
+        ), !confirm(content) {
             return false
         }
         action()
@@ -125,7 +126,7 @@ final class SessionCloseCoordinator {
             target: .application,
             processes: processes
         ) {
-            approved = presenter.confirm(content)
+            approved = confirm(content)
         } else {
             approved = true
         }
@@ -134,11 +135,21 @@ final class SessionCloseCoordinator {
     }
 
     func allowWindowClose(processes: [PTYSession.ForegroundProcess]) -> Bool {
-        if applicationTerminationApproved { return true }
+        if applicationTerminationApproved {
+            applicationTerminationApproved = false
+            return true
+        }
         guard let content = SessionCloseConfirmation.content(
             target: .window,
             processes: processes
         ) else { return true }
+        return confirm(content)
+    }
+
+    private func confirm(_ content: SessionCloseAlertContent) -> Bool {
+        guard !isPresentingConfirmation else { return false }
+        isPresentingConfirmation = true
+        defer { isPresentingConfirmation = false }
         return presenter.confirm(content)
     }
 }
