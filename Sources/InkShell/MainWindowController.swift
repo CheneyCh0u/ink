@@ -317,6 +317,26 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         }
     }
 
+    @objc public func increaseFontSize(_ sender: Any?) {
+        performFontSizeCommand(.increase)
+    }
+
+    @objc public func decreaseFontSize(_ sender: Any?) {
+        performFontSizeCommand(.decrease)
+    }
+
+    @objc public func resetFontSize(_ sender: Any?) {
+        performFontSizeCommand(.reset)
+    }
+
+    private func performFontSizeCommand(_ command: FontSizeCommand) {
+        let target = command.updatedValue(from: config.fontSize)
+        guard target != config.fontSize else { return }
+        var fresh = config
+        fresh.fontSize = target
+        saveConfig(fresh)
+    }
+
     private func openConfigFile() {
         do {
             try config.save(to: configURL)
