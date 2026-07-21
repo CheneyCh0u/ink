@@ -837,10 +837,12 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         } ?? []
         tabBar.reload(tabs: tabs)
         sidebarVC.reload(rows: projects.enumerated().map { index, project in
-            let fallback = project.tabs.isEmpty ? "未打开" : "\(project.tabs.count) 个标签"
+            let status = project.tabs.isEmpty ? "未打开" : "\(project.tabs.count) 个标签"
             return SidebarViewController.Row(
-                title: project.displayName,
-                subtitle: project.note ?? fallback,
+                title: project.sidebarTitle,
+                detail: project.note ?? project.sidebarParentPath,
+                status: status,
+                fullPath: project.displayName,
                 active: !isShowingSettings && index == activeProjectIndex,
                 pinned: project.pinned,
                 label: project.label
