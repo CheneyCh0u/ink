@@ -26,7 +26,7 @@ struct TerminalSplitCommandTests {
 
     @Test("Command-W 关闭活动 pane 而不是整个标签")
     func closeCommandRemovesOnlyActivePane() throws {
-        let presenter = SplitClosePresenter(result: true)
+        let presenter = SplitClosePresenter(result: false)
         let controller = makeController(presenter: presenter)
         let window = try #require(controller.window)
         window.setFrame(NSRect(x: 300, y: 200, width: 1000, height: 700), display: true)
@@ -39,9 +39,12 @@ struct TerminalSplitCommandTests {
         spinRunLoop()
         #expect(terminalViews(in: window).count == 2)
 
-        controller.closeActivePane(nil)
-        spinRunLoop()
-        #expect(presenter.contents.isEmpty)
+        let closedWithoutConfirmation = waitUntil {
+            presenter.contents.removeAll()
+            controller.closeActivePane(nil)
+            return presenter.contents.isEmpty && terminalViews(in: window).count == 1
+        }
+        #expect(closedWithoutConfirmation)
         #expect(terminalViews(in: window).count == 1)
         #expect(window.isVisible)
 
@@ -135,6 +138,18 @@ struct TerminalSplitCommandTests {
         for _ in 0..<cycles {
             RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
         }
+    }
+
+    private func waitUntil(
+        timeout: TimeInterval = 5,
+        condition: () -> Bool
+    ) -> Bool {
+        let deadline = Date(timeIntervalSinceNow: timeout)
+        repeat {
+            if condition() { return true }
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        } while Date() < deadline
+        return condition()
     }
 }
 
