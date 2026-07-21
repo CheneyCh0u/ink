@@ -1112,6 +1112,13 @@ final class ShellSplitViewController: NSSplitViewController {
         onToggleSidebar?()
     }
 
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(toggleSidebar(_:)) {
+            return true
+        }
+        return super.validateUserInterfaceItem(item)
+    }
+
     override func splitViewDidResizeSubviews(_ notification: Notification) {
         onLayoutChange?()
     }

@@ -24,4 +24,17 @@ struct FontSizeMenuTests {
         }
         #expect(view.items.contains { $0.isSeparatorItem })
     }
+
+    @Test("侧边栏菜单验证允许执行三态切换")
+    func sidebarToggleValidation() {
+        let splitViewController = ShellSplitViewController()
+        let menuItem = NSMenuItem()
+        menuItem.action = #selector(NSSplitViewController.toggleSidebar(_:))
+        var toggleCount = 0
+        splitViewController.onToggleSidebar = { toggleCount += 1 }
+
+        #expect(splitViewController.validateUserInterfaceItem(menuItem))
+        splitViewController.toggleSidebar(nil)
+        #expect(toggleCount == 1)
+    }
 }
