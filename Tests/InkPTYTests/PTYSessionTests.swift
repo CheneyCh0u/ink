@@ -27,44 +27,54 @@ struct PTYSessionTests {
     func classifiesForegroundProcessBySpawnedShellIdentity() {
         #expect(PTYSession.classifyForegroundProcess(
             childPID: 42,
+            shellProcessGroupID: nil,
             shellName: "nu",
             masterIsOpen: true,
             foregroundPGID: 43,
+            foregroundParentPID: 42,
             foregroundName: "nu"
         ) == .shell(name: "nu"))
 
         #expect(PTYSession.classifyForegroundProcess(
             childPID: 42,
+            shellProcessGroupID: 43,
             shellName: "nu",
             masterIsOpen: true,
             foregroundPGID: 99,
+            foregroundParentPID: 43,
             foregroundName: "claude"
         ) == .program(name: "claude"))
 
         #expect(PTYSession.classifyForegroundProcess(
             childPID: 42,
+            shellProcessGroupID: nil,
             shellName: "nu",
             masterIsOpen: true,
-            foregroundPGID: 42,
-            foregroundName: "vim"
-        ) == .program(name: "vim"))
+            foregroundPGID: 99,
+            foregroundParentPID: 43,
+            foregroundName: "nu"
+        ) == .program(name: "nu"))
     }
 
     @Test("退出与查询失败采用安全分类")
     func classifiesExitedAndUnknownForegroundProcess() {
         #expect(PTYSession.classifyForegroundProcess(
             childPID: -1,
+            shellProcessGroupID: nil,
             shellName: "zsh",
             masterIsOpen: false,
             foregroundPGID: nil,
+            foregroundParentPID: nil,
             foregroundName: nil
         ) == .exited)
 
         #expect(PTYSession.classifyForegroundProcess(
             childPID: 42,
+            shellProcessGroupID: nil,
             shellName: "zsh",
             masterIsOpen: true,
             foregroundPGID: nil,
+            foregroundParentPID: nil,
             foregroundName: nil
         ) == .program(name: nil))
     }

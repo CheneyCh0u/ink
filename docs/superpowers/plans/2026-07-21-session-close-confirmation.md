@@ -41,7 +41,7 @@
 - Test: `Tests/InkPTYTests/PTYSessionTests.swift`
 
 **Interfaces:**
-- Consumes: `childPID`、`masterFD`、启动时的 `SHELL` 路径、`tcgetpgrp(3)` 和现有 `sysctl` 进程名查询。
+- Consumes: `childPID`、`masterFD`、启动时的 `SHELL` 路径、`tcgetpgrp(3)` 和 `sysctl` 进程身份查询。
 - Produces: `PTYSession.ForegroundProcess` 和 `public func foregroundProcess() -> ForegroundProcess`，供 `TerminalSession` 使用；现有 `foregroundProcessName()` 保持兼容。
 
 - [ ] **Step 1: 写出分类器失败测试**
@@ -53,44 +53,54 @@
 func classifiesForegroundProcessBySpawnedShellIdentity() {
     #expect(PTYSession.classifyForegroundProcess(
         childPID: 42,
+        shellProcessGroupID: nil,
         shellName: "nu",
         masterIsOpen: true,
         foregroundPGID: 43,
+        foregroundParentPID: 42,
         foregroundName: "nu"
     ) == .shell(name: "nu"))
 
     #expect(PTYSession.classifyForegroundProcess(
         childPID: 42,
+        shellProcessGroupID: 43,
         shellName: "nu",
         masterIsOpen: true,
         foregroundPGID: 99,
+        foregroundParentPID: 43,
         foregroundName: "claude"
     ) == .program(name: "claude"))
 
     #expect(PTYSession.classifyForegroundProcess(
         childPID: 42,
+        shellProcessGroupID: nil,
         shellName: "nu",
         masterIsOpen: true,
-        foregroundPGID: 42,
-        foregroundName: "vim"
-    ) == .program(name: "vim"))
+        foregroundPGID: 99,
+        foregroundParentPID: 43,
+        foregroundName: "nu"
+    ) == .program(name: "nu"))
 }
 
 @Test("退出与查询失败采用安全分类")
 func classifiesExitedAndUnknownForegroundProcess() {
     #expect(PTYSession.classifyForegroundProcess(
         childPID: -1,
+        shellProcessGroupID: nil,
         shellName: "zsh",
         masterIsOpen: false,
         foregroundPGID: nil,
+        foregroundParentPID: nil,
         foregroundName: nil
     ) == .exited)
 
     #expect(PTYSession.classifyForegroundProcess(
         childPID: 42,
+        shellProcessGroupID: nil,
         shellName: "zsh",
         masterIsOpen: true,
         foregroundPGID: nil,
+        foregroundParentPID: nil,
         foregroundName: nil
     ) == .program(name: nil))
 }
@@ -118,6 +128,7 @@ public enum ForegroundProcess: Equatable, Sendable {
 }
 
 private var shellName: String?
+private var shellProcessGroupID: pid_t?
 ```
 
 在 `start` 取得 `shellPath` 后、`forkpty` 前记录：
@@ -131,38 +142,52 @@ shellName = URL(fileURLWithPath: shellPath).lastPathComponent
 ```swift
 static func classifyForegroundProcess(
     childPID: pid_t,
+    shellProcessGroupID: pid_t?,
     shellName: String?,
     masterIsOpen: Bool,
     foregroundPGID: pid_t?,
+    foregroundParentPID: pid_t?,
     foregroundName: String?
 ) -> ForegroundProcess {
     guard childPID > 0, masterIsOpen else { return .exited }
     guard let foregroundPGID, foregroundPGID > 0 else {
         return .program(name: nil)
     }
-    if let shellName, foregroundName == shellName {
+    let isSpawnedShell = shellProcessGroupID == foregroundPGID
+        || (shellProcessGroupID == nil
+            && (foregroundPGID == childPID || foregroundParentPID == childPID))
+    if isSpawnedShell, let shellName, foregroundName == shellName {
         return .shell(name: shellName)
     }
     return .program(name: foregroundName)
 }
 ```
 
-把现有进程名读取抽成以下函数，再实现一次快照：
+把现有进程名读取扩展为同时返回父 PID 的进程身份，再实现一次快照。首次确认
+`/usr/bin/login` 的直接 shell 后缓存其 PGID；后续必须同时匹配该 PGID 与 shell
+名称，同名但不同 PGID 的前台程序仍归类为 `.program`：
 
 ```swift
-private func processName(for pid: pid_t) -> String? {
+private struct ProcessIdentity {
+    let name: String
+    let parentPID: pid_t
+}
+
+private func processIdentity(for pid: pid_t) -> ProcessIdentity? {
     var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
     var info = kinfo_proc()
     var size = MemoryLayout<kinfo_proc>.stride
     guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else {
         return nil
     }
-    return withUnsafeBytes(of: info.kp_proc.p_comm) { raw in
+    let name: String? = withUnsafeBytes(of: info.kp_proc.p_comm) { raw in
         guard let base = raw.bindMemory(to: CChar.self).baseAddress else {
             return nil
         }
         return String(cString: base)
     }
+    guard let name else { return nil }
+    return ProcessIdentity(name: name, parentPID: info.kp_eproc.e_ppid)
 }
 ```
 
@@ -173,13 +198,20 @@ public func foregroundProcess() -> ForegroundProcess {
     guard childPID > 0, masterFD >= 0 else { return .exited }
     let pgid = tcgetpgrp(masterFD)
     let validPGID: pid_t? = pgid > 0 ? pgid : nil
-    return Self.classifyForegroundProcess(
+    let identity = validPGID.flatMap(processIdentity(for:))
+    let process = Self.classifyForegroundProcess(
         childPID: childPID,
+        shellProcessGroupID: shellProcessGroupID,
         shellName: shellName,
         masterIsOpen: masterFD >= 0,
         foregroundPGID: validPGID,
-        foregroundName: validPGID.flatMap(processName(for:))
+        foregroundParentPID: identity?.parentPID,
+        foregroundName: identity?.name
     )
+    if shellProcessGroupID == nil, case .shell = process {
+        shellProcessGroupID = validPGID
+    }
+    return process
 }
 
 public func foregroundProcessName() -> String? {

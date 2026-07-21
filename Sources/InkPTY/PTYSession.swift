@@ -29,6 +29,7 @@ public final class PTYSession: @unchecked Sendable {
     private var masterFD: Int32 = -1
     private var childPID: pid_t = -1
     private var shellName: String?
+    private var shellProcessGroupID: pid_t?
     private var readSource: DispatchSourceRead?
     private var exitSource: DispatchSourceProcess?
 
@@ -139,30 +140,42 @@ public final class PTYSession: @unchecked Sendable {
 
     static func classifyForegroundProcess(
         childPID: pid_t,
+        shellProcessGroupID: pid_t?,
         shellName: String?,
         masterIsOpen: Bool,
         foregroundPGID: pid_t?,
+        foregroundParentPID: pid_t?,
         foregroundName: String?
     ) -> ForegroundProcess {
         guard childPID > 0, masterIsOpen else { return .exited }
         guard let foregroundPGID, foregroundPGID > 0 else {
             return .program(name: nil)
         }
-        if let shellName, foregroundName == shellName {
+        let isSpawnedShell = shellProcessGroupID == foregroundPGID
+            || (shellProcessGroupID == nil
+                && (foregroundPGID == childPID || foregroundParentPID == childPID))
+        if isSpawnedShell, let shellName, foregroundName == shellName {
             return .shell(name: shellName)
         }
         return .program(name: foregroundName)
     }
 
-    private func processName(for pid: pid_t) -> String? {
+    private struct ProcessIdentity {
+        let name: String
+        let parentPID: pid_t
+    }
+
+    private func processIdentity(for pid: pid_t) -> ProcessIdentity? {
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
         var info = kinfo_proc()
         var size = MemoryLayout<kinfo_proc>.stride
         guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return nil }
-        return withUnsafeBytes(of: info.kp_proc.p_comm) { raw in
+        let name: String? = withUnsafeBytes(of: info.kp_proc.p_comm) { raw in
             guard let base = raw.bindMemory(to: CChar.self).baseAddress else { return nil }
             return String(cString: base)
         }
+        guard let name else { return nil }
+        return ProcessIdentity(name: name, parentPID: info.kp_eproc.e_ppid)
     }
 
     /// 关闭时读取一次前台进程。查询失败按仍有未知前台程序处理，避免误终止。
@@ -170,13 +183,20 @@ public final class PTYSession: @unchecked Sendable {
         guard childPID > 0, masterFD >= 0 else { return .exited }
         let pgid = tcgetpgrp(masterFD)
         let validPGID: pid_t? = pgid > 0 ? pgid : nil
-        return Self.classifyForegroundProcess(
+        let identity = validPGID.flatMap(processIdentity(for:))
+        let process = Self.classifyForegroundProcess(
             childPID: childPID,
+            shellProcessGroupID: shellProcessGroupID,
             shellName: shellName,
             masterIsOpen: masterFD >= 0,
             foregroundPGID: validPGID,
-            foregroundName: validPGID.flatMap(processName(for:))
+            foregroundParentPID: identity?.parentPID,
+            foregroundName: identity?.name
         )
+        if shellProcessGroupID == nil, case .shell = process {
+            shellProcessGroupID = validPGID
+        }
+        return process
     }
 
     /// PTY 前台进程组组长的进程名（"zsh"、"vim"…），标签标题用。
