@@ -1,6 +1,6 @@
 import AppKit
 import InkConfig
-import InkTerminalView
+@testable import InkTerminalView
 import TerminalCore
 import Testing
 @testable import InkShell
@@ -242,6 +242,119 @@ struct TerminalSearchWorkspaceTests {
         #expect(!controller.selectionOnly)
     }
 
+    @Test("当前匹配从 live OSC 133 命令块复制输出")
+    func copiesCurrentMatchCommandOutputFromLiveTerminal() async {
+        let terminal = makeSearchCommandTerminal(
+            command: "echo needle",
+            output: "live output"
+        )
+        let terminalView = TerminalMetalView(frame: .zero)
+        terminalView.terminalProvider = { terminal }
+        var copied: String?
+        terminalView.pasteboardWriter = { copied = $0; return true }
+        let controller = TerminalSearchController(
+            terminalProvider: { terminal }, terminalView: terminalView
+        )
+
+        controller.updateQuery("needle")
+        await controller.waitForPendingUpdate()
+
+        #expect(controller.searchBar.copyOutputEnabled)
+        #expect(controller.copyCurrentMatchCommandOutput())
+        #expect(copied == "live output")
+    }
+
+    @Test("命令块外匹配禁用复制输出")
+    func outsideMatchDisablesCommandOutputCopy() async {
+        var terminal = Terminal(
+            size: TerminalSize(columns: 20, rows: 2),
+            scrollbackCapacity: 20
+        )
+        var parser = Parser()
+        parser.feed(Array("plain needle".utf8), handler: &terminal)
+        let terminalView = TerminalMetalView(frame: .zero)
+        terminalView.terminalProvider = { terminal }
+        var copied: String?
+        terminalView.pasteboardWriter = { copied = $0; return true }
+        let controller = TerminalSearchController(
+            terminalProvider: { terminal }, terminalView: terminalView
+        )
+
+        controller.updateQuery("needle")
+        await controller.waitForPendingUpdate()
+
+        #expect(!controller.searchBar.copyOutputEnabled)
+        #expect(!controller.copyCurrentMatchCommandOutput())
+        #expect(copied == nil)
+    }
+
+    @Test("搜索后才完成的命令仍从 live Terminal 复制")
+    func commandCompletingAfterSearchUsesLiveTerminal() async {
+        var terminal = Terminal(
+            size: TerminalSize(columns: 24, rows: 3),
+            scrollbackCapacity: 20
+        )
+        var parser = Parser()
+        parser.feed(
+            Array(("\u{1B}]133;A\u{07}$ \u{1B}]133;B\u{07}echo needle\r\n"
+                + "\u{1B}]133;C\u{07}late output").utf8),
+            handler: &terminal
+        )
+        let terminalView = TerminalMetalView(frame: .zero)
+        terminalView.terminalProvider = { terminal }
+        var copied: String?
+        terminalView.pasteboardWriter = { copied = $0; return true }
+        let controller = TerminalSearchController(
+            terminalProvider: { terminal }, terminalView: terminalView
+        )
+        controller.updateQuery("needle")
+        await controller.waitForPendingUpdate()
+        #expect(!controller.searchBar.copyOutputEnabled)
+
+        parser.feed(Array("\u{1B}]133;D;0\u{07}".utf8), handler: &terminal)
+
+        #expect(controller.copyCurrentMatchCommandOutput())
+        #expect(copied == "late output")
+
+        copied = nil
+        controller.refreshForTerminalUpdate()
+        await controller.waitForPendingUpdate()
+        #expect(controller.searchBar.copyOutputEnabled)
+        #expect(controller.copyCurrentMatchCommandOutput())
+        #expect(copied == "late output")
+    }
+
+    @Test("未刷新时已淘汰匹配不会复制占用旧坐标的新命令")
+    func evictedStaleMatchCannotCopyCommandOutput() async {
+        var terminal = Terminal(
+            size: TerminalSize(columns: 24, rows: 1),
+            scrollbackCapacity: 1
+        )
+        var parser = Parser()
+        parser.feed(
+            Array(searchCommand("old needle", output: "old output").utf8),
+            handler: &terminal
+        )
+        let terminalView = TerminalMetalView(frame: .zero)
+        terminalView.terminalProvider = { terminal }
+        var copied: String?
+        terminalView.pasteboardWriter = { copied = $0; return true }
+        let controller = TerminalSearchController(
+            terminalProvider: { terminal }, terminalView: terminalView
+        )
+        controller.updateQuery("needle")
+        await controller.waitForPendingUpdate()
+        #expect(controller.currentMatch != nil)
+
+        parser.feed(
+            Array(("filler\r\n" + searchCommand("new needle", output: "new output")).utf8),
+            handler: &terminal
+        )
+
+        #expect(!controller.copyCurrentMatchCommandOutput())
+        #expect(copied == nil)
+    }
+
     @Test("查询扫描异步执行而不阻塞主线程")
     func queryRunsOffMainActor() async {
         var terminal = Terminal(
@@ -448,6 +561,22 @@ struct TerminalSearchWorkspaceTests {
 
     private func makeSearchPane() -> TerminalPane {
         TerminalPane(session: TerminalSession(size: TerminalSize(columns: 80, rows: 24)))
+    }
+
+    private func makeSearchCommandTerminal(command: String, output: String) -> Terminal {
+        var terminal = Terminal(
+            size: TerminalSize(columns: 24, rows: 3),
+            scrollbackCapacity: 20
+        )
+        var parser = Parser()
+        parser.feed(Array(searchCommand(command, output: output).utf8), handler: &terminal)
+        return terminal
+    }
+
+    private func searchCommand(_ command: String, output: String) -> String {
+        "\u{1B}]133;A\u{07}$ \u{1B}]133;B\u{07}\(command)\r\n"
+            + "\u{1B}]133;C\u{07}\(output)"
+            + "\u{1B}]133;D;0\u{07}"
     }
 
     private func allSearchBars(in view: NSView) -> [TerminalSearchBarView] {

@@ -330,6 +330,22 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         return writeToPasteboard(terminal.extractText(in: range))
     }
 
+    public func canCopyCommandOutput(
+        containing range: SelectionRange,
+        in terminal: Terminal
+    ) -> Bool {
+        terminal.commandOutputRange(containing: range) != nil
+    }
+
+    @discardableResult
+    public func copyCommandOutput(
+        containing range: SelectionRange,
+        in terminal: Terminal
+    ) -> Bool {
+        guard let output = terminal.commandOutputRange(containing: range) else { return false }
+        return writeToPasteboard(terminal.extractText(in: output))
+    }
+
     public var hasCommandBlocks: Bool {
         !(terminalProvider?().commandBlocks().isEmpty ?? true)
     }

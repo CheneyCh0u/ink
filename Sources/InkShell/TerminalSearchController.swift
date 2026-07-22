@@ -26,6 +26,7 @@ final class TerminalSearchController {
     private(set) var caseSensitive = false
     private(set) var selectionOnly = false
     private var frozenSelection: FrozenSearchSelection?
+    private var resultCoordinateSpace: TerminalSearchCoordinateSpace?
 
     var matches: [TerminalSearchMatch] { index.matches }
     var currentMatch: TerminalSearchMatch? {
@@ -50,6 +51,9 @@ final class TerminalSearchController {
         searchBar.onQueryChange = { [weak self] in self?.updateQuery($0) }
         searchBar.onCaseSensitivityChange = { [weak self] in self?.setCaseSensitive($0) }
         searchBar.onSelectionScopeChange = { [weak self] in self?.setSelectionOnly($0) }
+        searchBar.onCopyMatchCommandOutput = { [weak self] in
+            _ = self?.copyCurrentMatchCommandOutput()
+        }
         searchBar.onNext = { [weak self] in self?.selectNext() }
         searchBar.onPrevious = { [weak self] in self?.selectPrevious() }
         searchBar.onClose = { [weak self] in self?.onClose?() }
@@ -86,6 +90,13 @@ final class TerminalSearchController {
         restartSearch(chooseNearest: true, terminal: terminal)
     }
 
+    @discardableResult
+    func copyCurrentMatchCommandOutput() -> Bool {
+        let terminal = terminalProvider()
+        guard let range = currentMatchRange(in: terminal) else { return false }
+        return terminalView?.copyCommandOutput(containing: range, in: terminal) ?? false
+    }
+
     private func restartSearch(chooseNearest: Bool, terminal providedTerminal: Terminal? = nil) {
         updateGeneration &+= 1
         updateTask?.cancel()
@@ -96,6 +107,7 @@ final class TerminalSearchController {
         guard !query.isEmpty else {
             index.clear()
             currentIndex = nil
+            resultCoordinateSpace = nil
             publish(reveal: false, terminal: liveTerminal)
             return
         }
@@ -109,6 +121,7 @@ final class TerminalSearchController {
         let terminal = liveTerminal.snapshotForSearch()
         index.clear()
         currentIndex = nil
+        resultCoordinateSpace = nil
         publish(reveal: false, terminal: liveTerminal)
         startBackgroundUpdate(
             terminal: terminal,
@@ -142,6 +155,7 @@ final class TerminalSearchController {
             let previousMatch = currentMatch
             let previousIndex = currentIndex
             _ = index.update(in: terminal, query: query, options: options)
+            resultCoordinateSpace = TerminalSearchCoordinateSpace(in: terminal)
             preserveCurrentSelection(
                 previousMatch: previousMatch,
                 previousIndex: previousIndex,
@@ -193,11 +207,13 @@ final class TerminalSearchController {
         refreshRequestedWhileSearching = false
         index.clear()
         currentIndex = nil
+        resultCoordinateSpace = nil
         terminalView?.searchResultsProvider = nil
         terminalView?.clearSearchResults()
         searchBar.onQueryChange = nil
         searchBar.onCaseSensitivityChange = nil
         searchBar.onSelectionScopeChange = nil
+        searchBar.onCopyMatchCommandOutput = nil
         searchBar.onNext = nil
         searchBar.onPrevious = nil
         searchBar.onClose = nil
@@ -259,6 +275,7 @@ final class TerminalSearchController {
         let previousMatch = currentMatch
         let previousIndex = currentIndex
         index = updatedIndex
+        resultCoordinateSpace = TerminalSearchCoordinateSpace(in: terminal)
 
         if chooseNearest {
             currentIndex = nearestMatchIndex(
@@ -305,7 +322,9 @@ final class TerminalSearchController {
             caseSensitive: caseSensitive,
             selectionOnly: selectionOnly,
             selectionAvailable: availableSelection(in: terminal) != nil,
-            copyOutputAvailable: false
+            copyOutputAvailable: currentMatchRange(in: terminal).map {
+                terminalView?.canCopyCommandOutput(containing: $0, in: terminal) == true
+            } ?? false
         )
         terminalView?.markDirty()
         if reveal, let currentMatch {
@@ -327,6 +346,11 @@ final class TerminalSearchController {
             caseSensitive: caseSensitive,
             selection: selection
         )
+    }
+
+    private func currentMatchRange(in terminal: Terminal) -> SelectionRange? {
+        guard let currentMatch, let resultCoordinateSpace else { return nil }
+        return resultCoordinateSpace.resolve(currentMatch.range, in: terminal)
     }
 
     private func availableSelection(in terminal: Terminal) -> SelectionRange? {
