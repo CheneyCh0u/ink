@@ -10,6 +10,12 @@ struct SemanticOverflowTransition: Sendable {
     }
 }
 
+struct PhysicalHyperlinkFragment: Sendable, Equatable {
+    var row: Int
+    var columns: Range<Int>
+    var target: String
+}
+
 /// 终端语义层：消费 `Parser` 的动作，维护 grid、scrollback、光标与模式。
 ///
 /// 纯 Swift 值类型，不依赖任何 UI——VT 兼容性全部在这里用单元测试验证
@@ -94,18 +100,43 @@ public struct Terminal: Sendable {
     /// Parser 的词法状态跨 read 边界，必须由外部持有。
     public mutating func resize(to newSize: TerminalSize) {
         guard newSize != grid.size else { return }
-        savedPrimaryGrid?.resize(to: newSize)
         defer {
             scrollTop = 0
             scrollBottom = newSize.rows - 1
             pendingWrap = false
         }
         if modes.alternateScreen {
-            grid.resize(to: newSize)
+            resizeSavedPrimaryGridAndHyperlinks(to: newSize)
+            resizeCurrentGridAndHyperlinks(to: newSize)
         } else {
             reflow(to: newSize)
         }
         searchLayoutRevision &+= 1
+    }
+
+    private mutating func resizeCurrentGridAndHyperlinks(to newSize: TerminalSize) {
+        let fragments = hyperlinkFragments(in: 0...(grid.size.rows - 1))
+        for row in 0..<grid.size.rows {
+            clearHyperlinkCells(row: row, columns: 0..<grid.size.columns)
+        }
+        grid.resize(to: newSize)
+        for var fragment in fragments where fragment.row < newSize.rows {
+            fragment.columns = fragment.columns.clamped(to: 0..<newSize.columns)
+            if !fragment.columns.isEmpty { insertHyperlinkFragment(fragment) }
+        }
+    }
+
+    private mutating func resizeSavedPrimaryGridAndHyperlinks(to newSize: TerminalSize) {
+        guard let primaryGrid = savedPrimaryGrid else { return }
+        let alternateGrid = grid
+        let alternateHyperlinks = hyperlinks
+        grid = primaryGrid
+        hyperlinks = savedPrimaryHyperlinks
+        resizeCurrentGridAndHyperlinks(to: newSize)
+        savedPrimaryGrid = grid
+        savedPrimaryHyperlinks = hyperlinks
+        grid = alternateGrid
+        hyperlinks = alternateHyperlinks
     }
 
     // MARK: - Reflow
@@ -132,6 +163,8 @@ public struct Terminal: Sendable {
         var newOverflow: [SemanticOverflowTransition] = []
 
         let oldestOldLineID = oldSb.totalAppendedLines - UInt64(oldSb.count)
+        var hyperlinkHeadMapping: [UInt64: UInt64]? = hyperlinks == nil ? nil : [:]
+        var reflowHyperlinkLines: [UInt64: TerminalLogicalLine]? = hyperlinks == nil ? nil : [:]
         var overflowByAbsoluteLine: [Int: [SemanticOverflowTransition]] = [:]
         for transition in oldOverflow where transition.lineID >= oldestOldLineID {
             let line = Int(transition.lineID - oldestOldLineID)
@@ -176,6 +209,14 @@ public struct Terminal: Sendable {
 
         var abs = 0
         while abs < effectiveTotal {
+            let sourceHeadLineID = oldestOldLineID + UInt64(abs)
+            let emittedHeadLineID = UInt64(emitted)
+            let hasHyperlinks = hyperlinks?.record(headLineID: sourceHeadLineID) != nil
+            if hasHyperlinks {
+                hyperlinkHeadMapping?[sourceHeadLineID] = emittedHeadLineID
+            }
+            var hyperlinkSegments: ContiguousArray<TerminalLogicalSegment>? = hasHyperlinks
+                ? [] : nil
             // 聚合一条逻辑行：本行 + 后续所有带 wrapped 位的行。
             var (cells, headInfo) = sourceRow(abs)
             var cursorOffset: Int? = abs == cursorAbs ? oldGrid.cursorCol : nil
@@ -235,6 +276,12 @@ public struct Terminal: Sendable {
                 }
                 lastChunkStart = start
                 let rowID = UInt64(emitted)
+                hyperlinkSegments?.append(TerminalLogicalSegment(
+                    lineID: rowID,
+                    absoluteLine: emitted,
+                    startOffset: start,
+                    cellCount: end - start
+                ))
                 var rowTransitions: [(offset: Int, mark: SemanticMark)] = []
                 while transitionIndex < transitions.count {
                     let transition = transitions[transitionIndex]
@@ -267,6 +314,13 @@ public struct Terminal: Sendable {
             if let offset = cursorOffset, newCursor == nil {
                 newCursor = (emitted - 1, min(offset - lastChunkStart, newCols - 1))
             }
+            if let hyperlinkSegments {
+                reflowHyperlinkLines?[sourceHeadLineID] = TerminalLogicalLine(
+                    headLineID: emittedHeadLineID,
+                    scalars: [],
+                    segments: hyperlinkSegments
+                )
+            }
 
             abs = next
         }
@@ -291,6 +345,17 @@ public struct Terminal: Sendable {
         let firstRetainedID = UInt64(max(0, emitted - retainedRows))
         semanticOverflowTransitions = newOverflow.filter { $0.lineID >= firstRetainedID }
         semanticOverflowStart = 0
+        if var store = hyperlinks {
+            store.remapHeads(hyperlinkHeadMapping ?? [:])
+            store.removeAllRowAnchors()
+            if let reflowHyperlinkLines {
+                for line in reflowHyperlinkLines.values {
+                    store.rebuildRowIndex(for: line)
+                }
+            }
+            hyperlinks = store.isEmpty ? nil : store
+            pruneHyperlinks()
+        }
         savedCursor = nil
     }
 
@@ -465,7 +530,15 @@ public struct Terminal: Sendable {
         case UInt8(ascii: "S"):
             for _ in 0..<param(0) { scrollRegionUp() }
         case UInt8(ascii: "T"):
-            for _ in 0..<param(0) { grid.scrollDown(top: scrollTop, bottom: scrollBottom) }
+            for _ in 0..<param(0) {
+                let top = scrollTop
+                let bottom = scrollBottom
+                moveHyperlinkRows(
+                    in: top...bottom,
+                    destinationForSource: { $0 < bottom ? $0 + 1 : nil },
+                    mutateGrid: { $0.scrollDown(top: top, bottom: bottom) }
+                )
+            }
         case UInt8(ascii: "r"):
             setScrollRegion(top: param(0) - 1, bottom: param(1, default: grid.size.rows) - 1)
         case UInt8(ascii: "m"):
@@ -510,7 +583,13 @@ public struct Terminal: Sendable {
             lineFeed()
         case UInt8(ascii: "M"): // RI：区域顶再上移即区域下滚
             if grid.cursorRow == scrollTop {
-                grid.scrollDown(top: scrollTop, bottom: scrollBottom)
+                let top = scrollTop
+                let bottom = scrollBottom
+                moveHyperlinkRows(
+                    in: top...bottom,
+                    destinationForSource: { $0 < bottom ? $0 + 1 : nil },
+                    mutateGrid: { $0.scrollDown(top: top, bottom: bottom) }
+                )
             } else if grid.cursorRow > 0 {
                 grid.cursorRow -= 1
             }
@@ -670,6 +749,102 @@ public struct Terminal: Sendable {
         hyperlinks = store.isEmpty ? nil : store
     }
 
+    private func hyperlinkFragments(in rows: ClosedRange<Int>) -> [PhysicalHyperlinkFragment] {
+        guard let hyperlinks, let targets = hyperlinkTargets else { return [] }
+        var fragments: [PhysicalHyperlinkFragment] = []
+        fragments.reserveCapacity(rows.count)
+        for row in rows {
+            let stableLineID = scrollback.totalAppendedLines + UInt64(row)
+            guard hyperlinks.containsRow(lineID: stableLineID),
+                  let coordinate = hyperlinkCoordinate(row: row, column: 0),
+                  let record = hyperlinks.record(headLineID: coordinate.headLineID)
+            else { continue }
+            let rowOffsets = coordinate.offset..<coordinate.segmentEnd
+            for span in record.spans where span.offsets.overlaps(rowOffsets) {
+                let lower = max(span.offsets.lowerBound, rowOffsets.lowerBound)
+                let upper = min(span.offsets.upperBound, rowOffsets.upperBound)
+                guard lower < upper, let target = targets.uri(for: span.targetID) else { continue }
+                fragments.append(PhysicalHyperlinkFragment(
+                    row: row,
+                    columns: Int(lower - coordinate.offset)..<Int(upper - coordinate.offset),
+                    target: target
+                ))
+            }
+        }
+        return fragments
+    }
+
+    private mutating func insertHyperlinkFragment(_ fragment: PhysicalHyperlinkFragment) {
+        var targets = hyperlinkTargets ?? HyperlinkTargetTable()
+        let temporaryID = targets.retain(uri: fragment.target)
+        hyperlinkTargets = targets
+        replaceHyperlinkCells(
+            row: fragment.row,
+            columns: fragment.columns,
+            targetID: temporaryID
+        )
+        guard var retainedTargets = hyperlinkTargets else { return }
+        retainedTargets.release(id: temporaryID, count: 1)
+        hyperlinkTargets = retainedTargets.isEmpty ? nil : retainedTargets
+    }
+
+    private mutating func moveHyperlinkRows(
+        in rows: ClosedRange<Int>,
+        destinationForSource: (Int) -> Int?,
+        mutateGrid: (inout Grid) -> Void
+    ) {
+        let base = scrollback.totalAppendedLines
+        let hasLinks = hyperlinks.map { store in
+            rows.contains { store.containsRow(lineID: base + UInt64($0)) }
+        } ?? false
+        guard hasLinks else {
+            mutateGrid(&grid)
+            return
+        }
+
+        let fragments = hyperlinkFragments(in: rows)
+        for row in rows {
+            clearHyperlinkCells(row: row, columns: 0..<grid.size.columns)
+        }
+        mutateGrid(&grid)
+        for fragment in fragments {
+            guard let destination = destinationForSource(fragment.row), rows.contains(destination) else { continue }
+            var moved = fragment
+            moved.row = destination
+            moved.columns = moved.columns.clamped(to: 0..<grid.size.columns)
+            if !moved.columns.isEmpty { insertHyperlinkFragment(moved) }
+        }
+    }
+
+    private mutating func removeCurrentHyperlinks() {
+        guard let store = hyperlinks else { return }
+        applyHyperlinkReferenceDelta(store.removingAllReferenceDelta())
+        hyperlinks = nil
+    }
+
+    private mutating func pruneHyperlinks() {
+        guard var store = hyperlinks else { return }
+        let oldestLineID = scrollback.totalAppendedLines - UInt64(scrollback.count)
+        let anchors = store.rowIndex
+        let delta = store.prune(before: oldestLineID) { oldHeadLineID in
+            guard let candidate = anchors
+                .filter({ $0.value.headLineID == oldHeadLineID && $0.key >= oldestLineID })
+                .min(by: { $0.key < $1.key })
+            else { return nil }
+            let absoluteLine = Int(candidate.key - oldestLineID)
+            guard let line = logicalLine(containing: TextPosition(line: absoluteLine, column: 0)),
+                  let segment = line.segments.first(where: { $0.lineID == candidate.key }),
+                  candidate.value.startOffset >= UInt32(clamping: segment.startOffset)
+            else { return nil }
+            return (
+                headLineID: line.headLineID,
+                removedPrefix: candidate.value.startOffset - UInt32(clamping: segment.startOffset)
+            )
+        }
+        applyHyperlinkReferenceDelta(delta)
+        hyperlinks = store.isEmpty ? nil : store
+    }
+
     private func hyperlinkCoordinate(row: Int, column: Int) -> (
         headLineID: UInt64,
         offset: UInt32,
@@ -729,12 +904,29 @@ public struct Terminal: Sendable {
 
     /// 区域上滚一行；只有主屏整屏滚动才把滚出的行送进 scrollback。
     private mutating func scrollRegionUp() {
-        let evicted = grid.scrollUp(top: scrollTop, bottom: scrollBottom)
         if !modes.alternateScreen, scrollTop == 0, scrollBottom == grid.size.rows - 1 {
+            let retainedCount = ScrollbackLine(
+                trimming: grid.row(0),
+                info: grid.info(ofRow: 0)
+            ).count
+            clearHyperlinkCells(
+                row: 0,
+                columns: retainedCount..<grid.size.columns
+            )
+            let evicted = grid.scrollUp(top: scrollTop, bottom: scrollBottom)
             scrollback.append(evicted)
             if semanticOverflowStart < semanticOverflowTransitions.count {
                 pruneSemanticOverflow()
             }
+            pruneHyperlinks()
+        } else {
+            let top = scrollTop
+            let bottom = scrollBottom
+            moveHyperlinkRows(
+                in: top...bottom,
+                destinationForSource: { $0 > top ? $0 - 1 : nil },
+                mutateGrid: { _ = $0.scrollUp(top: top, bottom: bottom) }
+            )
         }
     }
 
@@ -855,6 +1047,8 @@ public struct Terminal: Sendable {
                 .filter { $0.lineID < gridBase }
             semanticOverflowStart = 0
         case 3:
+            let screenFragments = hyperlinkFragments(in: 0...(grid.size.rows - 1))
+            removeCurrentHyperlinks()
             let gridBase = scrollback.totalAppendedLines
             semanticOverflowTransitions = semanticOverflowTransitions[semanticOverflowStart...]
                 .compactMap { transition in
@@ -867,6 +1061,7 @@ public struct Terminal: Sendable {
             }
             semanticOverflowStart = 0
             scrollback.removeAll() // xterm 扩展：连历史一起清
+            for fragment in screenFragments { insertHyperlinkFragment(fragment) }
             searchLayoutRevision &+= 1
         default:
             break
@@ -891,7 +1086,13 @@ public struct Terminal: Sendable {
     private mutating func insertLines(_ n: Int) {
         guard (scrollTop...scrollBottom).contains(grid.cursorRow) else { return }
         for _ in 0..<min(n, scrollBottom - grid.cursorRow + 1) {
-            grid.scrollDown(top: grid.cursorRow, bottom: scrollBottom)
+            let top = grid.cursorRow
+            let bottom = scrollBottom
+            moveHyperlinkRows(
+                in: top...bottom,
+                destinationForSource: { $0 < bottom ? $0 + 1 : nil },
+                mutateGrid: { $0.scrollDown(top: top, bottom: bottom) }
+            )
         }
         carriageReturn()
     }
@@ -899,7 +1100,13 @@ public struct Terminal: Sendable {
     private mutating func deleteLines(_ n: Int) {
         guard (scrollTop...scrollBottom).contains(grid.cursorRow) else { return }
         for _ in 0..<min(n, scrollBottom - grid.cursorRow + 1) {
-            _ = grid.scrollUp(top: grid.cursorRow, bottom: scrollBottom)
+            let top = grid.cursorRow
+            let bottom = scrollBottom
+            moveHyperlinkRows(
+                in: top...bottom,
+                destinationForSource: { $0 > top ? $0 - 1 : nil },
+                mutateGrid: { _ = $0.scrollUp(top: top, bottom: bottom) }
+            )
         }
         carriageReturn()
     }
@@ -971,9 +1178,14 @@ public struct Terminal: Sendable {
                 savedCursor = (grid.cursorRow, grid.cursorCol, currentAttr)
             }
             savedPrimaryGrid = grid
+            savedPrimaryHyperlinks = hyperlinks
+            hyperlinks = nil
             grid = Grid(size: grid.size)
             modes.alternateScreen = true
         } else {
+            removeCurrentHyperlinks()
+            hyperlinks = savedPrimaryHyperlinks
+            savedPrimaryHyperlinks = nil
             if let primary = savedPrimaryGrid {
                 grid = primary
                 savedPrimaryGrid = nil

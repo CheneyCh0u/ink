@@ -3,6 +3,33 @@ import Testing
 
 @Suite("Reflow")
 struct ReflowTests {
+    @Test("OSC 8 逻辑偏移随变窄和变宽 reflow 保持")
+    func hyperlinkSurvivesReflow() throws {
+        var (parser, terminal) = makeTerminal(columns: 20, rows: 4)
+        feed("xx\u{1B}]8;;https://a.test\u{07}abcdefghijklmnop\u{1B}]8;;\u{07}", &parser, &terminal)
+        terminal.resize(to: TerminalSize(columns: 8, rows: 4))
+        #expect(try #require(terminal.link(at: .init(line: 1, column: 2))).target == "https://a.test")
+        terminal.resize(to: TerminalSize(columns: 30, rows: 4))
+        #expect(try #require(terminal.link(at: .init(line: 0, column: 5))).target == "https://a.test")
+    }
+
+    @Test("有历史基址时 OSC 8 范围随 reflow 重编号")
+    func hyperlinkReflowsWithScrollbackBase() {
+        var (parser, terminal) = makeTerminal(columns: 10, rows: 2, scrollback: 10)
+        feed("old\r\nolder\r\n", &parser, &terminal)
+        feed("\u{1B}]8;;https://a.test\u{07}abcdefghijklmno\u{1B}]8;;\u{07}", &parser, &terminal)
+
+        terminal.resize(to: TerminalSize(columns: 6, rows: 2))
+
+        let hitCount = (0..<terminal.totalLines).reduce(into: 0) { count, line in
+            for column in 0..<terminal.grid.size.columns {
+                if terminal.link(at: .init(line: line, column: column))?.target == "https://a.test" {
+                    count += 1
+                }
+            }
+        }
+        #expect(hitCount == 15)
+    }
     @Test("变窄重折：26 字符在 10 列下切成 10+10+6，延续行带 wrapped")
     func narrowRewrap() {
         var (parser, term) = makeTerminal(columns: 20, rows: 5)

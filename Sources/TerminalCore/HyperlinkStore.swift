@@ -31,6 +31,18 @@ struct HyperlinkRangeStore: Sendable {
 
     var isEmpty: Bool { lines.isEmpty }
 
+    func containsRow(lineID: UInt64) -> Bool {
+        rowIndex[lineID] != nil
+    }
+
+    func removingAllReferenceDelta() -> HyperlinkReferenceDelta {
+        var delta = HyperlinkReferenceDelta()
+        for line in lines {
+            for span in line.spans { delta.remove(span.targetID) }
+        }
+        return delta
+    }
+
     func anchor(for lineID: UInt64) -> HyperlinkRowAnchor? {
         rowIndex[lineID]
     }
@@ -193,6 +205,72 @@ struct HyperlinkRangeStore: Sendable {
                 rowIndex.removeValue(forKey: segment.lineID)
             }
         }
+    }
+
+    mutating func removeAllRowAnchors() {
+        rowIndex.removeAll(keepingCapacity: true)
+    }
+
+    mutating func remapHeads(_ mapping: [UInt64: UInt64]) {
+        guard !mapping.isEmpty else { return }
+        for index in lines.indices {
+            if let head = mapping[lines[index].headLineID] {
+                lines[index].headLineID = head
+            }
+        }
+        lines.sort { $0.headLineID < $1.headLineID }
+        rowIndex.removeAll(keepingCapacity: true)
+    }
+
+    mutating func prune(
+        before oldestLineID: UInt64,
+        rebase: (UInt64) -> (headLineID: UInt64, removedPrefix: UInt32)?
+    ) -> HyperlinkReferenceDelta {
+        var delta = HyperlinkReferenceDelta()
+        var nextLines = ContiguousArray<HyperlinkLineRecord>()
+        var rebased: [UInt64: (headLineID: UInt64, removedPrefix: UInt32)] = [:]
+
+        for record in lines {
+            guard record.headLineID < oldestLineID else {
+                nextLines.append(record)
+                continue
+            }
+            for span in record.spans { delta.remove(span.targetID) }
+            guard let destination = rebase(record.headLineID) else { continue }
+            var spans = ContiguousArray<HyperlinkSpan>()
+            for span in record.spans where span.offsets.upperBound > destination.removedPrefix {
+                let lower = max(span.offsets.lowerBound, destination.removedPrefix)
+                spans.append(HyperlinkSpan(
+                    offsets: (lower - destination.removedPrefix)..<(span.offsets.upperBound - destination.removedPrefix),
+                    targetID: span.targetID
+                ))
+            }
+            spans = Self.coalesced(spans)
+            guard !spans.isEmpty else { continue }
+            for span in spans { delta.add(span.targetID) }
+            nextLines.append(HyperlinkLineRecord(
+                headLineID: destination.headLineID,
+                spans: spans
+            ))
+            rebased[record.headLineID] = destination
+        }
+
+        var nextRowIndex: [UInt64: HyperlinkRowAnchor] = [:]
+        nextRowIndex.reserveCapacity(rowIndex.count)
+        for (lineID, anchor) in rowIndex where lineID >= oldestLineID {
+            if let destination = rebased[anchor.headLineID],
+               anchor.startOffset >= destination.removedPrefix {
+                nextRowIndex[lineID] = HyperlinkRowAnchor(
+                    headLineID: destination.headLineID,
+                    startOffset: anchor.startOffset - destination.removedPrefix
+                )
+            } else if anchor.headLineID >= oldestLineID {
+                nextRowIndex[lineID] = anchor
+            }
+        }
+        lines = ContiguousArray(nextLines.sorted { $0.headLineID < $1.headLineID })
+        rowIndex = nextRowIndex
+        return delta
     }
 
     private func lineIndex(for headLineID: UInt64) -> Int? {
