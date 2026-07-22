@@ -25,6 +25,7 @@ struct CommandStatusTests {
     func abortAndInvalidStatus() {
         var terminal = Terminal(size: .init(columns: 80, rows: 24))
         let clock = ContinuousClock()
+        terminal.handleOSC133(ArraySlice("C".utf8), now: clock.now)
         terminal.handleOSC133(ArraySlice("B".utf8), now: clock.now)
         terminal.handleOSC133(ArraySlice("D;1".utf8), now: clock.now)
         #expect(terminal.takeEvents().isEmpty)
@@ -66,6 +67,17 @@ struct CommandStatusTests {
         #expect(MemoryLayout<CommandCompletionRecord>.stride == 16)
         #expect(MemoryLayout<Cell>.stride == 8)
         #expect(MemoryLayout<RowInfo>.stride == 2)
+
+        let saturated = CommandCompletionRecord(
+            lineID: 0,
+            column: 0,
+            completion: .init(
+                exitStatus: 0,
+                duration: .milliseconds(Int64(UInt32.max) + 1_000)
+            )
+        )
+        #expect(saturated.elapsedMilliseconds == UInt32.max)
+        #expect(saturated.completion.duration == .milliseconds(Int64(UInt32.max)))
     }
 
     @Test("搜索快照不持有命令完成记录与待处理事件")

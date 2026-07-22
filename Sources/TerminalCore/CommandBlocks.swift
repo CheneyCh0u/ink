@@ -35,6 +35,7 @@ extension Terminal {
         var commandStart: TextPosition?
         var completedCommand: SemanticTextRange?
         var outputStart: TextPosition?
+        var completionStarted = false
 
         let oldestLineID = scrollback.totalAppendedLines - UInt64(scrollback.count)
         var overflowByLine: [Int: [SemanticOverflowTransition]] = [:]
@@ -51,15 +52,21 @@ extension Terminal {
             completionsByLine[line, default: []].append(record)
         }
 
-        func completion(at position: TextPosition) -> CommandCompletion? {
-            completionsByLine[position.line]?
-                .last(where: { Int($0.column) == position.column })?
-                .completion
+        var completionCursorByLine: [Int: Int] = [:]
+        func takeCompletion(at position: TextPosition) -> CommandCompletion? {
+            guard let records = completionsByLine[position.line] else { return nil }
+            let start = completionCursorByLine[position.line, default: 0]
+            guard let index = records.indices[start...].first(where: {
+                Int(records[$0].column) == position.column
+            }) else { return nil }
+            completionCursorByLine[position.line] = index + 1
+            return records[index].completion
         }
 
         func consume(_ mark: SemanticMark, at position: TextPosition) {
             switch mark {
             case .command:
+                completionStarted = false
                 if let command = completedCommand, let outputStart {
                     blocks.append(CommandBlock(
                         commandRange: command,
@@ -72,12 +79,14 @@ extension Terminal {
                 outputStart = nil
 
             case .output:
+                completionStarted = true
                 guard let start = commandStart, start <= position else { return }
                 completedCommand = SemanticTextRange(start: start, end: position)
                 commandStart = nil
                 outputStart = position
 
             case .prompt:
+                completionStarted = false
                 if let command = completedCommand, let outputStart, outputStart <= position {
                     blocks.append(CommandBlock(
                         commandRange: command,
@@ -90,11 +99,13 @@ extension Terminal {
                 outputStart = nil
 
             case .none:
+                let completion = completionStarted ? takeCompletion(at: position) : nil
+                completionStarted = false
                 if let command = completedCommand, let outputStart, outputStart <= position {
                     blocks.append(CommandBlock(
                         commandRange: command,
                         outputRange: SemanticTextRange(start: outputStart, end: position),
-                        completion: completion(at: position)
+                        completion: completion
                     ))
                 }
                 commandStart = nil

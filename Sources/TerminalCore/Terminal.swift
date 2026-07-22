@@ -313,18 +313,30 @@ public struct Terminal: Sendable {
             transitions.sort {
                 $0.offset == $1.offset ? $0.order < $1.order : $0.offset < $1.offset
             }
-            var completions: [(offset: Int, record: CommandCompletionRecord)] = []
+            var completions: [(
+                offset: Int,
+                order: Int,
+                record: CommandCompletionRecord
+            )] = []
+            var completionOrder = 0
             sourceOffset = 0
             scan = abs
             while scan < next {
                 let (rowCells, _) = sourceRow(scan)
                 for record in completionsByAbsoluteLine[scan] ?? [] {
-                    completions.append((sourceOffset + Int(record.column), record))
+                    completions.append((
+                        sourceOffset + Int(record.column),
+                        completionOrder,
+                        record
+                    ))
+                    completionOrder += 1
                 }
                 sourceOffset += rowCells.count
                 scan += 1
             }
-            completions.sort { $0.offset < $1.offset }
+            completions.sort {
+                $0.offset == $1.offset ? $0.order < $1.order : $0.offset < $1.offset
+            }
 
             // 按新宽度切块。
             var transitionIndex = 0

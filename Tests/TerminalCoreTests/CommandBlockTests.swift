@@ -27,6 +27,38 @@ struct CommandBlockTests {
         #expect(after == before)
     }
 
+    @Test("同一位置的多个完成结果按 D 顺序关联且 reflow 后保序")
+    func colocatedCompletionsKeepOrder() {
+        var terminal = Terminal(size: .init(columns: 20, rows: 4))
+        let clock = ContinuousClock()
+        let first = clock.now
+
+        terminal.handleOSC133(ArraySlice("B".utf8), now: first)
+        terminal.handleOSC133(ArraySlice("C".utf8), now: first)
+        terminal.handleOSC133(
+            ArraySlice("D;1".utf8),
+            now: first.advanced(by: .seconds(1))
+        )
+        let second = first.advanced(by: .seconds(2))
+        terminal.handleOSC133(ArraySlice("B".utf8), now: second)
+        terminal.handleOSC133(ArraySlice("C".utf8), now: second)
+        terminal.handleOSC133(
+            ArraySlice("D;2".utf8),
+            now: second.advanced(by: .seconds(2))
+        )
+
+        #expect(terminal.commandBlocks().compactMap(\.completion) == [
+            .init(exitStatus: 1, duration: .seconds(1)),
+            .init(exitStatus: 2, duration: .seconds(2)),
+        ])
+
+        terminal.resize(to: .init(columns: 8, rows: 4))
+        #expect(terminal.commandBlocks().compactMap(\.completion) == [
+            .init(exitStatus: 1, duration: .seconds(1)),
+            .init(exitStatus: 2, duration: .seconds(2)),
+        ])
+    }
+
     @Test("命令排除提示符，输出排除下一提示符")
     func extractsCommandAndOutput() {
         var (parser, term) = makeTerminal(columns: 30, rows: 5)
