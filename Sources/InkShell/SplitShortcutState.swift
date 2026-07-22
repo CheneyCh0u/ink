@@ -13,9 +13,9 @@ enum SplitShortcutDecision: Equatable {
 
 /// 与 AppKit 解耦的物理按键事件，便于覆盖完整的按下和松开顺序。
 enum SplitShortcutKeyEvent: Equatable {
-    case keyDown(keyCode: UInt16, isRepeat: Bool, commandDown: Bool)
+    case keyDown(keyCode: UInt16, isRepeat: Bool, binding: KeyBinding?)
     case keyUp(keyCode: UInt16)
-    case flagsChanged(commandDown: Bool)
+    case flagsChanged(modifiers: KeyBindingModifiers)
     case contextLost
 }
 
@@ -28,21 +28,40 @@ struct SplitShortcutState {
     }
 
     private var phase = Phase.idle
+    private var prefix: KeyBinding?
+    private var pendingKeyCode: UInt16?
+
+    init(prefix: KeyBinding? = KeyBindingSet.defaults.binding(for: .splitPrefix)) {
+        self.prefix = prefix
+    }
+
+    mutating func updatePrefix(_ prefix: KeyBinding?) {
+        self.prefix = prefix
+        phase = .idle
+        pendingKeyCode = nil
+    }
 
     mutating func handleKeyEvent(_ event: SplitShortcutKeyEvent) -> SplitShortcutDecision {
         switch event {
         case .contextLost:
             return handle(.cancel)
-        case let .flagsChanged(commandDown):
-            return commandDown ? .passThrough : handle(.cancel)
+        case let .flagsChanged(modifiers):
+            guard let prefix else { return handle(.cancel) }
+            return modifiers.isSuperset(of: prefix.modifiers) ? .passThrough : handle(.cancel)
         case let .keyUp(keyCode):
-            return keyCode == 2 ? handle(.dUp) : .passThrough
-        case let .keyDown(keyCode, isRepeat, commandDown):
-            guard commandDown else { return .passThrough }
-            if keyCode == 2 {
+            guard keyCode == pendingKeyCode else { return .passThrough }
+            pendingKeyCode = nil
+            return handle(.dUp)
+        case let .keyDown(keyCode, isRepeat, binding):
+            guard let prefix else { return .passThrough }
+            if binding == prefix {
+                pendingKeyCode = keyCode
                 return handle(.commandDDown(isRepeat: isRepeat))
             }
-            guard let direction = Self.direction(for: keyCode) else {
+            guard phase != .idle,
+                  let binding,
+                  binding.modifiers.isSuperset(of: prefix.modifiers),
+                  let direction = Self.direction(for: keyCode) else {
                 return .passThrough
             }
             return handle(.direction(direction))
@@ -52,6 +71,7 @@ struct SplitShortcutState {
     mutating func handle(_ event: SplitShortcutEvent) -> SplitShortcutDecision {
         if event == .cancel {
             phase = .idle
+            pendingKeyCode = nil
             return .passThrough
         }
 
@@ -87,3 +107,4 @@ struct SplitShortcutState {
         }
     }
 }
+import InkConfig

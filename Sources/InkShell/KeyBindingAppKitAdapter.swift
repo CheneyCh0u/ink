@@ -2,6 +2,28 @@ import AppKit
 import InkConfig
 
 enum KeyBindingAppKitAdapter {
+    static func binding(from event: NSEvent) -> KeyBinding? {
+        let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        var modifiers: KeyBindingModifiers = []
+        if flags.contains(.command) { modifiers.insert(.command) }
+        if flags.contains(.control) { modifiers.insert(.control) }
+        if flags.contains(.option) { modifiers.insert(.option) }
+        if flags.contains(.shift) { modifiers.insert(.shift) }
+        guard modifiers.contains(.command) || modifiers.contains(.control),
+              let characters = event.charactersIgnoringModifiers,
+              let key = keyToken(for: characters) else { return nil }
+        return KeyBinding(key: key, modifiers: modifiers)
+    }
+
+    static func modifiers(from flags: NSEvent.ModifierFlags) -> KeyBindingModifiers {
+        var result: KeyBindingModifiers = []
+        if flags.contains(.command) { result.insert(.command) }
+        if flags.contains(.control) { result.insert(.control) }
+        if flags.contains(.option) { result.insert(.option) }
+        if flags.contains(.shift) { result.insert(.shift) }
+        return result
+    }
+
     static func keyEquivalent(for binding: KeyBinding) -> String {
         if let equivalent = namedKeyEquivalents[binding.key] {
             return equivalent
@@ -50,6 +72,18 @@ enum KeyBindingAppKitAdapter {
         case "right_bracket": "]"
         default: key.uppercased()
         }
+    }
+
+    private static func keyToken(for characters: String) -> String? {
+        if let token = namedKeyEquivalents.first(where: { $0.value == characters })?.key {
+            return token
+        }
+        let lowered = characters.lowercased()
+        guard lowered.count == 1,
+              lowered.first?.isLetter == true || lowered.first?.isNumber == true else {
+            return nil
+        }
+        return lowered
     }
 
     private static let namedKeyEquivalents: [String: String] = [

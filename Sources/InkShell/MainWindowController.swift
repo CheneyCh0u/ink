@@ -147,6 +147,12 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
     required init?(coder: NSCoder) { fatalError("代码构建") }
 
     private func applyConfig(_ config: InkConfig) {
+        cancelSplitShortcut()
+        splitShortcutState.updatePrefix(config.keyBindings.binding(for: .splitPrefix))
+        NSApplication.shared.mainMenu = AppDelegate.makeMainMenu(
+            settingsTarget: NSApplication.shared.delegate as AnyObject?,
+            keyBindings: config.keyBindings
+        )
         NSApplication.shared.appearance =
             switch config.appearanceMode {
             case .system: nil
@@ -939,13 +945,13 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
             keyEvent = .keyDown(
                 keyCode: event.keyCode,
                 isRepeat: event.isARepeat,
-                commandDown: event.modifierFlags.contains(.command)
+                binding: KeyBindingAppKitAdapter.binding(from: event)
             )
         case .keyUp:
             keyEvent = .keyUp(keyCode: event.keyCode)
         case .flagsChanged:
             keyEvent = .flagsChanged(
-                commandDown: event.modifierFlags.contains(.command)
+                modifiers: KeyBindingAppKitAdapter.modifiers(from: event.modifierFlags)
             )
         default:
             return event
