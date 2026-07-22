@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import TerminalCore
 
@@ -40,6 +41,25 @@ struct OSC52ClipboardTests {
         #expect(decode(overflow) == nil)
     }
 
+    @Test("Parser 端到端流式接收一 MiB 且只产生一个效果")
+    func parserStreamsMaximumPayload() {
+        let decoded = Data(repeating: UInt8(ascii: "A"), count: OSC52Base64Decoder.maximumDecodedBytes)
+        let payload = decoded.base64EncodedString()
+        var (parser, terminal) = makeTerminal()
+
+        feed(sequence(payload: payload), &parser, &terminal)
+
+        let effects = terminal.takeEffects()
+        #expect(effects.count == 1)
+        guard case .clipboardWrite(let text) = effects.first else {
+            Issue.record("应产生一次剪贴板写入")
+            return
+        }
+        #expect(text.utf8.count == OSC52Base64Decoder.maximumDecodedBytes)
+        #expect(text.first == "A")
+        #expect(text.last == "A")
+    }
+
     @Test("BEL、ST、分片与 UTF-8 都产生写入效果")
     func parsesTerminatorsAndSplitReads() {
         var (parser, terminal) = makeTerminal()
@@ -49,6 +69,16 @@ struct OSC52ClipboardTests {
         feed(bytes.dropFirst(7), &parser, &terminal)
         #expect(terminal.takeEffects() == [.clipboardWrite("你好")])
         feed(sequence(target: "ps", payload: "Zg==", terminator: "\u{1B}\\"), &parser, &terminal)
+        #expect(terminal.takeEffects() == [.clipboardWrite("f")])
+    }
+
+    @Test("OSC 52 忽略嵌入 C0", arguments: [UInt8(0x00), 0x09, 0x0A])
+    func ignoresEmbeddedC0(_ control: UInt8) {
+        var (parser, terminal) = makeTerminal()
+        let bytes = Array("\u{1B}]52;c;Zg".utf8) + [control] + Array("==\u{07}".utf8)
+
+        feed(bytes, &parser, &terminal)
+
         #expect(terminal.takeEffects() == [.clipboardWrite("f")])
     }
 
@@ -78,6 +108,19 @@ struct OSC52ClipboardTests {
             #expect(terminal.takeEffects().isEmpty)
         }
         #expect(rowText(terminal, 0).hasPrefix("XYZ"))
+    }
+
+    @Test("未完成 OSC 后的新 OSC 重启且不泄漏到屏幕")
+    func newOSCReplacesUnterminatedSequence() {
+        var (parser, terminal) = makeTerminal()
+        let abandoned = Array("\u{1B}]52;c;c2VjcmV0".utf8)
+        let replacement = Array("\u{1B}]52;c;Zg==\u{07}".utf8)
+
+        feed(abandoned + replacement, &parser, &terminal)
+
+        #expect(terminal.takeEffects() == [.clipboardWrite("f")])
+        #expect(terminal.takeEvents().isEmpty)
+        #expect(terminal.grid.row(0).allSatisfy { $0 == .blank })
     }
 
     @Test("一个 feed 中只保留最后一次写入")

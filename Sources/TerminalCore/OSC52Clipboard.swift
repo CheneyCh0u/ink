@@ -81,47 +81,63 @@ struct OSCAccumulator: Sendable {
 
     private enum State: Sendable {
         case idle
-        case probing(ContiguousArray<UInt8>)
-        case regular(ContiguousArray<UInt8>)
-        case osc52(OSC52PayloadAccumulator)
+        case probing
+        case regular
+        case osc52
         case discarding
     }
 
     private var state: State = .idle
+    private var regularBytes: ContiguousArray<UInt8> = []
+    private var osc52Payload = OSC52PayloadAccumulator()
 
-    mutating func start() { state = .probing([]) }
-    mutating func cancel() { state = .idle }
+    mutating func start() {
+        regularBytes = []
+        osc52Payload = OSC52PayloadAccumulator()
+        state = .probing
+    }
+
+    mutating func cancel() {
+        regularBytes = []
+        osc52Payload = OSC52PayloadAccumulator()
+        state = .idle
+    }
 
     mutating func put(_ byte: UInt8) {
         switch state {
         case .idle, .discarding:
             return
-        case .probing(var prefix):
-            if byte == UInt8(ascii: ";"), prefix.elementsEqual("52".utf8) {
-                state = .osc52(OSC52PayloadAccumulator())
+        case .probing:
+            if byte == UInt8(ascii: ";"), regularBytes.elementsEqual("52".utf8) {
+                regularBytes = []
+                osc52Payload = OSC52PayloadAccumulator()
+                state = .osc52
             } else {
-                prefix.append(byte)
-                if !Array("52".utf8).starts(with: prefix) || prefix.count > 2 {
-                    state = prefix.count > 4_096 ? .discarding : .regular(prefix)
+                regularBytes.append(byte)
+                if !"52".utf8.starts(with: regularBytes) || regularBytes.count > 2 {
+                    state = regularBytes.count > 4_096 ? .discarding : .regular
                 } else {
-                    state = .probing(prefix)
+                    state = .probing
                 }
             }
-        case .regular(var bytes):
-            guard bytes.count < 4_096 else { state = .discarding; return }
-            bytes.append(byte)
-            state = .regular(bytes)
-        case .osc52(var payload):
-            payload.put(byte)
-            state = payload.isDiscarding ? .discarding : .osc52(payload)
+        case .regular:
+            guard regularBytes.count < 4_096 else {
+                regularBytes = []
+                state = .discarding
+                return
+            }
+            regularBytes.append(byte)
+        case .osc52:
+            osc52Payload.put(byte)
+            if osc52Payload.isDiscarding { state = .discarding }
         }
     }
 
     mutating func finish() -> Completion? {
-        defer { state = .idle }
+        defer { cancel() }
         switch state {
-        case .probing(let bytes), .regular(let bytes): return .regular(bytes)
-        case .osc52(var payload): return payload.finish().map(Completion.clipboardWrite)
+        case .probing, .regular: return .regular(regularBytes)
+        case .osc52: return osc52Payload.finish().map(Completion.clipboardWrite)
         case .idle, .discarding: return nil
         }
     }
@@ -129,12 +145,15 @@ struct OSCAccumulator: Sendable {
 
 struct OSC52PayloadAccumulator: Sendable {
     private enum State: Sendable {
-        case target(ContiguousArray<UInt8>)
-        case payload(OSC52Base64Decoder, isFirstByte: Bool)
+        case target
+        case payload
         case discarding
     }
 
-    private var state: State = .target([])
+    private var state: State = .target
+    private var target: ContiguousArray<UInt8> = []
+    private var decoder = OSC52Base64Decoder()
+    private var isFirstPayloadByte = true
 
     var isDiscarding: Bool {
         if case .discarding = state { return true }
@@ -145,33 +164,44 @@ struct OSC52PayloadAccumulator: Sendable {
         switch state {
         case .discarding:
             return
-        case .target(var target):
+        case .target:
             guard byte != UInt8(ascii: ";") else {
-                state = Self.accepts(target: target)
-                    ? .payload(OSC52Base64Decoder(), isFirstByte: true)
-                    : .discarding
+                guard Self.accepts(target: target) else {
+                    discard()
+                    return
+                }
+                target = []
+                decoder = OSC52Base64Decoder()
+                isFirstPayloadByte = true
+                state = .payload
                 return
             }
             guard target.count < 16, Self.isKnownTarget(byte) else {
-                state = .discarding
+                discard()
                 return
             }
             target.append(byte)
-            state = .target(target)
-        case .payload(var decoder, let isFirstByte):
-            guard !(isFirstByte && byte == UInt8(ascii: "?")) else {
-                state = .discarding
+        case .payload:
+            guard !(isFirstPayloadByte && byte == UInt8(ascii: "?")) else {
+                discard()
                 return
             }
             decoder.put(byte)
-            state = decoder.invalid ? .discarding : .payload(decoder, isFirstByte: false)
+            isFirstPayloadByte = false
+            if decoder.invalid { discard() }
         }
     }
 
     mutating func finish() -> String? {
+        guard case .payload = state else { return nil }
         defer { state = .discarding }
-        guard case .payload(var decoder, _) = state else { return nil }
         return decoder.finish()
+    }
+
+    private mutating func discard() {
+        target = []
+        decoder.discard()
+        state = .discarding
     }
 
     private static func accepts(target: ContiguousArray<UInt8>) -> Bool {

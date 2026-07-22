@@ -169,11 +169,17 @@ public struct Parser: Sendable {
         case .oscEscape:
             if byte == UInt8(ascii: "\\") {
                 handler.oscEnd()
+                state = .ground
+            } else if byte == UInt8(ascii: "]") {
+                // 新 OSC introducer 覆盖未完成序列，不能把后续载荷泄漏到屏幕。
+                handler.oscCancel()
+                handler.oscStart()
+                state = .osc
             } else {
                 handler.oscCancel()
+                // 非 ST：整段 OSC 作废，ESC 后字节也一并丢弃，回 ground 重新同步。
+                state = .ground
             }
-            // 非 ST：整段 OSC 作废，ESC 后字节也一并丢弃，回 ground 重新同步。
-            state = .ground
 
         case .dcsIgnore:
             if byte == 0x1B { state = .dcsIgnoreEscape }
