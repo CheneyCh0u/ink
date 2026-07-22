@@ -62,6 +62,14 @@ struct ParserLexTests {
         feed([0x1B, UInt8(ascii: "["), UInt8(ascii: "3"), 0x18, UInt8(ascii: "X")], &parser, &term)
         #expect(term.grid[0, 0].scalar == UnicodeScalar("X").value)
     }
+
+    @Test("超长普通 OSC 整条丢弃而不是执行截断前缀")
+    func overlongRegularOSCDropsWholeSequence() {
+        var (parser, terminal) = makeTerminal()
+        feed("\u{1B}]0;before\u{07}", &parser, &terminal)
+        feed("\u{1B}]0;" + String(repeating: "x", count: 4095) + "\u{07}", &parser, &terminal)
+        #expect(terminal.title == "before")
+    }
 }
 
 @Suite("Terminal 语义")
