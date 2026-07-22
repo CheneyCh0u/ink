@@ -68,6 +68,19 @@ final class TerminalTab {
         return true
     }
 
+    func canFocusNeighbor(direction: PaneSplitDirection) -> Bool {
+        layout.neighbor(of: activePaneID, direction: direction) != nil
+    }
+
+    @discardableResult
+    func focusNeighbor(direction: PaneSplitDirection) -> Bool {
+        guard let paneID = layout.neighbor(
+            of: activePaneID,
+            direction: direction
+        ) else { return false }
+        return activate(paneID)
+    }
+
     @discardableResult
     func insertPane(
         _ pane: TerminalPane,
