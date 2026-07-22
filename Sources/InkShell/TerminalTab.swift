@@ -1,4 +1,5 @@
 import Foundation
+import TerminalCore
 
 @MainActor
 final class TerminalPane {
@@ -18,6 +19,7 @@ final class TerminalTab {
     private(set) var panes: [PaneID: TerminalPane]
     private(set) var activePaneID: PaneID
     var customName: String?
+    private(set) var attention: TabAttention?
 
     init(initialPane: TerminalPane) {
         layout = .leaf(initialPane.id)
@@ -48,6 +50,16 @@ final class TerminalTab {
     var activePane: TerminalPane? { panes[activePaneID] }
 
     var allPanes: [TerminalPane] { Array(panes.values) }
+
+    func receive(_ event: TerminalEvent, markUnread: Bool) {
+        guard markUnread else { return }
+        let incoming = TabAttention(event: event)
+        attention = attention?.merging(incoming) ?? incoming
+    }
+
+    func clearAttention() {
+        attention = nil
+    }
 
     @discardableResult
     func activate(_ paneID: PaneID) -> Bool {

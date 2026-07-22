@@ -53,6 +53,12 @@ final class Project {
         tabs.indices.contains(activeTabIndex) ? tabs[activeTabIndex] : nil
     }
 
+    var attention: TabAttention? {
+        tabs.compactMap(\.attention).reduce(nil) { current, incoming in
+            current?.merging(incoming) ?? incoming
+        }
+    }
+
     /// 删除标签时保持原活动标签的身份；只有删除活动标签才选择相邻标签。
     @discardableResult
     func removeTab(at index: Int) -> TerminalTab? {
