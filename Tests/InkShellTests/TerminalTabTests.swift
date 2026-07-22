@@ -86,6 +86,30 @@ struct TerminalTabTests {
         #expect(tab.paneCount == 1)
     }
 
+    @Test("方向聚焦更新活动 pane 且只读查询不改状态")
+    func focusNeighborUpdatesActivePane() {
+        let left = makePane()
+        let right = makePane()
+        let tab = TerminalTab(initialPane: left)
+        _ = tab.insertPane(right, splitting: left.id, direction: .right)
+        _ = tab.activate(left.id)
+
+        #expect(tab.canFocusNeighbor(direction: .right))
+        #expect(tab.activePane === left)
+        #expect(tab.focusNeighbor(direction: .right))
+        #expect(tab.activePane === right)
+    }
+
+    @Test("方向边界保持原活动 pane")
+    func focusNeighborAtBoundaryIsNoOp() {
+        let only = makePane()
+        let tab = TerminalTab(initialPane: only)
+
+        #expect(!tab.canFocusNeighbor(direction: .left))
+        #expect(!tab.focusNeighbor(direction: .left))
+        #expect(tab.activePane === only)
+    }
+
     private func makePane() -> TerminalPane {
         TerminalPane(session: TerminalSession(size: TerminalSize(columns: 80, rows: 24)))
     }

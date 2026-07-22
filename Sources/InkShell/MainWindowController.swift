@@ -808,6 +808,22 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         splitActivePane(direction: .down)
     }
 
+    @objc public func focusPaneLeft(_ sender: Any?) {
+        focusPane(.left)
+    }
+
+    @objc public func focusPaneRight(_ sender: Any?) {
+        focusPane(.right)
+    }
+
+    @objc public func focusPaneUp(_ sender: Any?) {
+        focusPane(.up)
+    }
+
+    @objc public func focusPaneDown(_ sender: Any?) {
+        focusPane(.down)
+    }
+
     @objc public func closeActivePane(_ sender: Any?) {
         guard !isShowingSettings,
               let project = activeProject,
@@ -882,6 +898,11 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         workspaceDidChange()
         attachActiveTab()
         refreshChrome()
+    }
+
+    private func focusPane(_ direction: PaneSplitDirection) {
+        guard !isShowingSettings else { return }
+        _ = workspaceVC.focusNeighbor(direction: direction)
     }
 
     private func installSplitShortcutMonitor() {
@@ -1258,6 +1279,16 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
 
     public func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         guard let action = menuItem.action else { return true }
+        let focusDirections: [Selector: PaneSplitDirection] = [
+            #selector(focusPaneLeft(_:)): .left,
+            #selector(focusPaneRight(_:)): .right,
+            #selector(focusPaneUp(_:)): .up,
+            #selector(focusPaneDown(_:)): .down,
+        ]
+        if let direction = focusDirections[action] {
+            return !isShowingSettings
+                && workspaceVC.canFocusNeighbor(direction: direction)
+        }
         let horizontalActions = [#selector(splitLeft(_:)), #selector(splitRight(_:))]
         let verticalActions = [#selector(splitUp(_:)), #selector(splitDown(_:))]
         if horizontalActions.contains(action) || verticalActions.contains(action) {

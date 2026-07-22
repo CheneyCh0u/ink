@@ -180,6 +180,22 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let windowItem = NSMenuItem()
         let windowMenu = NSMenu(title: "窗口")
+        let paneFocusItems: [(String, Selector, String)] = [
+            ("聚焦左侧 pane", #selector(MainWindowController.focusPaneLeft(_:)), "\u{F702}"),
+            ("聚焦右侧 pane", #selector(MainWindowController.focusPaneRight(_:)), "\u{F703}"),
+            ("聚焦上方 pane", #selector(MainWindowController.focusPaneUp(_:)), "\u{F700}"),
+            ("聚焦下方 pane", #selector(MainWindowController.focusPaneDown(_:)), "\u{F701}"),
+        ]
+        for (title, action, keyEquivalent) in paneFocusItems {
+            let item = NSMenuItem(
+                title: title,
+                action: action,
+                keyEquivalent: keyEquivalent
+            )
+            item.keyEquivalentModifierMask = [.command, .option]
+            windowMenu.addItem(item)
+        }
+        windowMenu.addItem(.separator())
         let nextItem = NSMenuItem(
             title: "下一个会话",
             action: #selector(MainWindowController.nextSession(_:)),

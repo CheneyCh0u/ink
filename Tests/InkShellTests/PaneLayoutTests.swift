@@ -181,4 +181,208 @@ struct PaneLayoutTests {
         #expect(!acceptedMismatchedCount)
         #expect(!acceptedZeroWeight)
     }
+
+    @Test("相邻 pane 按视觉方向双向选择且边界为空")
+    func neighborUsesVisualDirectionAndStopsAtBoundary() {
+        let topLeft = PaneID()
+        let bottomLeft = PaneID()
+        let topRight = PaneID()
+        let bottomRight = PaneID()
+        let layout = PaneLayout.group(
+            id: SplitID(), axis: .leftRight, weights: [0.4, 0.6],
+            children: [
+                .group(
+                    id: SplitID(), axis: .topBottom, weights: [0.7, 0.3],
+                    children: [.leaf(topLeft), .leaf(bottomLeft)]
+                ),
+                .group(
+                    id: SplitID(), axis: .topBottom, weights: [0.7, 0.3],
+                    children: [.leaf(topRight), .leaf(bottomRight)]
+                ),
+            ]
+        )
+
+        #expect(layout.neighbor(of: topLeft, direction: .right) == topRight)
+        #expect(layout.neighbor(of: topRight, direction: .left) == topLeft)
+        #expect(layout.neighbor(of: topLeft, direction: .down) == bottomLeft)
+        #expect(layout.neighbor(of: bottomLeft, direction: .up) == topLeft)
+        #expect(layout.neighbor(of: topLeft, direction: .left) == nil)
+        #expect(layout.neighbor(of: bottomRight, direction: .down) == nil)
+    }
+
+    @Test("T 形候选先比中心距离再按布局顺序稳定决胜")
+    func tShapeUsesCenterDistanceThenDFSOrder() {
+        let left = PaneID()
+        let rightTop = PaneID()
+        let rightBottom = PaneID()
+        let tied = PaneLayout.group(
+            id: SplitID(), axis: .leftRight, weights: [0.5, 0.5],
+            children: [
+                .leaf(left),
+                .group(
+                    id: SplitID(), axis: .topBottom, weights: [0.5, 0.5],
+                    children: [.leaf(rightTop), .leaf(rightBottom)]
+                ),
+            ]
+        )
+        #expect(tied.neighbor(of: left, direction: .right) == rightTop)
+
+        let nearBottom = PaneLayout.group(
+            id: SplitID(), axis: .leftRight, weights: [0.5, 0.5],
+            children: [
+                .leaf(left),
+                .group(
+                    id: SplitID(), axis: .topBottom, weights: [0.3, 0.7],
+                    children: [.leaf(rightTop), .leaf(rightBottom)]
+                ),
+            ]
+        )
+        #expect(nearBottom.neighbor(of: left, direction: .right) == rightBottom)
+    }
+
+    @Test("嵌套偏移中的数学同分仍按布局顺序决胜")
+    func nestedOffsetTieUsesDFSOrderDespiteRounding() {
+        let spacer = PaneID()
+        let left = PaneID()
+        let rightTop = PaneID()
+        let rightBottom = PaneID()
+        let layout = PaneLayout.group(
+            id: SplitID(), axis: .topBottom, weights: [0.002, 0.998],
+            children: [
+                .leaf(spacer),
+                .group(
+                    id: SplitID(), axis: .leftRight, weights: [0.5, 0.5],
+                    children: [
+                        .leaf(left),
+                        .group(
+                            id: SplitID(), axis: .topBottom, weights: [0.5, 0.5],
+                            children: [.leaf(rightTop), .leaf(rightBottom)]
+                        ),
+                    ]
+                ),
+            ]
+        )
+
+        #expect(layout.neighbor(of: left, direction: .right) == rightTop)
+    }
+
+    @Test("运行时几何计入分隔线后选择屏幕中心更近的 pane")
+    func viewportGeometryAccountsForDividers() {
+        let topLeft = PaneID()
+        let bottomLeft = PaneID()
+        let topRight = PaneID()
+        let bottomRight = PaneID()
+        let layout = PaneLayout.group(
+            id: SplitID(), axis: .leftRight, weights: [0.5, 0.5],
+            children: [
+                .group(
+                    id: SplitID(), axis: .topBottom,
+                    weights: [299.0 / 399.0, 100.0 / 399.0],
+                    children: [.leaf(topLeft), .leaf(bottomLeft)]
+                ),
+                .group(
+                    id: SplitID(), axis: .topBottom,
+                    weights: [99.0 / 399.0, 300.0 / 399.0],
+                    children: [.leaf(topRight), .leaf(bottomRight)]
+                ),
+            ]
+        )
+
+        #expect(layout.neighbor(of: topLeft, direction: .right) == bottomRight)
+        #expect(layout.neighbor(
+            of: topLeft,
+            direction: .right,
+            geometry: PaneNavigationGeometry(
+                width: 800,
+                height: 400,
+                dividerThickness: 1
+            )
+        ) == topRight)
+    }
+
+    @Test("零面积 active 可沿压缩轴逃到可见 pane")
+    func zeroAreaActiveCanEscapeToVisiblePane() {
+        let collapsedActive = PaneID()
+        let collapsedSibling = PaneID()
+        let visible = PaneID()
+        let layout = PaneLayout.group(
+            id: SplitID(), axis: .leftRight, weights: [0.01, 0.99],
+            children: [
+                .group(
+                    id: SplitID(), axis: .leftRight, weights: [0.5, 0.5],
+                    children: [.leaf(collapsedActive), .leaf(collapsedSibling)]
+                ),
+                .leaf(visible),
+            ]
+        )
+
+        #expect(layout.neighbor(
+            of: collapsedActive,
+            direction: .right,
+            geometry: PaneNavigationGeometry(
+                width: 100,
+                height: 400,
+                dividerThickness: 1
+            )
+        ) == visible)
+    }
+
+    @Test("可见 active 不会进入零面积目标")
+    func zeroAreaCandidateIsRejected() {
+        let visibleActive = PaneID()
+        let collapsedLeft = PaneID()
+        let collapsedRight = PaneID()
+        let layout = PaneLayout.group(
+            id: SplitID(), axis: .leftRight, weights: [0.99, 0.01],
+            children: [
+                .leaf(visibleActive),
+                .group(
+                    id: SplitID(), axis: .leftRight, weights: [0.5, 0.5],
+                    children: [.leaf(collapsedLeft), .leaf(collapsedRight)]
+                ),
+            ]
+        )
+
+        #expect(layout.neighbor(
+            of: visibleActive,
+            direction: .right,
+            geometry: PaneNavigationGeometry(
+                width: 100,
+                height: 400,
+                dividerThickness: 1
+            )
+        ) == nil)
+    }
+
+    @Test("对角 pane 不跳转且无效权重等分回退")
+    func diagonalIsRejectedAndInvalidWeightsFallBackEqually() {
+        let topLeft = PaneID()
+        let topRight = PaneID()
+        let bottomRight = PaneID()
+        let diagonal = PaneLayout.group(
+            id: SplitID(), axis: .topBottom, weights: [0.5, 0.5],
+            children: [
+                .group(
+                    id: SplitID(), axis: .leftRight, weights: [0.5, 0.5],
+                    children: [.leaf(topLeft), .leaf(topRight)]
+                ),
+                .group(
+                    id: SplitID(), axis: .leftRight, weights: [1, 0],
+                    children: [.leaf(PaneID()), .leaf(bottomRight)]
+                ),
+            ]
+        )
+        let unchanged = diagonal
+
+        #expect(diagonal.neighbor(of: topLeft, direction: .down) != bottomRight)
+        #expect(diagonal.neighbor(of: topRight, direction: .down) == bottomRight)
+        #expect(diagonal.neighbor(of: PaneID(), direction: .right) == nil)
+        #expect(diagonal == unchanged)
+
+        let mismatched = PaneLayout.group(
+            id: SplitID(), axis: .leftRight, weights: [1],
+            children: [.leaf(topLeft), .leaf(topRight)]
+        )
+        #expect(mismatched.neighbor(of: topLeft, direction: .right) == topRight)
+    }
 }

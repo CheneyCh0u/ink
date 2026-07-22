@@ -216,15 +216,44 @@ final class TerminalWorkspaceViewController: NSViewController {
     }
 
     func activate(_ paneID: PaneID) {
-        guard currentTab?.activate(paneID) == true else { return }
+        guard currentTab?.activePaneID != paneID,
+              currentTab?.activate(paneID) == true else { return }
         updateActiveBorders()
         onActivatePane?(paneID)
+    }
+
+    func canFocusNeighbor(direction: PaneSplitDirection) -> Bool {
+        currentTab?.canFocusNeighbor(
+            direction: direction,
+            geometry: paneNavigationGeometry
+        ) ?? false
+    }
+
+    @discardableResult
+    func focusNeighbor(direction: PaneSplitDirection) -> Bool {
+        guard currentTab?.focusNeighbor(
+            direction: direction,
+            geometry: paneNavigationGeometry
+        ) == true,
+              let paneID = currentTab?.activePaneID else { return false }
+        updateActiveBorders()
+        onActivatePane?(paneID)
+        focusActivePane()
+        return true
     }
 
     func focusActivePane() {
         guard let paneID = currentTab?.activePaneID,
               let terminalView = terminalView(for: paneID) else { return }
         view.window?.makeFirstResponder(terminalView)
+    }
+
+    private var paneNavigationGeometry: PaneNavigationGeometry {
+        return PaneNavigationGeometry(
+            width: Double(view.bounds.width),
+            height: Double(view.bounds.height),
+            dividerThickness: Double(WorkspaceSplitContainerView.dividerThickness)
+        )
     }
 
     func apply(config: InkConfig) {
