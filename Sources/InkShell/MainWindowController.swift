@@ -44,6 +44,10 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
     private let configURL: URL
     private let configSyncService: ConfigSyncService
     private let sessionCloseCoordinator: SessionCloseCoordinator
+    private let projectDefaults: UserDefaults
+    private let workspaceStore: WorkspaceStore
+    private let workspaceSaveScheduler: WorkspaceSaveScheduler
+    private let startPaneOverride: ((TerminalSize, String) -> TerminalPane?)?
     private var configWatcher: ConfigWatcher?
     private var sidebarMode: SidebarDisplayMode = .expanded
     private var isShowingSettings = false
@@ -69,7 +73,10 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         initialConfig: InkConfig,
         configURL: URL,
         configSyncService: ConfigSyncService,
-        sessionCloseCoordinator: SessionCloseCoordinator = SessionCloseCoordinator()
+        sessionCloseCoordinator: SessionCloseCoordinator = SessionCloseCoordinator(),
+        projectDefaults: UserDefaults = .standard,
+        workspaceStore: WorkspaceStore = WorkspaceStore(),
+        startPaneOverride: ((TerminalSize, String) -> TerminalPane?)? = nil
     ) {
         let window = NSWindow(
             contentRect: NSRect(
@@ -94,10 +101,17 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         self.configURL = configURL
         self.configSyncService = configSyncService
         self.sessionCloseCoordinator = sessionCloseCoordinator
+        self.projectDefaults = projectDefaults
+        self.workspaceStore = workspaceStore
+        workspaceSaveScheduler = WorkspaceSaveScheduler(store: workspaceStore)
+        self.startPaneOverride = startPaneOverride
         self.config = initialConfig
         super.init(window: window)
         window.delegate = self
         loadProjects()
+        if let snapshot = workspaceStore.load() {
+            restoreWorkspace(from: snapshot)
+        }
         buildContent()
         installSplitShortcutMonitor()
         applyConfig(config)
@@ -142,21 +156,59 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
     // MARK: - 项目持久化
 
     private func loadProjects() {
-        projects = ProjectStore.load()
+        projects = ProjectStore.load(defaults: projectDefaults)
         if projects.isEmpty {
             projects = [Project(directory: FileManager.default.homeDirectoryForCurrentUser)]
         }
         sortPinnedFirst()
         // 恢复上次的活动项目。
-        if let last = ProjectStore.activeProjectPath,
+        if let last = ProjectStore.activeProjectPath(in: projectDefaults),
            let index = projects.firstIndex(where: { $0.displayName == last }) {
             activeProjectIndex = index
         }
     }
 
     private func persistProjects() {
-        ProjectStore.save(projects)
-        ProjectStore.activeProjectPath = activeProject?.displayName
+        ProjectStore.save(projects, defaults: projectDefaults)
+        ProjectStore.setActiveProjectPath(
+            activeProject?.displayName,
+            defaults: projectDefaults
+        )
+    }
+
+    private func restoreWorkspace(from snapshot: WorkspaceSnapshot) {
+        for project in projects {
+            guard let state = snapshot.projects.first(where: {
+                Self.standardizedPath($0.path) == project.directory.standardizedFileURL.path
+            }) else { continue }
+
+            project.tabs = state.tabs.compactMap { tabState in
+                WorkspaceStateMapper.restoreTab(
+                    tabState,
+                    projectDirectory: project.directory
+                ) { [weak self] directory in
+                    self?.startPane(
+                        size: TerminalSize(columns: 80, rows: 24),
+                        workingDirectory: directory
+                    )
+                }
+            }
+            project.activeTabIndex = project.tabs.indices.contains(state.activeTabIndex)
+                ? state.activeTabIndex
+                : max(0, project.tabs.count - 1)
+        }
+
+        if let activePath = snapshot.activeProjectPath,
+           let index = projects.firstIndex(where: {
+               $0.directory.standardizedFileURL.path == Self.standardizedPath(activePath)
+           }) {
+            activeProjectIndex = index
+        }
+    }
+
+    private static func standardizedPath(_ path: String) -> String {
+        URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+            .standardizedFileURL.path
     }
 
     /// 不变式：置顶块永远在顶部（组内保持相对顺序）。
@@ -291,6 +343,9 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         if activeProject?.tabs.isEmpty ?? true, !firstSessionScheduled {
             firstSessionScheduled = true
             DispatchQueue.main.async { [weak self] in self?.newSession(nil) }
+        } else {
+            attachActiveTab()
+            refreshChrome()
         }
     }
 
@@ -856,12 +911,30 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
     }
 
     private func startPane(size: TerminalSize, workingDirectory: String) -> TerminalPane? {
+        if let startPaneOverride {
+            guard let pane = startPaneOverride(size, workingDirectory) else { return nil }
+            configureCallbacks(for: pane)
+            return pane
+        }
         let session = TerminalSession(
             size: size,
             workingDirectory: workingDirectory,
             scrollbackLines: config.scrollbackLines
         )
         let pane = TerminalPane(session: session)
+        configureCallbacks(for: pane)
+        do {
+            try session.start()
+            return pane
+        } catch {
+            session.detach()
+            NSAlert(error: error).runModal()
+            return nil
+        }
+    }
+
+    private func configureCallbacks(for pane: TerminalPane) {
+        let session = pane.session
         session.onUpdate = { [weak self, weak pane] in
             guard let self, let pane else { return }
             self.workspaceVC.markDirty(pane.id)
@@ -871,14 +944,6 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         session.onExit = { [weak self, weak pane] _ in
             guard let self, let pane else { return }
             self.handlePaneExit(pane.id)
-        }
-        do {
-            try session.start()
-            return pane
-        } catch {
-            session.detach()
-            NSAlert(error: error).runModal()
-            return nil
         }
     }
 
@@ -916,8 +981,15 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         }
     }
 
-    private var allPanes: [TerminalPane] {
+    var allPanes: [TerminalPane] {
         projects.flatMap(\.tabs).flatMap(\.allPanes)
+    }
+
+    var currentWorkspaceSnapshot: WorkspaceSnapshot {
+        WorkspaceStateMapper.capture(
+            projects: projects,
+            activeProject: activeProject
+        )
     }
 
     private func foregroundProcesses(
