@@ -1,4 +1,5 @@
 import AppKit
+import InkConfig
 import InkTerminalView
 
 /// 应用入口：菜单 + 主窗口。窗口结构在 `MainWindowController`。
@@ -42,7 +43,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApplication.shared.mainMenu = Self.makeMainMenu(settingsTarget: self)
     }
 
-    static func makeMainMenu(settingsTarget: AnyObject? = nil) -> NSMenu {
+    static func makeMainMenu(
+        settingsTarget: AnyObject? = nil,
+        keyBindings: KeyBindingSet = .defaults
+    ) -> NSMenu {
         let mainMenu = NSMenu()
 
         let appItem = NSMenuItem()
@@ -223,7 +227,32 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         windowItem.submenu = windowMenu
         mainMenu.addItem(windowItem)
 
+        apply(keyBindings, to: mainMenu)
         return mainMenu
+    }
+
+    private static func apply(_ bindings: KeyBindingSet, to menu: NSMenu) {
+        for descriptor in MenuCommandDescriptor.all {
+            guard let item = menuItem(with: descriptor.selector, in: menu) else { continue }
+            guard let binding = bindings.binding(for: descriptor.action) else {
+                item.keyEquivalent = ""
+                item.keyEquivalentModifierMask = []
+                continue
+            }
+            item.keyEquivalent = KeyBindingAppKitAdapter.keyEquivalent(for: binding)
+            item.keyEquivalentModifierMask = KeyBindingAppKitAdapter.modifierFlags(for: binding)
+        }
+    }
+
+    private static func menuItem(with selector: Selector, in menu: NSMenu) -> NSMenuItem? {
+        for item in menu.items {
+            if item.action == selector { return item }
+            if let submenu = item.submenu,
+               let match = menuItem(with: selector, in: submenu) {
+                return match
+            }
+        }
+        return nil
     }
 
     @objc private func showSettings(_ sender: Any?) {
