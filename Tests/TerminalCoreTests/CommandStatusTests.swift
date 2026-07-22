@@ -68,6 +68,25 @@ struct CommandStatusTests {
         #expect(MemoryLayout<RowInfo>.stride == 2)
     }
 
+    @Test("搜索快照不持有命令完成记录与待处理事件")
+    func searchSnapshotDropsCommandState() {
+        var terminal = Terminal(size: .init(columns: 80, rows: 24))
+        let clock = ContinuousClock()
+        let start = clock.now
+        terminal.handleOSC133(ArraySlice("C".utf8), now: start)
+        terminal.handleOSC133(
+            ArraySlice("D;0".utf8),
+            now: start.advanced(by: .seconds(12))
+        )
+
+        var snapshot = terminal.snapshotForSearch()
+
+        #expect(snapshot.commandCompletionRecordCount == 0)
+        #expect(snapshot.takeEvents().isEmpty)
+        #expect(terminal.commandCompletionRecordCount == 1)
+        #expect(terminal.takeEvents().count == 1)
+    }
+
     @Test("scrollback 淘汰与 ED 2/3 只回收对应完成记录")
     func completionRecordLifecycle() {
         var (parser, terminal) = makeTerminal(columns: 20, rows: 2, scrollback: 2)
@@ -98,5 +117,41 @@ struct CommandStatusTests {
             final: UInt8(ascii: "J")
         )
         #expect(terminal.commandCompletionRecordCount == 0)
+    }
+
+    @Test("十万条密集命令记录受历史容量约束")
+    func denseCommandRecordsStayBounded() {
+        let commandCount = 100_000
+        var parser = Parser()
+        var terminal = Terminal(
+            size: .init(columns: 120, rows: 50),
+            scrollbackCapacity: commandCount
+        )
+        let bytes = Array(
+            "\u{1B}]133;B\u{07}x\u{1B}]133;C\u{07}o\u{1B}]133;D;0\u{07}\r\n".utf8
+        )
+        for index in 0..<commandCount {
+            parser.feed(bytes, handler: &terminal)
+            if index.isMultiple(of: 512) { _ = terminal.takeEvents() }
+        }
+        _ = terminal.takeEvents()
+
+        let beforeCount = terminal.commandCompletionRecordCount
+        let clock = ContinuousClock()
+        let narrow = clock.measure {
+            terminal.resize(to: .init(columns: 80, rows: 50))
+        }
+        let wide = clock.measure {
+            terminal.resize(to: .init(columns: 120, rows: 50))
+        }
+
+        #expect(beforeCount <= terminal.scrollback.count + terminal.grid.size.rows)
+        #expect(terminal.commandCompletionRecordCount <= terminal.totalLines)
+        #expect(MemoryLayout<CommandCompletionRecord>.stride == 16)
+        print(
+            "command status dense: records=\(terminal.commandCompletionRecordCount) "
+                + "stride=\(MemoryLayout<CommandCompletionRecord>.stride) "
+                + "narrow=\(narrow) wide=\(wide)"
+        )
     }
 }

@@ -95,14 +95,18 @@ public struct Terminal: Sendable {
         self.scrollBottom = size.rows - 1
     }
 
-    /// 后台搜索只读取 cell、行信息与簇表；主动剥离链接旁路，避免搜索任务持有
-    /// 10 万条链接记录并让前台后续写入触发整表 COW。
+    /// 后台搜索只读取 cell、行信息与簇表；主动剥离链接、命令状态和事件旁路，
+    /// 避免搜索任务持有长会话记录并让前台后续写入触发整表 COW。
     public func snapshotForSearch() -> Terminal {
         var snapshot = self
         snapshot.hyperlinkTargets = nil
         snapshot.hyperlinks = nil
         snapshot.activeHyperlinkTargetID = nil
         snapshot.savedPrimaryHyperlinks = nil
+        snapshot.commandStartedAt = nil
+        snapshot.commandCompletionRecords = []
+        snapshot.commandCompletionStart = 0
+        snapshot.pendingEvents = []
         return snapshot
     }
 
