@@ -30,3 +30,33 @@ struct MenuCommandDescriptor {
         .init(action: .toggleSidebar, selector: #selector(MainWindowController.toggleSidebarMode(_:))),
     ]
 }
+
+extension KeyBindingAction {
+    var displayTitle: String {
+        switch self {
+        case .newProject: "新建项目"
+        case .newTab: "新建标签"
+        case .closePane: "关闭当前分屏"
+        case .splitPrefix: "分屏前缀"
+        case .splitLeft: "向左分屏"
+        case .splitRight: "向右分屏"
+        case .splitUp: "向上分屏"
+        case .splitDown: "向下分屏"
+        case .focusLeft: "聚焦左侧分屏"
+        case .focusRight: "聚焦右侧分屏"
+        case .focusUp: "聚焦上方分屏"
+        case .focusDown: "聚焦下方分屏"
+        case .find: "查找"
+        case .fontIncrease: "放大字号"
+        case .fontDecrease: "缩小字号"
+        case .fontReset: "恢复默认字号"
+        case .previousCommand: "上一条命令"
+        case .nextCommand: "下一条命令"
+        case .copyCommand: "拷贝命令"
+        case .copyOutput: "拷贝命令输出"
+        case .previousTab: "上一个会话"
+        case .nextTab: "下一个会话"
+        case .toggleSidebar: "切换侧边栏"
+        }
+    }
+}
