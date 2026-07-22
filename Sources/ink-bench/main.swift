@@ -25,6 +25,52 @@ func mb(_ bytes: Int) -> String {
     String(format: "%.1f MB", Double(bytes) / 1024 / 1024)
 }
 
+enum LinkProfile: String {
+    case plain
+    case sparseOSC8 = "sparse-osc8"
+}
+
+if let linkProfile = CommandLine.arguments.dropFirst().first
+    .flatMap(LinkProfile.init(rawValue:)) {
+    let profileLineCount = 1_000_000
+    let visibleText = String(repeating: "x", count: 80)
+    let plainBytes = Array("\(visibleText)\r\n".utf8)
+    var parser = Parser()
+    var terminal = Terminal(
+        size: TerminalSize(columns: 120, rows: 50),
+        scrollbackCapacity: 100_000
+    )
+    var totalBytes = 0
+    let before = footprintBytes()
+    let clock = ContinuousClock()
+    let elapsed = clock.measure {
+        for line in 0..<profileLineCount {
+            if linkProfile == .sparseOSC8, line % 1_000 == 0 {
+                let target = String(format: "https://example.test/%08d", line)
+                let bytes = Array(
+                    "\u{1B}]8;;\(target)\u{07}\(visibleText)\u{1B}]8;;\u{07}\r\n".utf8
+                )
+                totalBytes += bytes.count
+                parser.feed(bytes, handler: &terminal)
+            } else {
+                totalBytes += plainBytes.count
+                parser.feed(plainBytes, handler: &terminal)
+            }
+        }
+    }
+    let after = footprintBytes()
+    let seconds = Double(elapsed.components.seconds)
+        + Double(elapsed.components.attoseconds) / 1e18
+    let throughput = Double(totalBytes) / seconds / 1024 / 1024
+    print("链接旁路 profile: \(linkProfile.rawValue)")
+    print("  行数 \(profileLineCount)  字节 \(totalBytes)")
+    print("  耗时 \(elapsed)")
+    print("  吞吐 \(String(format: "%.1f", throughput)) MB/s")
+    print("  footprint 增量 \(mb(after - before))")
+    print("  scrollback \(terminal.scrollback.count) 行")
+    exit(EXIT_SUCCESS)
+}
+
 let lineCount = 100_000
 let columns = 200
 

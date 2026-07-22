@@ -409,12 +409,21 @@ public struct Terminal: Sendable {
             grid[row, col + 1] = Cell(scalar: 0x20, attr: currentAttr | Cell.Attr.wideTrailing)
         }
 
-        if activeHyperlinkTargetID != nil || hyperlinks != nil {
+        if let activeHyperlinkTargetID {
             replaceHyperlinkCells(
                 row: row,
                 columns: col..<(col + width),
                 targetID: activeHyperlinkTargetID
             )
+        } else if let hyperlinks {
+            let stableLineID = scrollback.totalAppendedLines + UInt64(row)
+            if hyperlinks.mayContainRow(lineID: stableLineID) {
+                replaceHyperlinkCells(
+                    row: row,
+                    columns: col..<(col + width),
+                    targetID: nil
+                )
+            }
         }
 
         if col + width < cols {
@@ -681,7 +690,8 @@ public struct Terminal: Sendable {
         targetID: UInt32?
     ) {
         let stableLineID = scrollback.totalAppendedLines + UInt64(row)
-        if targetID == nil, hyperlinks?.anchor(for: stableLineID) == nil { return }
+        let existingAnchor = hyperlinks?.anchor(for: stableLineID)
+        if targetID == nil, existingAnchor == nil { return }
         guard let coordinate = hyperlinkCoordinate(row: row, column: columns.lowerBound) else { return }
         let lower = coordinate.offset
         let upper = lower + UInt32(clamping: columns.count)
@@ -693,7 +703,9 @@ public struct Terminal: Sendable {
             offsets: lower..<upper,
             with: targetID
         )
-        rebuildHyperlinkRowIndex(&store, row: row)
+        if targetID == nil || existingAnchor == nil {
+            rebuildHyperlinkRowIndex(&store, row: row)
+        }
         applyHyperlinkReferenceDelta(delta)
         hyperlinks = store.isEmpty ? nil : store
     }
@@ -823,8 +835,8 @@ public struct Terminal: Sendable {
     }
 
     private mutating func pruneHyperlinks() {
-        guard var store = hyperlinks else { return }
         let oldestLineID = scrollback.totalAppendedLines - UInt64(scrollback.count)
+        guard var store = hyperlinks, store.needsPrune(before: oldestLineID) else { return }
         let anchors = store.rowIndex
         let delta = store.prune(before: oldestLineID) { oldHeadLineID in
             guard let candidate = anchors
@@ -851,6 +863,13 @@ public struct Terminal: Sendable {
         segmentEnd: UInt32
     )? {
         let stableLineID = scrollback.totalAppendedLines + UInt64(row)
+        if let anchor = hyperlinks?.anchor(for: stableLineID) {
+            return (
+                headLineID: anchor.headLineID,
+                offset: anchor.startOffset + UInt32(clamping: column),
+                segmentEnd: anchor.startOffset + UInt32(clamping: grid.size.columns)
+            )
+        }
         let absoluteLine = scrollback.count + row
         guard let line = logicalLine(containing: TextPosition(line: absoluteLine, column: 0)),
               let segment = line.segments.first(where: { $0.lineID == stableLineID })

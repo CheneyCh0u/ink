@@ -28,11 +28,19 @@ struct HyperlinkReferenceDelta: Sendable {
 struct HyperlinkRangeStore: Sendable {
     private(set) var lines: ContiguousArray<HyperlinkLineRecord> = []
     private(set) var rowIndex: [UInt64: HyperlinkRowAnchor] = [:]
+    private var newestAnchoredLineID: UInt64?
 
     var isEmpty: Bool { lines.isEmpty }
 
+    @inline(__always)
+    func mayContainRow(lineID: UInt64) -> Bool {
+        guard let newestAnchoredLineID else { return false }
+        return lineID <= newestAnchoredLineID
+    }
+
     func containsRow(lineID: UInt64) -> Bool {
-        rowIndex[lineID] != nil
+        guard mayContainRow(lineID: lineID) else { return false }
+        return rowIndex[lineID] != nil
     }
 
     func removingAllReferenceDelta() -> HyperlinkReferenceDelta {
@@ -43,8 +51,15 @@ struct HyperlinkRangeStore: Sendable {
         return delta
     }
 
+    @inline(__always)
+    func needsPrune(before oldestLineID: UInt64) -> Bool {
+        guard let first = lines.first else { return false }
+        return first.headLineID < oldestLineID
+    }
+
     func anchor(for lineID: UInt64) -> HyperlinkRowAnchor? {
-        rowIndex[lineID]
+        guard let newestAnchoredLineID, lineID <= newestAnchoredLineID else { return nil }
+        return rowIndex[lineID]
     }
 
     func record(headLineID: UInt64) -> HyperlinkLineRecord? {
@@ -68,6 +83,15 @@ struct HyperlinkRangeStore: Sendable {
         let oldSpans = hasRecord
             ? lines[insertionIndex].spans
             : ContiguousArray<HyperlinkSpan>()
+        if let targetID,
+           hasRecord,
+           let last = oldSpans.last,
+           last.targetID == targetID,
+           last.offsets.upperBound == offsets.lowerBound {
+            lines[insertionIndex].spans[oldSpans.count - 1].offsets =
+                last.offsets.lowerBound..<offsets.upperBound
+            return HyperlinkReferenceDelta()
+        }
         var next = ContiguousArray<HyperlinkSpan>()
         next.reserveCapacity(oldSpans.count + (targetID == nil ? 0 : 1))
 
@@ -201,14 +225,19 @@ struct HyperlinkRangeStore: Sendable {
                     headLineID: line.headLineID,
                     startOffset: lower
                 )
+                newestAnchoredLineID = max(newestAnchoredLineID ?? 0, segment.lineID)
             } else if rowIndex[segment.lineID]?.headLineID == line.headLineID {
                 rowIndex.removeValue(forKey: segment.lineID)
+                if newestAnchoredLineID == segment.lineID {
+                    newestAnchoredLineID = rowIndex.keys.max()
+                }
             }
         }
     }
 
     mutating func removeAllRowAnchors() {
         rowIndex.removeAll(keepingCapacity: true)
+        newestAnchoredLineID = nil
     }
 
     mutating func remapHeads(_ mapping: [UInt64: UInt64]) {
@@ -220,6 +249,7 @@ struct HyperlinkRangeStore: Sendable {
         }
         lines.sort { $0.headLineID < $1.headLineID }
         rowIndex.removeAll(keepingCapacity: true)
+        newestAnchoredLineID = nil
     }
 
     mutating func prune(
@@ -270,6 +300,7 @@ struct HyperlinkRangeStore: Sendable {
         }
         lines = ContiguousArray(nextLines.sorted { $0.headLineID < $1.headLineID })
         rowIndex = nextRowIndex
+        newestAnchoredLineID = rowIndex.keys.max()
         return delta
     }
 
