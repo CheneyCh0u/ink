@@ -5,6 +5,57 @@ import Testing
 @Suite("终端搜索栏")
 @MainActor
 struct TerminalSearchBarTests {
+    @Test("搜索模式按钮明确显示状态与可用性")
+    func modeState() {
+        let bar = TerminalSearchBarView()
+
+        bar.updateSearchModes(
+            caseSensitive: true,
+            selectionOnly: false,
+            selectionAvailable: false,
+            copyOutputAvailable: true
+        )
+
+        #expect(bar.caseSensitiveEnabled)
+        #expect(!bar.selectionOnlyEnabled)
+        #expect(!bar.selectionToggleEnabled)
+        #expect(bar.copyOutputEnabled)
+    }
+
+    @Test("大小写按钮把下一状态路由给控制器")
+    func caseButtonRouting() {
+        let bar = TerminalSearchBarView()
+        var states: [Bool] = []
+        bar.onCaseSensitivityChange = { states.append($0) }
+
+        bar.toggleCaseSensitivity()
+        bar.toggleCaseSensitivity()
+
+        #expect(states == [true, false])
+    }
+
+    @Test("选区与复制按钮路由搜索动作")
+    func scopeAndCopyButtonRouting() {
+        let bar = TerminalSearchBarView()
+        var scopeStates: [Bool] = []
+        var copyCount = 0
+        bar.onSelectionScopeChange = { scopeStates.append($0) }
+        bar.onCopyMatchCommandOutput = { copyCount += 1 }
+        bar.updateSearchModes(
+            caseSensitive: false,
+            selectionOnly: false,
+            selectionAvailable: true,
+            copyOutputAvailable: true
+        )
+
+        bar.toggleSelectionScope()
+        bar.toggleSelectionScope()
+        bar.performCopyMatchCommandOutput()
+
+        #expect(scopeStates == [true, false])
+        #expect(copyCount == 1)
+    }
+
     @Test("结果计数按当前序号显示")
     func resultCount() {
         let bar = TerminalSearchBarView()

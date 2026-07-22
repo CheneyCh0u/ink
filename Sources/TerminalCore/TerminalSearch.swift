@@ -9,11 +9,23 @@ public struct TerminalSearchMatch: Sendable, Equatable {
     }
 }
 
+/// 一次搜索的行为选项。范围是瞬态查询输入，不进入 cell 或历史行存储。
+public struct TerminalSearchOptions: Sendable, Equatable {
+    public var caseSensitive: Bool
+    public var selection: SelectionRange?
+
+    public init(caseSensitive: Bool = false, selection: SelectionRange? = nil) {
+        self.caseSensitive = caseSensitive
+        self.selection = selection
+    }
+}
+
 /// 终端历史文本的无状态搜索入口。
 public enum TerminalSearchEngine {
     public static func search(
         in terminal: Terminal,
         query: String,
+        options: TerminalSearchOptions = TerminalSearchOptions(),
         fromLine: Int = 0
     ) -> [TerminalSearchMatch] {
         guard !query.isEmpty, terminal.totalLines > 0 else { return [] }
@@ -36,7 +48,7 @@ public enum TerminalSearchEngine {
             let nextIsWrapped = lineIndex + 1 < terminal.totalLines
                 && (terminal.absoluteLineInfo(lineIndex + 1)?.isWrapped ?? false)
             if !nextIsWrapped {
-                matches.append(contentsOf: logicalLine.matches(for: query))
+                matches.append(contentsOf: logicalLine.matches(for: query, options: options))
                 logicalLine.removeAll(keepingCapacity: true)
             }
         }
@@ -63,6 +75,7 @@ public struct TerminalSearchIndex: Sendable {
     public private(set) var lastEvictedLineCount = 0
 
     private var query: String?
+    private var options = TerminalSearchOptions()
     private var layoutRevision: UInt64 = 0
     private var appendedLines: UInt64 = 0
     private var scrollbackCount = 0
@@ -70,8 +83,13 @@ public struct TerminalSearchIndex: Sendable {
     public init() {}
 
     /// 全量重建或历史坐标整体平移必须放到后台；普通 grid/后缀刷新可原地完成。
-    public func requiresBackgroundUpdate(in terminal: Terminal, query newQuery: String) -> Bool {
+    public func requiresBackgroundUpdate(
+        in terminal: Terminal,
+        query newQuery: String,
+        options newOptions: TerminalSearchOptions = TerminalSearchOptions()
+    ) -> Bool {
         if query != newQuery
+            || options != newOptions
             || query == nil
             || layoutRevision != terminal.searchLayoutRevision
             || appendedLines > terminal.scrollback.totalAppendedLines {
@@ -96,22 +114,31 @@ public struct TerminalSearchIndex: Sendable {
     }
 
     @discardableResult
-    public mutating func update(in terminal: Terminal, query newQuery: String) -> [TerminalSearchMatch] {
+    public mutating func update(
+        in terminal: Terminal,
+        query newQuery: String,
+        options newOptions: TerminalSearchOptions = TerminalSearchOptions()
+    ) -> [TerminalSearchMatch] {
         guard !newQuery.isEmpty else {
             clear()
             return matches
         }
 
         let requiresFullScan = query != newQuery
+            || options != newOptions
             || query == nil
             || layoutRevision != terminal.searchLayoutRevision
             || appendedLines > terminal.scrollback.totalAppendedLines
 
         if requiresFullScan {
-            matches = TerminalSearchEngine.search(in: terminal, query: newQuery)
+            matches = TerminalSearchEngine.search(
+                in: terminal,
+                query: newQuery,
+                options: newOptions
+            )
             lastUpdateKind = .full
             lastEvictedLineCount = 0
-            remember(terminal: terminal, query: newQuery)
+            remember(terminal: terminal, query: newQuery, options: newOptions)
             return matches
         }
 
@@ -147,16 +174,18 @@ public struct TerminalSearchIndex: Sendable {
         matches.append(contentsOf: TerminalSearchEngine.search(
             in: terminal,
             query: newQuery,
+            options: newOptions,
             fromLine: rescanStart
         ))
         lastUpdateKind = .incremental
-        remember(terminal: terminal, query: newQuery)
+        remember(terminal: terminal, query: newQuery, options: newOptions)
         return matches
     }
 
     public mutating func clear() {
         matches.removeAll(keepingCapacity: false)
         query = nil
+        options = TerminalSearchOptions()
         layoutRevision = 0
         appendedLines = 0
         scrollbackCount = 0
@@ -164,8 +193,13 @@ public struct TerminalSearchIndex: Sendable {
         lastEvictedLineCount = 0
     }
 
-    private mutating func remember(terminal: Terminal, query: String) {
+    private mutating func remember(
+        terminal: Terminal,
+        query: String,
+        options: TerminalSearchOptions
+    ) {
         self.query = query
+        self.options = options
         layoutRevision = terminal.searchLayoutRevision
         appendedLines = terminal.scrollback.totalAppendedLines
         scrollbackCount = terminal.scrollback.count
@@ -232,7 +266,7 @@ private struct LogicalLine {
         }
     }
 
-    func matches(for query: String) -> [TerminalSearchMatch] {
+    func matches(for query: String, options: TerminalSearchOptions) -> [TerminalSearchMatch] {
         guard let lastContent = mappings.lastIndex(where: { !$0.isBlank }) else { return [] }
         let searchableLength = mappings[lastContent].utf16Range.upperBound
         guard searchableLength > 0 else { return [] }
@@ -247,9 +281,12 @@ private struct LogicalLine {
                withUnsafeCurrentTask(body: { $0?.isCancelled ?? false }) {
                 return []
             }
+            let compareOptions: NSString.CompareOptions = options.caseSensitive
+                ? []
+                : [.caseInsensitive]
             let result = source.range(
                 of: query,
-                options: [.caseInsensitive],
+                options: compareOptions,
                 range: NSRange(
                     location: searchLocation,
                     length: searchableLength - searchLocation

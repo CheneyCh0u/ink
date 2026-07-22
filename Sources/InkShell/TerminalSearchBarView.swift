@@ -5,18 +5,28 @@ import InkDesign
 @MainActor
 final class TerminalSearchBarView: NSVisualEffectView, NSSearchFieldDelegate {
     var onQueryChange: ((String) -> Void)?
+    var onCaseSensitivityChange: ((Bool) -> Void)?
+    var onSelectionScopeChange: ((Bool) -> Void)?
+    var onCopyMatchCommandOutput: (() -> Void)?
     var onNext: (() -> Void)?
     var onPrevious: (() -> Void)?
     var onClose: (() -> Void)?
 
     private let searchField = NSSearchField(frame: .zero)
     private let resultLabel = NSTextField(labelWithString: "0 / 0")
+    private let caseSensitiveButton = NSButton(frame: .zero)
+    private let selectionButton = NSButton(frame: .zero)
+    private let copyOutputButton = NSButton(frame: .zero)
     private let previousButton = NSButton(frame: .zero)
     private let nextButton = NSButton(frame: .zero)
     private let closeButton = NSButton(frame: .zero)
 
     var resultText: String { resultLabel.stringValue }
     var navigationEnabled: Bool { previousButton.isEnabled && nextButton.isEnabled }
+    var caseSensitiveEnabled: Bool { caseSensitiveButton.state == .on }
+    var selectionOnlyEnabled: Bool { selectionButton.state == .on }
+    var selectionToggleEnabled: Bool { selectionButton.isEnabled }
+    var copyOutputEnabled: Bool { copyOutputButton.isEnabled }
 
     init() {
         super.init(frame: .zero)
@@ -36,6 +46,27 @@ final class TerminalSearchBarView: NSVisualEffectView, NSSearchFieldDelegate {
         resultLabel.textColor = InkDesignTokens.Color.textSecondary
         resultLabel.alignment = .center
         resultLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        configureToggle(
+            caseSensitiveButton,
+            title: "Aa",
+            label: "区分大小写",
+            width: 30,
+            action: #selector(toggleCaseSensitivity(_:))
+        )
+        configureToggle(
+            selectionButton,
+            title: "选区",
+            label: "仅搜索选区",
+            width: 42,
+            action: #selector(toggleSelectionScope(_:))
+        )
+        configure(
+            copyOutputButton,
+            symbol: "doc.on.doc",
+            label: "拷贝匹配所在命令输出",
+            action: #selector(copyMatchCommandOutput(_:))
+        )
 
         configure(
             previousButton,
@@ -57,7 +88,8 @@ final class TerminalSearchBarView: NSVisualEffectView, NSSearchFieldDelegate {
         )
 
         let stack = NSStackView(views: [
-            searchField, resultLabel, previousButton, nextButton, closeButton,
+            searchField, resultLabel, caseSensitiveButton, selectionButton,
+            copyOutputButton, previousButton, nextButton, closeButton,
         ])
         stack.orientation = .horizontal
         stack.alignment = .centerY
@@ -76,6 +108,12 @@ final class TerminalSearchBarView: NSVisualEffectView, NSSearchFieldDelegate {
             heightAnchor.constraint(equalToConstant: 34),
         ])
         updateResultPosition(currentIndex: nil, total: 0)
+        updateSearchModes(
+            caseSensitive: false,
+            selectionOnly: false,
+            selectionAvailable: false,
+            copyOutputAvailable: false
+        )
     }
 
     @available(*, unavailable)
@@ -102,6 +140,38 @@ final class TerminalSearchBarView: NSVisualEffectView, NSSearchFieldDelegate {
         let hasResults = total > 0
         previousButton.isEnabled = hasResults
         nextButton.isEnabled = hasResults
+    }
+
+    func updateSearchModes(
+        caseSensitive: Bool,
+        selectionOnly: Bool,
+        selectionAvailable: Bool,
+        copyOutputAvailable: Bool
+    ) {
+        caseSensitiveButton.state = caseSensitive ? .on : .off
+        caseSensitiveButton.setAccessibilityValue(caseSensitive ? "已开启" : "已关闭")
+        selectionButton.state = selectionOnly ? .on : .off
+        selectionButton.isEnabled = selectionOnly || selectionAvailable
+        selectionButton.setAccessibilityValue(selectionOnly ? "已开启" : "已关闭")
+        copyOutputButton.isEnabled = copyOutputAvailable
+    }
+
+    func toggleCaseSensitivity() {
+        let enabled = caseSensitiveButton.state != .on
+        caseSensitiveButton.state = enabled ? .on : .off
+        onCaseSensitivityChange?(enabled)
+    }
+
+    func toggleSelectionScope() {
+        guard selectionButton.isEnabled else { return }
+        let enabled = selectionButton.state != .on
+        selectionButton.state = enabled ? .on : .off
+        onSelectionScopeChange?(enabled)
+    }
+
+    func performCopyMatchCommandOutput() {
+        guard copyOutputButton.isEnabled else { return }
+        onCopyMatchCommandOutput?()
     }
 
     func controlTextDidChange(_ notification: Notification) {
@@ -154,6 +224,32 @@ final class TerminalSearchBarView: NSVisualEffectView, NSSearchFieldDelegate {
         ])
     }
 
+    private func configureToggle(
+        _ button: NSButton,
+        title: String,
+        label: String,
+        width: CGFloat,
+        action: Selector
+    ) {
+        button.title = title
+        button.font = .systemFont(ofSize: 11, weight: .medium)
+        button.setButtonType(.pushOnPushOff)
+        button.bezelStyle = .texturedRounded
+        button.controlSize = .small
+        button.target = self
+        button.action = action
+        button.toolTip = label
+        button.setAccessibilityLabel(label)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: width),
+            button.heightAnchor.constraint(equalToConstant: 22),
+        ])
+    }
+
+    @objc private func toggleCaseSensitivity(_ sender: Any?) { toggleCaseSensitivity() }
+    @objc private func toggleSelectionScope(_ sender: Any?) { toggleSelectionScope() }
+    @objc private func copyMatchCommandOutput(_ sender: Any?) { performCopyMatchCommandOutput() }
     @objc private func previousResult(_ sender: Any?) { onPrevious?() }
     @objc private func nextResult(_ sender: Any?) { onNext?() }
     @objc private func closeSearch(_ sender: Any?) { onClose?() }

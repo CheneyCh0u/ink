@@ -3,6 +3,37 @@ import Testing
 
 @Suite("终端历史搜索")
 struct TerminalSearchTests {
+    @Test("大小写敏感模式只接受完全相同的字面值")
+    func caseSensitiveMode() {
+        var (parser, terminal) = makeTerminal(columns: 20, rows: 2)
+        feed("Alpha alpha ALPHA", &parser, &terminal)
+
+        let matches = TerminalSearchEngine.search(
+            in: terminal,
+            query: "Alpha",
+            options: TerminalSearchOptions(caseSensitive: true)
+        )
+
+        #expect(matches.map(\.range.start.column) == [0])
+    }
+
+    @Test("大小写选项变化强制索引全量重建")
+    func caseOptionInvalidatesIndex() {
+        var (parser, terminal) = makeTerminal(columns: 20, rows: 2)
+        feed("Alpha alpha", &parser, &terminal)
+        var index = TerminalSearchIndex()
+
+        _ = index.update(in: terminal, query: "alpha")
+        _ = index.update(
+            in: terminal,
+            query: "alpha",
+            options: TerminalSearchOptions(caseSensitive: true)
+        )
+
+        #expect(index.lastUpdateKind == .full)
+        #expect(index.matches.count == 1)
+    }
+
     @Test("忽略大小写并按旧到新返回")
     func caseInsensitiveOrdering() {
         var (parser, terminal) = makeTerminal(columns: 12, rows: 3, scrollback: 20)

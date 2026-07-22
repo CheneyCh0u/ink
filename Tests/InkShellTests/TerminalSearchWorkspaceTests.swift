@@ -8,6 +8,56 @@ import Testing
 @Suite("当前 pane 终端搜索")
 @MainActor
 struct TerminalSearchWorkspaceTests {
+    @Test("大小写切换重新计算当前会话并同步按钮")
+    func caseToggleRestartsSearch() async {
+        var terminal = Terminal(
+            size: TerminalSize(columns: 20, rows: 2),
+            scrollbackCapacity: 20
+        )
+        var parser = Parser()
+        parser.feed(Array("Alpha alpha".utf8), handler: &terminal)
+        let terminalView = TerminalMetalView(frame: .zero)
+        terminalView.terminalProvider = { terminal }
+        let controller = TerminalSearchController(
+            terminalProvider: { terminal }, terminalView: terminalView
+        )
+
+        controller.updateQuery("alpha")
+        await controller.waitForPendingUpdate()
+        #expect(controller.matches.count == 2)
+
+        controller.setCaseSensitive(true)
+        await controller.waitForPendingUpdate()
+
+        #expect(controller.matches.count == 1)
+        #expect(controller.searchBar.caseSensitiveEnabled)
+    }
+
+    @Test("快速切换大小写时旧 generation 不覆盖新结果")
+    func staleCaseGenerationCannotWriteBack() async {
+        var terminal = Terminal(
+            size: TerminalSize(columns: 40, rows: 4),
+            scrollbackCapacity: 2_000
+        )
+        var parser = Parser()
+        parser.feed(
+            Array(String(repeating: "Alpha alpha\r\n", count: 1_000).utf8),
+            handler: &terminal
+        )
+        let terminalView = TerminalMetalView(frame: .zero)
+        terminalView.terminalProvider = { terminal }
+        let controller = TerminalSearchController(
+            terminalProvider: { terminal }, terminalView: terminalView
+        )
+
+        controller.updateQuery("alpha")
+        controller.setCaseSensitive(true)
+        await controller.waitForPendingUpdate()
+
+        #expect(controller.matches.count == 1_000)
+        #expect(controller.searchBar.caseSensitiveEnabled)
+    }
+
     @Test("查询扫描异步执行而不阻塞主线程")
     func queryRunsOffMainActor() async {
         var terminal = Terminal(

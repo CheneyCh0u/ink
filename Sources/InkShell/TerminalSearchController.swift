@@ -17,6 +17,7 @@ final class TerminalSearchController {
     private var updateGeneration: UInt64 = 0
     private var updateTask: Task<Void, Never>?
     private(set) var currentIndex: Int?
+    private(set) var caseSensitive = false
 
     var matches: [TerminalSearchMatch] { index.matches }
     var currentMatch: TerminalSearchMatch? {
@@ -35,6 +36,7 @@ final class TerminalSearchController {
             return (self.matches, self.currentIndex)
         }
         searchBar.onQueryChange = { [weak self] in self?.updateQuery($0) }
+        searchBar.onCaseSensitivityChange = { [weak self] in self?.setCaseSensitive($0) }
         searchBar.onNext = { [weak self] in self?.selectNext() }
         searchBar.onPrevious = { [weak self] in self?.selectPrevious() }
         searchBar.onClose = { [weak self] in self?.onClose?() }
@@ -42,12 +44,22 @@ final class TerminalSearchController {
 
     func updateQuery(_ newQuery: String) {
         query = newQuery
+        restartSearch(chooseNearest: true)
+    }
+
+    func setCaseSensitive(_ enabled: Bool) {
+        guard caseSensitive != enabled else { return }
+        caseSensitive = enabled
+        restartSearch(chooseNearest: true)
+    }
+
+    private func restartSearch(chooseNearest: Bool) {
         updateGeneration &+= 1
         updateTask?.cancel()
         updateTask = nil
         refreshRequestedWhileSearching = false
 
-        guard !newQuery.isEmpty else {
+        guard !query.isEmpty else {
             index.clear()
             currentIndex = nil
             publish(reveal: false)
@@ -55,14 +67,16 @@ final class TerminalSearchController {
         }
 
         let terminal = terminalProvider().snapshotForSearch()
+        let options = TerminalSearchOptions(caseSensitive: caseSensitive)
         index.clear()
         currentIndex = nil
         publish(reveal: false)
         startBackgroundUpdate(
             terminal: terminal,
             startingIndex: TerminalSearchIndex(),
-            query: newQuery,
-            chooseNearest: true,
+            query: query,
+            options: options,
+            chooseNearest: chooseNearest,
             reveal: true,
             debounce: true
         )
@@ -75,10 +89,11 @@ final class TerminalSearchController {
             return
         }
         let terminal = terminalProvider().snapshotForSearch()
-        if !index.requiresBackgroundUpdate(in: terminal, query: query) {
+        let options = TerminalSearchOptions(caseSensitive: caseSensitive)
+        if !index.requiresBackgroundUpdate(in: terminal, query: query, options: options) {
             let previousMatch = currentMatch
             let previousIndex = currentIndex
-            _ = index.update(in: terminal, query: query)
+            _ = index.update(in: terminal, query: query, options: options)
             preserveCurrentSelection(
                 previousMatch: previousMatch,
                 previousIndex: previousIndex,
@@ -91,6 +106,7 @@ final class TerminalSearchController {
             terminal: terminal,
             startingIndex: index,
             query: query,
+            options: options,
             chooseNearest: false,
             reveal: false,
             debounce: false
@@ -132,6 +148,7 @@ final class TerminalSearchController {
         terminalView?.searchResultsProvider = nil
         terminalView?.clearSearchResults()
         searchBar.onQueryChange = nil
+        searchBar.onCaseSensitivityChange = nil
         searchBar.onNext = nil
         searchBar.onPrevious = nil
         searchBar.onClose = nil
@@ -147,6 +164,7 @@ final class TerminalSearchController {
         terminal: Terminal,
         startingIndex: TerminalSearchIndex,
         query: String,
+        options: TerminalSearchOptions,
         chooseNearest: Bool,
         reveal: Bool,
         debounce: Bool
@@ -160,7 +178,7 @@ final class TerminalSearchController {
             }
             let scanTask = Task.detached(priority: .userInitiated) {
                 var nextIndex = startingIndex
-                nextIndex.update(in: terminal, query: query)
+                nextIndex.update(in: terminal, query: query, options: options)
                 return nextIndex
             }
             let updated = await withTaskCancellationHandler {
@@ -233,6 +251,12 @@ final class TerminalSearchController {
 
     private func publish(reveal: Bool) {
         searchBar.updateResultPosition(currentIndex: currentIndex, total: matches.count)
+        searchBar.updateSearchModes(
+            caseSensitive: caseSensitive,
+            selectionOnly: false,
+            selectionAvailable: false,
+            copyOutputAvailable: false
+        )
         terminalView?.markDirty()
         if reveal, let currentMatch {
             terminalView?.revealSearchResult(currentMatch)
