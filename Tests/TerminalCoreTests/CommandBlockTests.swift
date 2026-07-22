@@ -3,6 +3,51 @@ import Testing
 
 @Suite("OSC 133 命令块")
 struct CommandBlockTests {
+    @Test("命令或输出中的完整匹配都解析到同一输出范围")
+    func searchMatchResolvesCommandOutput() throws {
+        var (parser, terminal) = makeTerminal(columns: 30, rows: 5)
+        feed(
+            "\u{1B}]133;A\u{07}$ \u{1B}]133;B\u{07}echo needle\r\n"
+                + "\u{1B}]133;C\u{07}needle output"
+                + "\u{1B}]133;D;0\u{07}",
+            &parser,
+            &terminal
+        )
+        let matches = TerminalSearchEngine.search(in: terminal, query: "needle")
+
+        let commandOutput = try #require(
+            terminal.commandOutputRange(containing: matches[0].range)
+        )
+        let outputOutput = try #require(
+            terminal.commandOutputRange(containing: matches[1].range)
+        )
+
+        #expect(terminal.extractText(in: commandOutput) == "needle output")
+        #expect(outputOutput == commandOutput)
+    }
+
+    @Test("命令块外匹配和空输出没有可复制输出")
+    func searchMatchWithoutCommandOutput() throws {
+        var (parser, terminal) = makeTerminal(columns: 30, rows: 5)
+        feed("plain needle", &parser, &terminal)
+        let plainMatch = try #require(
+            TerminalSearchEngine.search(in: terminal, query: "needle").first
+        )
+        #expect(terminal.commandOutputRange(containing: plainMatch.range) == nil)
+
+        var (emptyParser, emptyOutputTerminal) = makeTerminal(columns: 30, rows: 5)
+        feed(
+            "\u{1B}]133;A\u{07}$ \u{1B}]133;B\u{07}needle\r\n"
+                + "\u{1B}]133;C\u{07}\u{1B}]133;D;0\u{07}",
+            &emptyParser,
+            &emptyOutputTerminal
+        )
+        let commandMatch = try #require(
+            TerminalSearchEngine.search(in: emptyOutputTerminal, query: "needle").first
+        )
+        #expect(emptyOutputTerminal.commandOutputRange(containing: commandMatch.range) == nil)
+    }
+
     @Test("命令块携带退出状态与耗时且 reflow 后不变")
     func completionSurvivesReflow() throws {
         var (parser, terminal) = makeTerminal(columns: 20, rows: 5)

@@ -6,6 +6,40 @@ import TerminalCore
 @Suite("终端命令块动作")
 @MainActor
 struct TerminalCommandActionTests {
+    @Test("指定搜索匹配从 live 命令块复制输出")
+    func copiesOutputContainingSearchMatch() throws {
+        let terminal = makeCommandTerminal()
+        let match = try #require(TerminalSearchEngine.search(
+            in: terminal,
+            query: "second"
+        ).first)
+        let view = TerminalMetalView(frame: .zero)
+        var copied: String?
+        view.pasteboardWriter = { copied = $0; return true }
+
+        #expect(view.canCopyCommandOutput(containing: match.range, in: terminal))
+        #expect(view.copyCommandOutput(containing: match.range, in: terminal))
+        #expect(copied == "two")
+    }
+
+    @Test("块外搜索匹配不改写剪贴板")
+    func searchMatchOutsideCommandDoesNotCopy() throws {
+        var terminal = Terminal(size: TerminalSize(columns: 20, rows: 3))
+        var parser = Parser()
+        parser.feed(Array("plain needle".utf8), handler: &terminal)
+        let match = try #require(TerminalSearchEngine.search(
+            in: terminal,
+            query: "needle"
+        ).first)
+        let view = TerminalMetalView(frame: .zero)
+        var copied: String?
+        view.pasteboardWriter = { copied = $0; return true }
+
+        #expect(!view.canCopyCommandOutput(containing: match.range, in: terminal))
+        #expect(!view.copyCommandOutput(containing: match.range, in: terminal))
+        #expect(copied == nil)
+    }
+
     @Test("上一条与下一条命令按 OSC 133 锚点移动历史视口")
     func navigatesCommands() {
         let terminal = makeCommandTerminal()

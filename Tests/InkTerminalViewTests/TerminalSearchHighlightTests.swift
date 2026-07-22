@@ -94,6 +94,25 @@ struct TerminalSearchHighlightTests {
 
         #expect(view.currentGridSize == before)
     }
+
+    @Test("搜索选区在 layout revision 改变后失效")
+    func searchSelectionRejectsReflow() {
+        var terminal = Terminal(
+            size: TerminalSize(columns: 12, rows: 2),
+            scrollbackCapacity: 20
+        )
+        let range = SelectionRange(
+            start: TextPosition(line: 0, column: 0),
+            end: TextPosition(line: 0, column: 3)
+        )
+        let view = TerminalMetalView(frame: .zero)
+
+        view.updateSelection(range, in: terminal)
+        #expect(view.searchSelection(in: terminal) == range)
+
+        terminal.resize(to: TerminalSize(columns: 6, rows: 2))
+        #expect(view.searchSelection(in: terminal) == nil)
+    }
 }
 
 private func makeSearchTerminal(columns: Int, rows: Int) -> (Parser, Terminal) {

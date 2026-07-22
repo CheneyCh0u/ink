@@ -5,6 +5,63 @@ import Testing
 @Suite("终端搜索栏")
 @MainActor
 struct TerminalSearchBarTests {
+    @Test("搜索模式按钮明确显示状态与可用性")
+    func modeState() {
+        let bar = TerminalSearchBarView()
+
+        bar.updateSearchModes(
+            caseSensitive: true,
+            selectionOnly: false,
+            selectionAvailable: false,
+            copyOutputAvailable: true
+        )
+
+        #expect(bar.caseSensitiveEnabled)
+        #expect(!bar.selectionOnlyEnabled)
+        #expect(!bar.selectionToggleEnabled)
+        #expect(bar.copyOutputEnabled)
+    }
+
+    @Test("大小写按钮真实点击把 AppKit 切换后的状态路由给控制器")
+    func caseButtonRouting() throws {
+        let bar = TerminalSearchBarView()
+        var states: [Bool] = []
+        bar.onCaseSensitivityChange = { states.append($0) }
+        let button = try #require(bar.descendants.compactMap { $0 as? NSButton }.first {
+            $0.toolTip == "区分大小写"
+        })
+
+        button.performClick(nil)
+        button.performClick(nil)
+
+        #expect(states == [true, false])
+    }
+
+    @Test("选区与复制按钮路由搜索动作")
+    func scopeAndCopyButtonRouting() throws {
+        let bar = TerminalSearchBarView()
+        var scopeStates: [Bool] = []
+        var copyCount = 0
+        bar.onSelectionScopeChange = { scopeStates.append($0) }
+        bar.onCopyMatchCommandOutput = { copyCount += 1 }
+        bar.updateSearchModes(
+            caseSensitive: false,
+            selectionOnly: false,
+            selectionAvailable: true,
+            copyOutputAvailable: true
+        )
+
+        let selectionButton = try #require(bar.descendants.compactMap { $0 as? NSButton }.first {
+            $0.toolTip == "仅搜索选区"
+        })
+        selectionButton.performClick(nil)
+        selectionButton.performClick(nil)
+        bar.performCopyMatchCommandOutput()
+
+        #expect(scopeStates == [true, false])
+        #expect(copyCount == 1)
+    }
+
     @Test("结果计数按当前序号显示")
     func resultCount() {
         let bar = TerminalSearchBarView()
@@ -34,5 +91,11 @@ struct TerminalSearchBarTests {
         #expect(bar.handleCommand(#selector(NSResponder.cancelOperation(_:)), shiftPressed: false))
 
         #expect(actions == ["next", "previous", "next", "previous", "close"])
+    }
+}
+
+private extension NSView {
+    var descendants: [NSView] {
+        subviews + subviews.flatMap(\.descendants)
     }
 }

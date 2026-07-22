@@ -27,6 +27,20 @@ public struct CommandBlock: Sendable, Equatable {
 }
 
 extension Terminal {
+    /// 当前匹配完整落在某个命令或其输出中时，返回该命令的非空输出范围。
+    /// 只扫描 live Terminal 的 OSC 133 状态；搜索快照不承担命令旁路契约。
+    public func commandOutputRange(containing match: SelectionRange) -> SemanticTextRange? {
+        let match = match.normalized
+        for block in commandBlocks() {
+            guard let output = block.outputRange,
+                  block.commandRange.start <= match.start,
+                  match.end < output.end,
+                  !extractText(in: output).isEmpty else { continue }
+            return output
+        }
+        return nil
+    }
+
     /// 按需扫描 OSC 133 转换点。命令数量通常远少于物理行数，不为此维护
     /// 第二份历史文本或每格索引；只有用户触发跳转/复制时才走这条冷路径。
     public func commandBlocks() -> [CommandBlock] {

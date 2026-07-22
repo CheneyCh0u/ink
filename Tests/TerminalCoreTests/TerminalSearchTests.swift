@@ -3,6 +3,128 @@ import Testing
 
 @Suite("终端历史搜索")
 struct TerminalSearchTests {
+    @Test("大小写敏感模式只接受完全相同的字面值")
+    func caseSensitiveMode() {
+        var (parser, terminal) = makeTerminal(columns: 20, rows: 2)
+        feed("Alpha alpha ALPHA", &parser, &terminal)
+
+        let matches = TerminalSearchEngine.search(
+            in: terminal,
+            query: "Alpha",
+            options: TerminalSearchOptions(caseSensitive: true)
+        )
+
+        #expect(matches.map(\.range.start.column) == [0])
+    }
+
+    @Test("大小写选项变化强制索引全量重建")
+    func caseOptionInvalidatesIndex() {
+        var (parser, terminal) = makeTerminal(columns: 20, rows: 2)
+        feed("Alpha alpha", &parser, &terminal)
+        var index = TerminalSearchIndex()
+
+        _ = index.update(in: terminal, query: "alpha")
+        _ = index.update(
+            in: terminal,
+            query: "alpha",
+            options: TerminalSearchOptions(caseSensitive: true)
+        )
+
+        #expect(index.lastUpdateKind == .full)
+        #expect(index.matches.count == 1)
+    }
+
+    @Test("线性选区只接纳完全包含的匹配")
+    func linearSelectionScope() {
+        var (parser, terminal) = makeTerminal(columns: 20, rows: 2)
+        feed("hit one hit two", &parser, &terminal)
+        let scope = SelectionRange(
+            start: TextPosition(line: 0, column: 4),
+            end: TextPosition(line: 0, column: 14)
+        )
+
+        let matches = TerminalSearchEngine.search(
+            in: terminal,
+            query: "hit",
+            options: TerminalSearchOptions(selection: scope)
+        )
+
+        #expect(matches.map(\.range.start.column) == [8])
+    }
+
+    @Test("矩形选区拒绝经过未选行尾的软折匹配")
+    func blockSelectionRejectsUnselectedWrappedCells() {
+        var (parser, terminal) = makeTerminal(columns: 6, rows: 3)
+        feed("abcdefghi", &parser, &terminal)
+        let scope = SelectionRange(
+            start: TextPosition(line: 0, column: 2),
+            end: TextPosition(line: 1, column: 3),
+            block: true
+        )
+
+        #expect(TerminalSearchEngine.search(
+            in: terminal,
+            query: "defg",
+            options: TerminalSearchOptions(selection: scope)
+        ).isEmpty)
+        #expect(TerminalSearchEngine.search(
+            in: terminal,
+            query: "cd",
+            options: TerminalSearchOptions(selection: scope)
+        ).count == 1)
+    }
+
+    @Test("越界选区安全返回空结果")
+    func outOfBoundsSelectionIsEmpty() {
+        var (parser, terminal) = makeTerminal(columns: 8, rows: 2)
+        feed("hit", &parser, &terminal)
+        let scope = SelectionRange(
+            start: TextPosition(line: Int.max, column: 0),
+            end: TextPosition(line: Int.max, column: 2)
+        )
+
+        #expect(TerminalSearchEngine.search(
+            in: terminal,
+            query: "hit",
+            options: TerminalSearchOptions(selection: scope)
+        ).isEmpty)
+    }
+
+    @Test("坐标空间在存活淘汰后平移并在端点淘汰后失效")
+    func coordinateSpaceRebasesSurvivingRange() {
+        var (parser, terminal) = makeTerminal(columns: 8, rows: 1, scrollback: 2)
+        feed("old\r\nkeep\r\nlive", &parser, &terminal)
+        let space = TerminalSearchCoordinateSpace(in: terminal)
+        let frozen = SelectionRange(
+            start: TextPosition(line: 1, column: 0),
+            end: TextPosition(line: 1, column: 3)
+        )
+
+        feed("\r\nnew", &parser, &terminal)
+        #expect(space.resolve(frozen, in: terminal) == SelectionRange(
+            start: TextPosition(line: 0, column: 0),
+            end: TextPosition(line: 0, column: 3)
+        ))
+
+        feed("\r\nnewer", &parser, &terminal)
+        #expect(space.resolve(frozen, in: terminal) == nil)
+    }
+
+    @Test("layout revision 改变使坐标空间失效")
+    func coordinateSpaceRejectsReflow() {
+        var (parser, terminal) = makeTerminal(columns: 12, rows: 2)
+        feed("selected", &parser, &terminal)
+        let space = TerminalSearchCoordinateSpace(in: terminal)
+        let frozen = SelectionRange(
+            start: TextPosition(line: 0, column: 0),
+            end: TextPosition(line: 0, column: 3)
+        )
+
+        terminal.resize(to: TerminalSize(columns: 6, rows: 2))
+
+        #expect(space.resolve(frozen, in: terminal) == nil)
+    }
+
     @Test("忽略大小写并按旧到新返回")
     func caseInsensitiveOrdering() {
         var (parser, terminal) = makeTerminal(columns: 12, rows: 3, scrollback: 20)
