@@ -131,6 +131,49 @@ struct TerminalSemanticTests {
         #expect(term.grid.cursorCol == 5)
     }
 
+    @Test("本地清历史保留当前屏幕并推进布局代次")
+    func clearScrollbackPreservesScreen() {
+        var (parser, term) = makeTerminal(columns: 12, rows: 2, scrollback: 20)
+        feed("old\r\nscreen one\r\nscreen two", &parser, &term)
+        let screen = (0..<term.grid.size.rows).map { rowText(term, $0) }
+        let cursor = (term.grid.cursorRow, term.grid.cursorCol)
+        let modes = term.modes
+        let revision = term.searchLayoutRevision
+
+        term.clearScrollback()
+
+        #expect(term.scrollback.count == 0)
+        #expect(term.scrollback.totalAppendedLines == 0)
+        #expect(term.scrollback.capacity == 20)
+        #expect((0..<term.grid.size.rows).map { rowText(term, $0) } == screen)
+        #expect(term.grid.cursorRow == cursor.0)
+        #expect(term.grid.cursorCol == cursor.1)
+        #expect(term.modes == modes)
+        #expect(term.searchLayoutRevision == revision + 1)
+        #expect(term.takeResponses().isEmpty)
+    }
+
+    @Test("公共清历史与 CSI ED 3 使用同一状态转换")
+    func directClearMatchesED3() {
+        var (parser, term) = makeTerminal(columns: 12, rows: 2, scrollback: 20)
+        feed("old\r\nvisible", &parser, &term)
+        var direct = term
+        var parsed = term
+        var edParser = Parser()
+
+        direct.clearScrollback()
+        feed("\u{1B}[3J", &edParser, &parsed)
+
+        #expect(direct.scrollback.count == parsed.scrollback.count)
+        #expect(direct.scrollback.totalAppendedLines == parsed.scrollback.totalAppendedLines)
+        #expect((0..<direct.grid.size.rows).map { rowText(direct, $0) }
+            == (0..<parsed.grid.size.rows).map { rowText(parsed, $0) })
+        #expect(direct.grid.cursorRow == parsed.grid.cursorRow)
+        #expect(direct.grid.cursorCol == parsed.grid.cursorCol)
+        #expect(direct.searchLayoutRevision == parsed.searchLayoutRevision)
+        #expect(direct.modes == parsed.modes)
+    }
+
     @Test("EL 0/1/2 按段清行")
     func eraseLine() {
         var (parser, term) = makeTerminal(columns: 6, rows: 2)
