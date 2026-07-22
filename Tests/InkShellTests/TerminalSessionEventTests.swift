@@ -29,4 +29,22 @@ struct TerminalSessionEventTests {
         session.consumeOutput(Data("\u{07}".utf8))
         #expect(events.count == 2)
     }
+
+    @Test("OSC 52 效果在更新前上送且不进入事件通道")
+    func forwardsClipboardEffectBeforeUpdate() {
+        let session = TerminalSession(size: .init(columns: 80, rows: 24))
+        var order: [String] = []
+        var effects: [TerminalEffect] = []
+        var events: [TerminalEvent] = []
+        session.onEffect = { effects.append($0); order.append("effect") }
+        session.onEvent = { events.append($0) }
+        session.onUpdate = { order.append("update") }
+        session.consumeOutput(Data("\u{1B}]52;c;aGk=\u{07}".utf8))
+        #expect(effects == [.clipboardWrite("hi")])
+        #expect(events.isEmpty)
+        #expect(order == ["effect", "update"])
+        session.detach()
+        session.consumeOutput(Data("\u{1B}]52;c;Ynll\u{07}".utf8))
+        #expect(effects == [.clipboardWrite("hi")])
+    }
 }

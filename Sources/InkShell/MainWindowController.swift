@@ -49,6 +49,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
     private let workspaceSaveScheduler: WorkspaceSaveScheduler
     private let startPaneOverride: ((TerminalSize, String) -> TerminalPane?)?
     private let notificationCoordinator: CommandNotificationCoordinating
+    private let osc52PasteboardWriter: any OSC52PasteboardWriting
     private let isApplicationActive: @MainActor () -> Bool
     private var configWatcher: ConfigWatcher?
     private var sidebarMode: SidebarDisplayMode = .expanded
@@ -81,7 +82,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         workspaceStore: WorkspaceStore = WorkspaceStore(),
         startPaneOverride: ((TerminalSize, String) -> TerminalPane?)? = nil,
         notificationCoordinator: CommandNotificationCoordinating = CommandNotificationCoordinator(),
-        isApplicationActive: @escaping @MainActor () -> Bool = { NSApp.isActive }
+        isApplicationActive: @escaping @MainActor () -> Bool = { NSApp.isActive },
+        osc52PasteboardWriter: any OSC52PasteboardWriting = OSC52PasteboardWriter()
     ) {
         let window = NSWindow(
             contentRect: NSRect(
@@ -111,6 +113,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         workspaceSaveScheduler = WorkspaceSaveScheduler(store: workspaceStore)
         self.startPaneOverride = startPaneOverride
         self.notificationCoordinator = notificationCoordinator
+        self.osc52PasteboardWriter = osc52PasteboardWriter
         self.isApplicationActive = isApplicationActive
         self.config = initialConfig
         super.init(window: window)
@@ -1004,6 +1007,14 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         session.onEvent = { [weak self, weak pane] event in
             guard let self, let pane else { return }
             self.handleTerminalEvent(event, paneID: pane.id)
+        }
+        session.onEffect = { [weak self] effect in
+            guard let self else { return }
+            switch effect {
+            case .clipboardWrite(let text):
+                guard self.config.osc52WriteEnabled else { return }
+                _ = self.osc52PasteboardWriter.write(text)
+            }
         }
     }
 

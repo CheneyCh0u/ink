@@ -39,6 +39,46 @@ enum CommandProfile: String {
     case status = "command-status"
 }
 
+if CommandLine.arguments.dropFirst().first == "osc52" {
+    let decodedBytes = 1_048_576
+    let repetitions = 20
+    let payload = Data(repeating: UInt8(ascii: "A"), count: decodedBytes)
+        .base64EncodedString()
+    let sequence = Array("\u{1B}]52;c;\(payload)\u{07}".utf8)
+    var parser = Parser()
+    var terminal = Terminal(size: .init(columns: 120, rows: 50))
+    let before = footprintBytes()
+    var peak = before
+    let clock = ContinuousClock()
+    let elapsed = clock.measure {
+        for _ in 0..<repetitions {
+            parser.feed(sequence, handler: &terminal)
+            precondition(terminal.takeEffects().count == 1)
+            peak = max(peak, footprintBytes())
+        }
+    }
+    let settled = footprintBytes()
+
+    let overflowPayload = Data(repeating: UInt8(ascii: "A"), count: decodedBytes + 1)
+        .base64EncodedString()
+    parser.feed(Array("\u{1B}]52;c;\(overflowPayload)\u{07}".utf8), handler: &terminal)
+    precondition(terminal.takeEffects().isEmpty)
+
+    let invalidUnterminated = Array("\u{1B}]52;c;".utf8)
+        + Array(repeating: UInt8(ascii: "!"), count: decodedBytes * 2)
+    parser.feed(invalidUnterminated, handler: &terminal)
+    parser.feed([0x18], handler: &terminal)
+    precondition(terminal.takeEffects().isEmpty)
+
+    print("OSC 52 profile")
+    print("  连续合法载荷 \(repetitions) × \(decodedBytes) bytes")
+    print("  耗时 \(elapsed)")
+    print("  峰值增量 \(mb(peak - before))")
+    print("  终止后增量 \(mb(settled - before))")
+    print("  超限与 2 MiB 非法未终止载荷均无效果")
+    exit(EXIT_SUCCESS)
+}
+
 if let linkProfile = CommandLine.arguments.dropFirst().first
     .flatMap(LinkProfile.init(rawValue:)) {
     let profileLineCount = 1_000_000

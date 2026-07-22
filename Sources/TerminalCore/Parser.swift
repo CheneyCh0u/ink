@@ -31,10 +31,7 @@ public struct Parser: Sendable {
     private var paramHasDigit = false
     private var prefix: UInt8 = 0            // '?'、'>'、'<'、'=' 私有前缀
     private var intermediates: ContiguousArray<UInt8> = []
-    private var oscBuffer: ContiguousArray<UInt8> = []
-
     private static let maxParams = 16
-    private static let maxOSCBytes = 4096    // OSC 超长（异常输出）直接截断，防内存放大
 
     public init() {
         params.reserveCapacity(Self.maxParams)
@@ -59,6 +56,7 @@ public struct Parser: Sendable {
     private mutating func consume(_ byte: UInt8, handler: inout Terminal) {
         // CAN / SUB 在任何状态下取消当前序列。
         if byte == 0x18 || byte == 0x1A {
+            if state == .osc || state == .oscEscape { handler.oscCancel() }
             state = .ground
             return
         }
@@ -85,7 +83,7 @@ public struct Parser: Sendable {
                 resetCSI()
                 state = .csiEntry
             case UInt8(ascii: "]"):
-                oscBuffer.removeAll(keepingCapacity: true)
+                handler.oscStart()
                 state = .osc
             case UInt8(ascii: "P"), UInt8(ascii: "X"), UInt8(ascii: "^"), UInt8(ascii: "_"):
                 state = .dcsIgnore
@@ -158,24 +156,30 @@ public struct Parser: Sendable {
         case .osc:
             switch byte {
             case 0x07:
-                handler.oscDispatch(oscBuffer[...])
+                handler.oscEnd()
                 state = .ground
             case 0x1B:
                 state = .oscEscape
             case 0x00..<0x07, 0x08..<0x20:
                 break // OSC 内的其它控制字节丢弃
             default:
-                if oscBuffer.count < Self.maxOSCBytes {
-                    oscBuffer.append(byte)
-                }
+                handler.oscPut(byte)
             }
 
         case .oscEscape:
             if byte == UInt8(ascii: "\\") {
-                handler.oscDispatch(oscBuffer[...])
+                handler.oscEnd()
+                state = .ground
+            } else if byte == UInt8(ascii: "]") {
+                // 新 OSC introducer 覆盖未完成序列，不能把后续载荷泄漏到屏幕。
+                handler.oscCancel()
+                handler.oscStart()
+                state = .osc
+            } else {
+                handler.oscCancel()
+                // 非 ST：整段 OSC 作废，ESC 后字节也一并丢弃，回 ground 重新同步。
+                state = .ground
             }
-            // 非 ST：整段 OSC 作废，ESC 后字节也一并丢弃，回 ground 重新同步。
-            state = .ground
 
         case .dcsIgnore:
             if byte == 0x1B { state = .dcsIgnoreEscape }
@@ -202,4 +206,3 @@ public struct Parser: Sendable {
         paramHasDigit = false
     }
 }
-

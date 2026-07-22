@@ -35,6 +35,9 @@ import Foundation
 /// [selection]
 /// copy_on_select = false
 ///
+/// [clipboard]
+/// osc52_write = true
+///
 /// [scrollback]
 /// lines = 100_000      # 改动只对新会话生效
 /// ```
@@ -77,6 +80,8 @@ public struct InkConfig: Equatable, Sendable {
     public var cursorBlink = true
     public var optionAsMeta = true
     public var copyOnSelect = false
+    /// 是否允许终端程序通过 OSC 52 写入本机剪贴板（只写，不能读取）。
+    public var osc52WriteEnabled = true
     public var scrollbackLines = 100_000
 
     public init() {}
@@ -148,6 +153,9 @@ public struct InkConfig: Equatable, Sendable {
         if let copy = values.bool("selection.copy_on_select") {
             config.copyOnSelect = copy
         }
+        if let osc52Write = values.bool("clipboard.osc52_write") {
+            config.osc52WriteEnabled = osc52Write
+        }
         if let lines = values.int("scrollback.lines"), (100...2_000_000).contains(lines) {
             config.scrollbackLines = lines
         }
@@ -184,6 +192,7 @@ public struct InkConfig: Equatable, Sendable {
             ("cursor.blink", cursorBlink ? "true" : "false"),
             ("input.option_as_meta", optionAsMeta ? "true" : "false"),
             ("selection.copy_on_select", copyOnSelect ? "true" : "false"),
+            ("clipboard.osc52_write", osc52WriteEnabled ? "true" : "false"),
             ("scrollback.lines", "\(scrollbackLines)"),
         ]
     }

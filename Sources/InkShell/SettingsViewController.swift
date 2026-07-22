@@ -45,6 +45,7 @@ final class SettingsViewController: NSViewController {
     private let cursorBlinkSwitch = NSSwitch()
     private let optionMetaSwitch = NSSwitch()
     private let copyOnSelectSwitch = NSSwitch()
+    private let osc52WriteSwitch = NSSwitch()
     private let automaticUploadSwitch = NSSwitch()
     private let syncStatusLabel = NSTextField(wrappingLabelWithString: "尚未上传")
     private let uploadConfigButton = NSButton()
@@ -200,6 +201,11 @@ final class SettingsViewController: NSViewController {
             rows: [
                 makeRow(title: "Option 作为 Meta", detail: "关闭后保留 macOS 的重音字符输入。", control: optionMetaSwitch),
                 makeRow(title: "选中即复制", detail: "鼠标选中文本后立即写入剪贴板。", control: copyOnSelectSwitch),
+                makeRow(
+                    title: "允许终端程序写入剪贴板（OSC 52）",
+                    detail: "仅允许写入，终端程序不能读取剪贴板。",
+                    control: osc52WriteSwitch
+                ),
             ]
         ))
         content.addArrangedSubview(makeSection(
@@ -391,6 +397,7 @@ final class SettingsViewController: NSViewController {
             cursorBlinkSwitch,
             optionMetaSwitch,
             copyOnSelectSwitch,
+            osc52WriteSwitch,
         ] {
             toggle.target = self
             toggle.action = #selector(controlChanged)
@@ -398,6 +405,7 @@ final class SettingsViewController: NSViewController {
         automaticUploadSwitch.target = self
         automaticUploadSwitch.action = #selector(automaticUploadChanged)
         automaticUploadSwitch.setAccessibilityLabel("自动上传配置")
+        osc52WriteSwitch.setAccessibilityLabel("允许终端程序写入剪贴板（OSC 52）")
 
         configureSyncButton(
             uploadConfigButton,
@@ -523,6 +531,7 @@ final class SettingsViewController: NSViewController {
         cursorBlinkSwitch.state = config.cursorBlink ? .on : .off
         optionMetaSwitch.state = config.optionAsMeta ? .on : .off
         copyOnSelectSwitch.state = config.copyOnSelect ? .on : .off
+        osc52WriteSwitch.state = config.osc52WriteEnabled ? .on : .off
         scrollbackControl.value = Double(config.scrollbackLines)
         updatePreview()
         suppressChanges = false
@@ -552,6 +561,7 @@ final class SettingsViewController: NSViewController {
         config.cursorBlink = cursorBlinkSwitch.state == .on
         config.optionAsMeta = optionMetaSwitch.state == .on
         config.copyOnSelect = copyOnSelectSwitch.state == .on
+        config.osc52WriteEnabled = osc52WriteSwitch.state == .on
         config.scrollbackLines = Int(scrollbackControl.value.rounded())
         windowWidthControl.isEnabled = !config.rememberWindowFrame
         windowHeightControl.isEnabled = !config.rememberWindowFrame

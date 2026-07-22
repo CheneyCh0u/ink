@@ -4,6 +4,16 @@ import Testing
 
 @Suite("配置同步快照")
 struct ConfigSyncSnapshotTests {
+    @Test("旧 schema 1 缺少 OSC 52 字段时迁移为开启")
+    func oldSchemaDefaultsOSC52ToEnabled() throws {
+        let data = try snapshotJSON { root in
+            var config = try #require(root["config"] as? [String: Any])
+            config.removeValue(forKey: "osc52WriteEnabled")
+            root["config"] = config
+        }
+        #expect(try ConfigSyncSnapshot.decode(data).config.osc52WriteEnabled)
+    }
+
     @Test("schema 1 JSON 完整往返所有已知设置")
     func roundTripsEveryKnownSetting() throws {
         let config = completeConfig()
@@ -92,6 +102,7 @@ struct ConfigSyncSnapshotTests {
         config.cursorBlink = false
         config.optionAsMeta = false
         config.copyOnSelect = true
+        config.osc52WriteEnabled = false
         config.scrollbackLines = 250_000
         return config
     }

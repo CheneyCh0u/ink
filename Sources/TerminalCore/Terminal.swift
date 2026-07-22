@@ -76,6 +76,8 @@ public struct Terminal: Sendable {
     private var commandCompletionRecords: ContiguousArray<CommandCompletionRecord> = []
     private var commandCompletionStart = 0
     private var pendingEvents: ContiguousArray<TerminalEvent> = []
+    var oscAccumulator = OSCAccumulator()
+    private var pendingEffect: TerminalEffect?
 
     private var currentAttr = Cell.Attr.default
     /// 延迟折行：写满最后一列后光标停在原地，下一个可打印字符才真正折行。
@@ -107,6 +109,8 @@ public struct Terminal: Sendable {
         snapshot.commandCompletionRecords = []
         snapshot.commandCompletionStart = 0
         snapshot.pendingEvents = []
+        snapshot.oscAccumulator = OSCAccumulator()
+        snapshot.pendingEffect = nil
         return snapshot
     }
 
@@ -758,8 +762,25 @@ public struct Terminal: Sendable {
         case 133:
             handleOSC133(payload)
         default:
-            break // OSC 8 超链接、52 剪贴板是 P1（roadmap）
+            break // 尚未实现的通知 OSC 留待后续支持。
         }
+    }
+
+    public mutating func oscStart() { oscAccumulator.start() }
+    public mutating func oscPut(_ byte: UInt8) { oscAccumulator.put(byte) }
+    public mutating func oscCancel() { oscAccumulator.cancel() }
+    public mutating func oscEnd() {
+        switch oscAccumulator.finish() {
+        case .regular(let bytes): oscDispatch(bytes[...])
+        case .clipboardWrite(let text): pendingEffect = .clipboardWrite(text)
+        case nil: break
+        }
+    }
+
+    public mutating func takeEffects() -> [TerminalEffect] {
+        guard let pendingEffect else { return [] }
+        self.pendingEffect = nil
+        return [pendingEffect]
     }
 
     mutating func handleOSC133(
