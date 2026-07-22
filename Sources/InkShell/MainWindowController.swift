@@ -1033,20 +1033,41 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
             for (tabIndex, tab) in project.tabs.enumerated()
             where tab.panes[paneID] != nil {
                 let applicationActive = isApplicationActive()
-                let visible = !isShowingSettings
+                let tabIsVisible = !isShowingSettings
                     && projectIndex == activeProjectIndex
                     && tabIndex == project.activeTabIndex
-                tab.receive(event, markUnread: !(visible && applicationActive))
+                let paneIsActive = tabIsVisible && tab.activePaneID == paneID
+                let markUnread = switch event {
+                case .commandCompleted, .bell:
+                    !(tabIsVisible && applicationActive)
+                case .notification:
+                    !(paneIsActive && applicationActive)
+                }
+                tab.receive(event, markUnread: markUnread)
 
-                if case let .commandCompleted(completion) = event,
-                   CommandNotificationPolicy.shouldNotify(
-                       isApplicationActive: applicationActive,
-                       completion: completion
-                   ) {
-                    notificationCoordinator.submit(CommandNotificationRequest(
-                        tabTitle: notificationTabTitle(tab),
+                switch event {
+                case let .commandCompleted(completion):
+                    if CommandNotificationPolicy.shouldNotify(
+                        isApplicationActive: applicationActive,
                         completion: completion
-                    ))
+                    ) {
+                        notificationCoordinator.submit(.command(
+                            tabTitle: notificationTabTitle(tab),
+                            completion: completion
+                        ))
+                    }
+                case let .notification(notification):
+                    if ExplicitNotificationPolicy.shouldNotify(
+                        isApplicationActive: applicationActive,
+                        isPaneActive: paneIsActive
+                    ) {
+                        notificationCoordinator.submit(.terminal(
+                            notification,
+                            fallbackTitle: notificationTabTitle(tab)
+                        ))
+                    }
+                case .bell:
+                    break
                 }
                 refreshChromeIfNeeded()
                 return

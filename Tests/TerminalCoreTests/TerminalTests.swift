@@ -56,6 +56,32 @@ struct ParserLexTests {
         #expect(term.title == "world")
     }
 
+    @Test("OSC 0、2 与 133 忽略嵌入 C0", arguments: [UInt8(0x00), 0x09, 0x0A])
+    func legacyOSCIgnoresEmbeddedC0(_ control: UInt8) {
+        var (parser, terminal) = makeTerminal()
+
+        feed(
+            Array("\u{1B}]0;be".utf8) + [control] + Array("fore\u{07}".utf8),
+            &parser,
+            &terminal
+        )
+        #expect(terminal.title == "before")
+
+        feed(
+            Array("\u{1B}]2;af".utf8) + [control] + Array("ter\u{07}".utf8),
+            &parser,
+            &terminal
+        )
+        #expect(terminal.title == "after")
+
+        feed(
+            Array("\u{1B}]133;".utf8) + [control] + Array("B\u{07}".utf8),
+            &parser,
+            &terminal
+        )
+        #expect(terminal.currentSemantic == .command)
+    }
+
     @Test("CAN 中途取消 CSI，后续字节正常打印")
     func canCancelsSequence() {
         var (parser, term) = makeTerminal()

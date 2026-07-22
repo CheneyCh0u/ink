@@ -62,6 +62,24 @@ struct CommandStatusTests {
         ])
     }
 
+    @Test("Bell、命令完成与通知共享事件队列上限")
+    func mixedEventsStayBounded() {
+        var terminal = Terminal(size: .init(columns: 80, rows: 24))
+        for _ in 0..<63 {
+            terminal.execute(0x07)
+        }
+        let clock = ContinuousClock()
+        let now = clock.now
+        terminal.handleOSC133(ArraySlice("C".utf8), now: now)
+        terminal.handleOSC133(ArraySlice("D;0".utf8), now: now)
+        terminal.oscDispatch(ArraySlice("9;overflow".utf8))
+
+        let events = terminal.takeEvents()
+        #expect(events.count == 64)
+        #expect(events.dropLast().allSatisfy { $0 == .bell })
+        #expect(events.last == .commandCompleted(.init(exitStatus: 0, duration: .zero)))
+    }
+
     @Test("紧凑完成记录固定为十六字节")
     func compactRecordLayout() {
         #expect(MemoryLayout<CommandCompletionRecord>.stride == 16)

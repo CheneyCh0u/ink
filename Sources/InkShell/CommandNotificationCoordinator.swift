@@ -3,8 +3,35 @@ import TerminalCore
 @preconcurrency import UserNotifications
 
 struct CommandNotificationRequest: Equatable {
-    let tabTitle: String
-    let completion: CommandCompletion
+    let title: String
+    let body: String
+
+    static func command(
+        tabTitle: String,
+        completion: CommandCompletion
+    ) -> CommandNotificationRequest {
+        let duration = CommandStatusFormatter.duration(completion.duration)
+        if let exitStatus = completion.exitStatus, exitStatus != 0 {
+            return CommandNotificationRequest(
+                title: "命令失败",
+                body: "\(tabTitle) · 退出状态 \(exitStatus) · \(duration)"
+            )
+        }
+        return CommandNotificationRequest(
+            title: "命令已完成",
+            body: "\(tabTitle) · \(duration)"
+        )
+    }
+
+    static func terminal(
+        _ notification: TerminalNotification,
+        fallbackTitle: String
+    ) -> CommandNotificationRequest {
+        CommandNotificationRequest(
+            title: notification.title ?? fallbackTitle,
+            body: notification.body
+        )
+    }
 }
 
 enum CommandNotificationPolicy {
@@ -15,6 +42,15 @@ enum CommandNotificationPolicy {
         completion: CommandCompletion
     ) -> Bool {
         !isApplicationActive && completion.duration >= minimumDuration
+    }
+}
+
+enum ExplicitNotificationPolicy {
+    static func shouldNotify(
+        isApplicationActive: Bool,
+        isPaneActive: Bool
+    ) -> Bool {
+        !isApplicationActive || !isPaneActive
     }
 }
 
@@ -44,12 +80,28 @@ protocol LocalNotificationClient: AnyObject {
 @MainActor
 final class CommandNotificationCoordinator: CommandNotificationCoordinating {
     private var client: LocalNotificationClient?
+    private let now: () -> ContinuousClock.Instant
+    private let minimumInterval: Duration
+    private var lastAcceptedAt: ContinuousClock.Instant?
 
-    init(client: LocalNotificationClient? = nil) {
+    init(
+        client: LocalNotificationClient? = nil,
+        now: @escaping () -> ContinuousClock.Instant = { ContinuousClock().now },
+        minimumInterval: Duration = .seconds(1)
+    ) {
         self.client = client
+        self.now = now
+        self.minimumInterval = minimumInterval
     }
 
     func submit(_ request: CommandNotificationRequest) {
+        let submittedAt = now()
+        if let lastAcceptedAt,
+           lastAcceptedAt.duration(to: submittedAt) < minimumInterval {
+            return
+        }
+        lastAcceptedAt = submittedAt
+
         let client: LocalNotificationClient
         if let existing = self.client {
             client = existing
@@ -75,16 +127,9 @@ final class CommandNotificationCoordinator: CommandNotificationCoordinating {
     }
 
     private static func content(for request: CommandNotificationRequest) -> LocalNotificationContent {
-        let duration = CommandStatusFormatter.duration(request.completion.duration)
-        if let exitStatus = request.completion.exitStatus, exitStatus != 0 {
-            return LocalNotificationContent(
-                title: "命令失败",
-                body: "\(request.tabTitle) · 退出状态 \(exitStatus) · \(duration)"
-            )
-        }
         return LocalNotificationContent(
-            title: "命令已完成",
-            body: "\(request.tabTitle) · \(duration)"
+            title: request.title,
+            body: request.body
         )
     }
 }

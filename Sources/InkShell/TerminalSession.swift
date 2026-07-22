@@ -14,7 +14,7 @@ public final class TerminalSession {
     public var onUpdate: (() -> Void)?
     /// shell 退出。
     public var onExit: ((Int32) -> Void)?
-    /// Core 产生的命令完成与 BEL 事件。
+    /// Core 产生的命令完成、主动通知与 BEL 事件。
     public var onEvent: ((TerminalEvent) -> Void)?
     /// Core 产生的外部副作用请求；与未读/通知事件分离。
     public var onEffect: ((TerminalEffect) -> Void)?

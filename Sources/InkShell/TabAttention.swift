@@ -10,7 +10,7 @@ enum TabAttention: Sendable, Equatable {
 
     init(event: TerminalEvent) {
         switch event {
-        case .bell:
+        case .bell, .notification:
             self = .bell
         case let .commandCompleted(completion):
             if let exitStatus = completion.exitStatus, exitStatus != 0 {

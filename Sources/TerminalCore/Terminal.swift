@@ -77,7 +77,12 @@ public struct Terminal: Sendable {
     private var commandCompletionStart = 0
     private var pendingEvents: ContiguousArray<TerminalEvent> = []
     var oscAccumulator = OSCAccumulator()
+    private var oscContainsIgnoredControl = false
     private var pendingEffect: TerminalEffect?
+
+    private static let maxNotificationTitleBytes = 128
+    private static let maxNotificationBodyBytes = 1024
+    private static let maxPendingEvents = 64
 
     private var currentAttr = Cell.Attr.default
     /// 延迟折行：写满最后一列后光标停在原地，下一个可打印字符才真正折行。
@@ -110,6 +115,7 @@ public struct Terminal: Sendable {
         snapshot.commandCompletionStart = 0
         snapshot.pendingEvents = []
         snapshot.oscAccumulator = OSCAccumulator()
+        snapshot.oscContainsIgnoredControl = false
         snapshot.pendingEffect = nil
         return snapshot
     }
@@ -591,7 +597,7 @@ public struct Terminal: Sendable {
     public mutating func execute(_ control: UInt8) {
         switch control {
         case 0x07:
-            pendingEvents.append(.bell)
+            emit(.bell)
         case 0x0A, 0x0B, 0x0C: // LF VT FF
             lineFeed()
         case 0x0D:
@@ -748,11 +754,30 @@ public struct Terminal: Sendable {
     // MARK: - TerminalActionHandler：OSC
 
     public mutating func oscDispatch(_ bytes: ArraySlice<UInt8>) {
+        oscDispatch(bytes, containsIgnoredControl: false)
+    }
+
+    private mutating func oscDispatch(
+        _ bytes: ArraySlice<UInt8>,
+        containsIgnoredControl: Bool
+    ) {
         // 形如 "Ps;Pt"。载荷可能是 UTF-8（窗口标题带中文）。
         guard let sep = bytes.firstIndex(of: UInt8(ascii: ";")) else { return }
-        guard let code = Int(String(decoding: bytes[..<sep], as: UTF8.self)) else { return }
+        let codeBytes = bytes[..<sep]
         let payload = bytes[(sep + 1)...]
 
+        if codeBytes.elementsEqual("9".utf8) {
+            guard !containsIgnoredControl else { return }
+            handleOSC9(payload)
+            return
+        }
+        if codeBytes.elementsEqual("777".utf8) {
+            guard !containsIgnoredControl else { return }
+            handleOSC777(payload)
+            return
+        }
+
+        guard let code = Int(String(decoding: codeBytes, as: UTF8.self)) else { return }
         switch code {
         case 0, 2:
             title = String(decoding: payload, as: UTF8.self)
@@ -769,16 +794,26 @@ public struct Terminal: Sendable {
         case 133:
             handleOSC133(payload)
         default:
-            break // 尚未实现的通知 OSC 留待后续支持。
+            break // 未支持的 OSC 静默忽略
         }
     }
 
-    public mutating func oscStart() { oscAccumulator.start() }
+    public mutating func oscStart() {
+        oscContainsIgnoredControl = false
+        oscAccumulator.start()
+    }
     public mutating func oscPut(_ byte: UInt8) { oscAccumulator.put(byte) }
-    public mutating func oscCancel() { oscAccumulator.cancel() }
+    public mutating func oscIgnoreControl() { oscContainsIgnoredControl = true }
+    public mutating func oscCancel() {
+        oscContainsIgnoredControl = false
+        oscAccumulator.cancel()
+    }
     public mutating func oscEnd() {
+        let containsIgnoredControl = oscContainsIgnoredControl
+        oscContainsIgnoredControl = false
         switch oscAccumulator.finish() {
-        case .regular(let bytes): oscDispatch(bytes[...])
+        case .regular(let bytes):
+            oscDispatch(bytes[...], containsIgnoredControl: containsIgnoredControl)
         case .clipboardWrite(let text): pendingEffect = .clipboardWrite(text)
         case nil: break
         }
@@ -788,6 +823,59 @@ public struct Terminal: Sendable {
         guard let pendingEffect else { return [] }
         self.pendingEffect = nil
         return [pendingEffect]
+    }
+
+    private mutating func handleOSC9(_ payload: ArraySlice<UInt8>) {
+        guard let body = Self.notificationText(
+            payload,
+            maximumBytes: Self.maxNotificationBodyBytes,
+            requiresVisibleContent: true
+        ) else { return }
+        emit(.notification(.init(title: nil, body: body)))
+    }
+
+    private mutating func handleOSC777(_ payload: ArraySlice<UInt8>) {
+        guard let commandSeparator = payload.firstIndex(of: UInt8(ascii: ";")),
+              payload[..<commandSeparator].elementsEqual("notify".utf8)
+        else { return }
+
+        let fields = payload[payload.index(after: commandSeparator)...]
+        guard let titleSeparator = fields.firstIndex(of: UInt8(ascii: ";")) else { return }
+        let titleBytes = fields[..<titleSeparator]
+        let bodyBytes = fields[fields.index(after: titleSeparator)...]
+        guard let title = Self.notificationText(
+                  titleBytes,
+                  maximumBytes: Self.maxNotificationTitleBytes,
+                  requiresVisibleContent: false
+              ),
+              let body = Self.notificationText(
+                  bodyBytes,
+                  maximumBytes: Self.maxNotificationBodyBytes,
+                  requiresVisibleContent: true
+              )
+        else { return }
+
+        emit(.notification(.init(
+            title: title.isEmpty ? nil : title,
+            body: body
+        )))
+    }
+
+    private static func notificationText(
+        _ bytes: ArraySlice<UInt8>,
+        maximumBytes: Int,
+        requiresVisibleContent: Bool
+    ) -> String? {
+        guard bytes.count <= maximumBytes else { return nil }
+        let text = String(decoding: bytes, as: UTF8.self)
+        guard text.utf8.elementsEqual(bytes),
+              !text.unicodeScalars.contains(where: {
+                  $0.value < 0x20 || (0x7F...0x9F).contains($0.value)
+              }),
+              !requiresVisibleContent
+                  || !text.isEmpty && !text.unicodeScalars.allSatisfy({ $0.properties.isWhitespace })
+        else { return nil }
+        return text
     }
 
     mutating func handleOSC133(
@@ -820,7 +908,7 @@ public struct Terminal: Sendable {
                     column: column,
                     completion: completion
                 ))
-                pendingEvents.append(.commandCompleted(completion))
+                emit(.commandCompleted(completion))
             }
             commandStartedAt = nil
         default:
@@ -850,6 +938,11 @@ public struct Terminal: Sendable {
         guard !pendingEvents.isEmpty else { return [] }
         defer { pendingEvents.removeAll(keepingCapacity: true) }
         return Array(pendingEvents)
+    }
+
+    private mutating func emit(_ event: TerminalEvent) {
+        guard pendingEvents.count < Self.maxPendingEvents else { return }
+        pendingEvents.append(event)
     }
 
     var liveCommandCompletionRecords: ArraySlice<CommandCompletionRecord> {

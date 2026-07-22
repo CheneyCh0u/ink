@@ -31,6 +31,7 @@ public struct Parser: Sendable {
     private var paramHasDigit = false
     private var prefix: UInt8 = 0            // '?'、'>'、'<'、'=' 私有前缀
     private var intermediates: ContiguousArray<UInt8> = []
+
     private static let maxParams = 16
 
     public init() {
@@ -161,7 +162,8 @@ public struct Parser: Sendable {
             case 0x1B:
                 state = .oscEscape
             case 0x00..<0x07, 0x08..<0x20:
-                break // OSC 内的其它控制字节丢弃
+                // 传统 OSC 忽略 C0；语义层只让通知协议整段失效。
+                handler.oscIgnoreControl()
             default:
                 handler.oscPut(byte)
             }

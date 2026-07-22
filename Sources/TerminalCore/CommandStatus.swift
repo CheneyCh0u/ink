@@ -8,8 +8,22 @@ public struct CommandCompletion: Sendable, Equatable {
     }
 }
 
+/// 终端程序通过 OSC 请求显示的通知内容。
+///
+/// 构造只由 `Terminal` 在完成协议校验后进行；Shell 只消费纯值，不接触原始字节。
+public struct TerminalNotification: Sendable, Equatable {
+    public let title: String?
+    public let body: String
+
+    public init(title: String?, body: String) {
+        self.title = title
+        self.body = body
+    }
+}
+
 public enum TerminalEvent: Sendable, Equatable {
     case commandCompleted(CommandCompletion)
+    case notification(TerminalNotification)
     case bell
 }
 

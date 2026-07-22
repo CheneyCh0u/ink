@@ -138,8 +138,36 @@ scrollback 与事件取走成本。
 
 系统通知不保存命令文本、输出或目录；没有用户自定义标签名时统一显示“终端任务”。
 只有 Ink 不活跃且完整命令耗时至少 10 秒才会按需申请 alert 权限并投递，不设置
-声音或 badge。拒绝、不可用与投递错误不会影响会话。OSC 9 / 777 仍未实现，属于
-roadmap 的 P1-B 后续增强。
+声音或 badge。拒绝、不可用与投递错误不会影响会话。OSC 9 / 777 主动通知现已
+使用同一个协调器，但采用独立 gate：应用失焦、后台标签或同标签非活动 pane 才提交。
+
+## OSC 52 有界剪贴板
+
+2026-07-22 在 Apple M4 Pro（Mac16,8）、macOS 27.0（26A5388g）上运行
+Release `ink-bench osc52`。Profile 连续解析 20 个解码后恰好 1 MiB 的合法载荷，
+随后验证 1 MiB + 1 byte 的超限载荷和 2 MiB 非法未终止载荷均不产生效果。
+
+最初实现用两层带关联值的枚举保存解码器；每个输入 byte 都取出并写回包含
+`ContiguousArray` 的值。Time Profiler 在 OSC 52 压力 trace 中采到
+`OSCAccumulator.put` 周围的 enum copy 与 retain/release。改成独立状态标签和原地字段后，
+同机成对测量中，同一命令耗时从 **0.645149209 s** 降到 **0.221057 s**，约减少
+66%；该轮峰值 footprint 增量从 **4.2 MB** 降到 **3.4 MB**。最终全新 scratch
+Release 构建复测为 **0.223740292 s**、峰值与结束后均增加 **6.0 MB**；绝对 footprint
+受 Swift 分配器进程状态影响，但 20 次载荷后没有继续线性增长。
+
+最终 Time Profiler trace 位于 `/tmp/ink-final-plain-20260722.trace` 与
+`/tmp/ink-final-osc52-20260722.trace`。普通文本 trace 未采到 OSC 52 生命周期函数；
+OSC 52 trace 未再采到旧实现的关联值 enum copy/assign/consume 符号，热点落在严格
+Base64 字节分类、四元组刷新和数组唯一性检查。剪贴板旁路没有进入普通可打印字节路径。
+
+Parser 端到端测试同时覆盖恰好 1 MiB 的分片流式接收。解码后的文本只以一次
+`TerminalEffect.clipboardWrite` 上送；超限、非法 Base64、非法 UTF-8、查询请求、
+取消和未终止序列全部丢弃。实现不增加 cell、line 或 scrollback 常驻字段。
+
+同一最终 Release 构建运行完整 `ink-bench`：10 万行 reflow 变窄 / 变宽分别为
+**61.3 / 62.4 ms**；搜索首次扫描 **77.9 ms**、单行增量 **0.251 ms**；四组
+scrollback footprint 增量为 **9.2 / 24.5 / 49.0 / 74.7 MB**，解析吞吐为
+**48 / 60 / 81 / 106 MB/s**。这些结果与合入前基线持平或更好。
 
 ## 字体度量与增粗
 
