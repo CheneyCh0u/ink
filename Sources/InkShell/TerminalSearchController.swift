@@ -2,6 +2,11 @@ import Dispatch
 import InkTerminalView
 import TerminalCore
 
+private struct FrozenSearchSelection {
+    let range: SelectionRange
+    let coordinateSpace: TerminalSearchCoordinateSpace
+}
+
 /// 一个 pane 搜索浮层的瞬态状态；关闭后立即释放索引和匹配数组。
 @MainActor
 final class TerminalSearchController {
@@ -9,6 +14,7 @@ final class TerminalSearchController {
     var onClose: (() -> Void)?
 
     private let terminalProvider: () -> Terminal
+    private let selectionProvider: (Terminal) -> SelectionRange?
     private weak var terminalView: TerminalMetalView?
     private var index = TerminalSearchIndex()
     private var query = ""
@@ -18,6 +24,8 @@ final class TerminalSearchController {
     private var updateTask: Task<Void, Never>?
     private(set) var currentIndex: Int?
     private(set) var caseSensitive = false
+    private(set) var selectionOnly = false
+    private var frozenSelection: FrozenSearchSelection?
 
     var matches: [TerminalSearchMatch] { index.matches }
     var currentMatch: TerminalSearchMatch? {
@@ -27,19 +35,25 @@ final class TerminalSearchController {
 
     init(
         terminalProvider: @escaping () -> Terminal,
-        terminalView: TerminalMetalView
+        terminalView: TerminalMetalView,
+        selectionProvider: ((Terminal) -> SelectionRange?)? = nil
     ) {
         self.terminalProvider = terminalProvider
         self.terminalView = terminalView
+        self.selectionProvider = selectionProvider ?? { [weak terminalView] terminal in
+            terminalView?.searchSelection(in: terminal)
+        }
         terminalView.searchResultsProvider = { [weak self] in
             guard let self else { return ([], nil) }
             return (self.matches, self.currentIndex)
         }
         searchBar.onQueryChange = { [weak self] in self?.updateQuery($0) }
         searchBar.onCaseSensitivityChange = { [weak self] in self?.setCaseSensitive($0) }
+        searchBar.onSelectionScopeChange = { [weak self] in self?.setSelectionOnly($0) }
         searchBar.onNext = { [weak self] in self?.selectNext() }
         searchBar.onPrevious = { [weak self] in self?.selectPrevious() }
         searchBar.onClose = { [weak self] in self?.onClose?() }
+        publish(reveal: false, terminal: terminalProvider())
     }
 
     func updateQuery(_ newQuery: String) {
@@ -53,24 +67,49 @@ final class TerminalSearchController {
         restartSearch(chooseNearest: true)
     }
 
-    private func restartSearch(chooseNearest: Bool) {
+    func setSelectionOnly(_ enabled: Bool) {
+        guard selectionOnly != enabled else { return }
+        let terminal = terminalProvider()
+        if enabled {
+            guard let selection = availableSelection(in: terminal) else {
+                publish(reveal: false, terminal: terminal)
+                return
+            }
+            frozenSelection = FrozenSearchSelection(
+                range: selection,
+                coordinateSpace: TerminalSearchCoordinateSpace(in: terminal)
+            )
+            selectionOnly = true
+        } else {
+            invalidateSelectionScope()
+        }
+        restartSearch(chooseNearest: true, terminal: terminal)
+    }
+
+    private func restartSearch(chooseNearest: Bool, terminal providedTerminal: Terminal? = nil) {
         updateGeneration &+= 1
         updateTask?.cancel()
         updateTask = nil
         refreshRequestedWhileSearching = false
 
+        let liveTerminal = providedTerminal ?? terminalProvider()
         guard !query.isEmpty else {
             index.clear()
             currentIndex = nil
-            publish(reveal: false)
+            publish(reveal: false, terminal: liveTerminal)
             return
         }
 
-        let terminal = terminalProvider().snapshotForSearch()
-        let options = TerminalSearchOptions(caseSensitive: caseSensitive)
+        var options = resolvedOptions(in: liveTerminal)
+        if options == nil {
+            invalidateSelectionScope()
+            options = resolvedOptions(in: liveTerminal)
+        }
+        guard let options else { return }
+        let terminal = liveTerminal.snapshotForSearch()
         index.clear()
         currentIndex = nil
-        publish(reveal: false)
+        publish(reveal: false, terminal: liveTerminal)
         startBackgroundUpdate(
             terminal: terminal,
             startingIndex: TerminalSearchIndex(),
@@ -83,13 +122,22 @@ final class TerminalSearchController {
     }
 
     func refreshForTerminalUpdate() {
-        guard !query.isEmpty else { return }
+        let liveTerminal = terminalProvider()
+        if selectionOnly, resolvedOptions(in: liveTerminal) == nil {
+            invalidateSelectionScope()
+            restartSearch(chooseNearest: true, terminal: liveTerminal)
+            return
+        }
+        guard !query.isEmpty else {
+            publish(reveal: false, terminal: liveTerminal)
+            return
+        }
         guard updateTask == nil else {
             refreshRequestedWhileSearching = true
             return
         }
-        let terminal = terminalProvider().snapshotForSearch()
-        let options = TerminalSearchOptions(caseSensitive: caseSensitive)
+        guard let options = resolvedOptions(in: liveTerminal) else { return }
+        let terminal = liveTerminal.snapshotForSearch()
         if !index.requiresBackgroundUpdate(in: terminal, query: query, options: options) {
             let previousMatch = currentMatch
             let previousIndex = currentIndex
@@ -99,7 +147,7 @@ final class TerminalSearchController {
                 previousIndex: previousIndex,
                 terminal: terminal
             )
-            publish(reveal: false)
+            publish(reveal: false, terminal: liveTerminal)
             return
         }
         startBackgroundUpdate(
@@ -115,7 +163,7 @@ final class TerminalSearchController {
 
     /// PTY 可能在一轮主循环内连续送来多个 chunk，只安排一次索引更新。
     func scheduleRefreshForTerminalUpdate() {
-        guard !query.isEmpty, !refreshScheduled else { return }
+        guard (!query.isEmpty || selectionOnly), !refreshScheduled else { return }
         refreshScheduled = true
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -149,6 +197,7 @@ final class TerminalSearchController {
         terminalView?.clearSearchResults()
         searchBar.onQueryChange = nil
         searchBar.onCaseSensitivityChange = nil
+        searchBar.onSelectionScopeChange = nil
         searchBar.onNext = nil
         searchBar.onPrevious = nil
         searchBar.onClose = nil
@@ -249,18 +298,46 @@ final class TerminalSearchController {
         }
     }
 
-    private func publish(reveal: Bool) {
+    private func publish(reveal: Bool, terminal providedTerminal: Terminal? = nil) {
+        let terminal = providedTerminal ?? terminalProvider()
         searchBar.updateResultPosition(currentIndex: currentIndex, total: matches.count)
         searchBar.updateSearchModes(
             caseSensitive: caseSensitive,
-            selectionOnly: false,
-            selectionAvailable: false,
+            selectionOnly: selectionOnly,
+            selectionAvailable: availableSelection(in: terminal) != nil,
             copyOutputAvailable: false
         )
         terminalView?.markDirty()
         if reveal, let currentMatch {
             terminalView?.revealSearchResult(currentMatch)
         }
+    }
+
+    private func resolvedOptions(in terminal: Terminal) -> TerminalSearchOptions? {
+        var selection: SelectionRange?
+        if selectionOnly {
+            guard let frozenSelection,
+                  let resolved = frozenSelection.coordinateSpace.resolve(
+                      frozenSelection.range,
+                      in: terminal
+                  ) else { return nil }
+            selection = resolved
+        }
+        return TerminalSearchOptions(
+            caseSensitive: caseSensitive,
+            selection: selection
+        )
+    }
+
+    private func availableSelection(in terminal: Terminal) -> SelectionRange? {
+        guard let selection = selectionProvider(terminal),
+              !terminal.extractText(in: selection).isEmpty else { return nil }
+        return selection
+    }
+
+    private func invalidateSelectionScope() {
+        selectionOnly = false
+        frozenSelection = nil
     }
 
     private func nearestMatchIndex(to viewport: ClosedRange<Int>?) -> Int? {

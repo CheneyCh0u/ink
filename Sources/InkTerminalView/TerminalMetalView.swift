@@ -175,6 +175,7 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     private var scrollAccumulator: CGFloat = 0
     private var selectionAnchor: TextPosition?
     private var selection: SelectionRange?
+    private var selectionCoordinateSpace: TerminalSearchCoordinateSpace?
     private var searchResults: [TerminalSearchMatch] = []
     private var currentSearchIndex: Int?
     private var commandNavigationAnchor: (lineID: UInt64, layoutRevision: UInt64)?
@@ -229,7 +230,7 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     public func resetTransientState() {
         scrollOffset = 0
         scrollAccumulator = 0
-        selection = nil
+        clearSelection()
         selectionAnchor = nil
         markedText = ""
         searchResults.removeAll(keepingCapacity: false)
@@ -248,6 +249,23 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
             currentSearchIndex = nil
         }
         markDirty()
+    }
+
+    /// 外壳开启范围搜索时读取；历史环滚动可重映射，reflow 或淘汰后返回 nil。
+    public func searchSelection(in terminal: Terminal) -> SelectionRange? {
+        guard let selection, let selectionCoordinateSpace else { return nil }
+        return selectionCoordinateSpace.resolve(selection, in: terminal)
+    }
+
+    /// 选区创建统一经过这里捕获坐标空间；internal 便于视图层回归测试。
+    func updateSelection(_ range: SelectionRange, in terminal: Terminal) {
+        selection = range
+        selectionCoordinateSpace = TerminalSearchCoordinateSpace(in: terminal)
+    }
+
+    private func clearSelection() {
+        selection = nil
+        selectionCoordinateSpace = nil
     }
 
     /// 把指定结果滚到视口中部；靠近历史首尾时自然贴边。
@@ -348,7 +366,7 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
             terminal.scrollback.count - desiredStart,
             terminal.scrollback.count
         ))
-        selection = nil
+        clearSelection()
         markDirty()
     }
 
@@ -711,20 +729,20 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         switch event.clickCount {
         case 2:
             if let cols = terminal.wordColumns(at: pos) {
-                selection = SelectionRange(
+                updateSelection(SelectionRange(
                     start: TextPosition(line: pos.line, column: cols.lowerBound),
                     end: TextPosition(line: pos.line, column: cols.upperBound)
-                )
+                ), in: terminal)
             }
         case 3:
-            selection = SelectionRange(
+            updateSelection(SelectionRange(
                 start: TextPosition(line: pos.line, column: 0),
                 end: TextPosition(line: pos.line, column: terminal.grid.size.columns - 1)
-            )
+            ), in: terminal)
         default:
             selectionAnchor = pos
             if selection != nil {
-                selection = nil // 单击清掉旧选区
+                clearSelection() // 单击清掉旧选区
             }
         }
         markDirty()
@@ -732,11 +750,13 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
 
     public override func mouseDragged(with event: NSEvent) {
         if reportMouse(event, action: .drag, button: 0) { return }
-        guard let anchor = selectionAnchor, let pos = hitPosition(event) else { return }
-        selection = SelectionRange(
+        guard let anchor = selectionAnchor,
+              let pos = hitPosition(event),
+              let terminal = terminalProvider?() else { return }
+        updateSelection(SelectionRange(
             start: anchor, end: pos,
             block: event.modifierFlags.contains(.option)
-        )
+        ), in: terminal)
         markDirty()
     }
 
@@ -830,7 +850,7 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         // 敲键即回到底部并清选区，跟系统终端一致。
         if scrollOffset != 0 || selection != nil {
             scrollOffset = 0
-            selection = nil
+            clearSelection()
             commandNavigationAnchor = nil
             markDirty()
         }

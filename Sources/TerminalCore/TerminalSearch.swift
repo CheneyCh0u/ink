@@ -20,6 +20,42 @@ public struct TerminalSearchOptions: Sendable, Equatable {
     }
 }
 
+/// 一批搜索坐标对应的稳定行空间。每批结果只保存一份，不按匹配数放大内存。
+public struct TerminalSearchCoordinateSpace: Sendable, Equatable {
+    public let layoutRevision: UInt64
+    public let oldestLineID: UInt64
+
+    public init(in terminal: Terminal) {
+        layoutRevision = terminal.searchLayoutRevision
+        oldestLineID = terminal.scrollback.totalAppendedLines
+            - UInt64(terminal.scrollback.count)
+    }
+
+    /// 把捕获时的绝对行重映射到当前环形历史；reflow 或端点淘汰后返回 nil。
+    public func resolve(_ range: SelectionRange, in terminal: Terminal) -> SelectionRange? {
+        guard terminal.searchLayoutRevision == layoutRevision else { return nil }
+        let currentOldestLineID = terminal.scrollback.totalAppendedLines
+            - UInt64(terminal.scrollback.count)
+
+        func resolve(_ source: TextPosition) -> TextPosition? {
+            guard source.line >= 0,
+                  source.column >= 0,
+                  source.column < terminal.grid.size.columns else { return nil }
+            let (lineID, overflow) = oldestLineID.addingReportingOverflow(
+                UInt64(source.line)
+            )
+            guard !overflow, lineID >= currentOldestLineID else { return nil }
+            let distance = lineID - currentOldestLineID
+            guard distance < UInt64(terminal.totalLines) else { return nil }
+            return TextPosition(line: Int(distance), column: source.column)
+        }
+
+        guard let start = resolve(range.start),
+              let end = resolve(range.end) else { return nil }
+        return SelectionRange(start: start, end: end, block: range.block)
+    }
+}
+
 /// 终端历史文本的无状态搜索入口。
 public enum TerminalSearchEngine {
     public static func search(
@@ -31,12 +67,21 @@ public enum TerminalSearchEngine {
         guard !query.isEmpty, terminal.totalLines > 0 else { return [] }
 
         let firstLine = max(0, min(fromLine, terminal.totalLines))
-        guard firstLine < terminal.totalLines else { return [] }
+        let normalizedSelection = options.selection?.normalized
+        let scopedFirstLine = normalizedSelection.map {
+            max(firstLine, $0.start.line)
+        } ?? firstLine
+        let scopedEndLine = normalizedSelection.map { selection in
+            if selection.end.line < 0 { return 0 }
+            if selection.end.line >= terminal.totalLines - 1 { return terminal.totalLines }
+            return selection.end.line + 1
+        } ?? terminal.totalLines
+        guard scopedFirstLine < scopedEndLine else { return [] }
 
         var matches: [TerminalSearchMatch] = []
         var logicalLine = LogicalLine()
 
-        for lineIndex in firstLine..<terminal.totalLines {
+        for lineIndex in scopedFirstLine..<scopedEndLine {
             if lineIndex & 0x7F == 0, currentTaskIsCancelled() { return [] }
             guard let line = terminal.absoluteLine(lineIndex) else { continue }
             logicalLine.append(
@@ -45,7 +90,7 @@ public enum TerminalSearchEngine {
                 clusterTable: terminal.clusterTable
             )
 
-            let nextIsWrapped = lineIndex + 1 < terminal.totalLines
+            let nextIsWrapped = lineIndex + 1 < scopedEndLine
                 && (terminal.absoluteLineInfo(lineIndex + 1)?.isWrapped ?? false)
             if !nextIsWrapped {
                 matches.append(contentsOf: logicalLine.matches(for: query, options: options))
@@ -299,16 +344,38 @@ private struct LogicalLine {
                let lastIndex = lastMapping(before: resultEnd) {
                 let first = mappings[firstIndex]
                 let last = mappings[lastIndex]
-                results.append(TerminalSearchMatch(range: SelectionRange(
-                    start: first.start,
-                    end: last.end
-                )))
+                if candidateIsInsideSelection(
+                    firstIndex...lastIndex,
+                    selection: options.selection
+                ) {
+                    results.append(TerminalSearchMatch(range: SelectionRange(
+                        start: first.start,
+                        end: last.end
+                    )))
+                }
             }
             searchLocation = resultEnd
             matchCount += 1
         }
 
         return results
+    }
+
+    private func candidateIsInsideSelection(
+        _ indices: ClosedRange<Int>,
+        selection: SelectionRange?
+    ) -> Bool {
+        guard let selection else { return true }
+        return indices.allSatisfy { index in
+            let mapping = mappings[index]
+            return selection.contains(
+                line: mapping.start.line,
+                column: mapping.start.column
+            ) && selection.contains(
+                line: mapping.end.line,
+                column: mapping.end.column
+            )
+        }
     }
 
     private func firstMapping(containing offset: Int) -> Int? {

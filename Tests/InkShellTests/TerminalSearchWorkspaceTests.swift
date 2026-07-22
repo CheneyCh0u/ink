@@ -58,6 +58,190 @@ struct TerminalSearchWorkspaceTests {
         #expect(controller.searchBar.caseSensitiveEnabled)
     }
 
+    @Test("仅搜索选区冻结开启瞬间范围")
+    func selectionScopeIsFrozen() async {
+        var terminal = Terminal(
+            size: TerminalSize(columns: 24, rows: 2),
+            scrollbackCapacity: 20
+        )
+        var parser = Parser()
+        parser.feed(Array("hit outside hit inside".utf8), handler: &terminal)
+        var provided = SelectionRange(
+            start: TextPosition(line: 0, column: 8),
+            end: TextPosition(line: 0, column: 21)
+        )
+        let terminalView = TerminalMetalView(frame: .zero)
+        terminalView.terminalProvider = { terminal }
+        let controller = TerminalSearchController(
+            terminalProvider: { terminal },
+            terminalView: terminalView,
+            selectionProvider: { _ in provided }
+        )
+
+        controller.updateQuery("hit")
+        controller.setSelectionOnly(true)
+        provided = SelectionRange(
+            start: TextPosition(line: 0, column: 0),
+            end: TextPosition(line: 0, column: 2)
+        )
+        await controller.waitForPendingUpdate()
+
+        #expect(controller.matches.count == 1)
+        #expect(controller.matches.first?.range.start.column == 12)
+        #expect(controller.searchBar.selectionOnlyEnabled)
+    }
+
+    @Test("空选区不能开启范围搜索")
+    func emptySelectionCannotEnableScope() {
+        var terminal = Terminal(
+            size: TerminalSize(columns: 12, rows: 2),
+            scrollbackCapacity: 20
+        )
+        var parser = Parser()
+        parser.feed(Array("hit".utf8), handler: &terminal)
+        let empty = SelectionRange(
+            start: TextPosition(line: 0, column: 5),
+            end: TextPosition(line: 0, column: 5)
+        )
+        let terminalView = TerminalMetalView(frame: .zero)
+        let controller = TerminalSearchController(
+            terminalProvider: { terminal },
+            terminalView: terminalView,
+            selectionProvider: { _ in empty }
+        )
+
+        controller.setSelectionOnly(true)
+
+        #expect(!controller.selectionOnly)
+        #expect(!controller.searchBar.selectionToggleEnabled)
+    }
+
+    @Test("打开搜索时非空选区立即启用范围按钮")
+    func selectionIsAvailableWhenSearchOpens() {
+        var terminal = Terminal(
+            size: TerminalSize(columns: 12, rows: 2),
+            scrollbackCapacity: 20
+        )
+        var parser = Parser()
+        parser.feed(Array("hit".utf8), handler: &terminal)
+        let selected = SelectionRange(
+            start: TextPosition(line: 0, column: 0),
+            end: TextPosition(line: 0, column: 2)
+        )
+        let terminalView = TerminalMetalView(frame: .zero)
+
+        let controller = TerminalSearchController(
+            terminalProvider: { terminal },
+            terminalView: terminalView,
+            selectionProvider: { _ in selected }
+        )
+
+        #expect(controller.searchBar.selectionToggleEnabled)
+    }
+
+    @Test("reflow 使冻结范围自动退出并恢复全终端结果")
+    func selectionScopeExitsAfterReflow() async {
+        var terminal = Terminal(
+            size: TerminalSize(columns: 24, rows: 2),
+            scrollbackCapacity: 20
+        )
+        var parser = Parser()
+        parser.feed(Array("hit first hit second".utf8), handler: &terminal)
+        let selected = SelectionRange(
+            start: TextPosition(line: 0, column: 0),
+            end: TextPosition(line: 0, column: 8)
+        )
+        let terminalView = TerminalMetalView(frame: .zero)
+        terminalView.terminalProvider = { terminal }
+        let controller = TerminalSearchController(
+            terminalProvider: { terminal },
+            terminalView: terminalView,
+            selectionProvider: { _ in selected }
+        )
+        controller.updateQuery("hit")
+        controller.setSelectionOnly(true)
+        await controller.waitForPendingUpdate()
+        #expect(controller.matches.count == 1)
+
+        terminal.resize(to: TerminalSize(columns: 12, rows: 2))
+        controller.refreshForTerminalUpdate()
+        await controller.waitForPendingUpdate()
+
+        #expect(!controller.selectionOnly)
+        #expect(controller.matches.count == 2)
+    }
+
+    @Test("冻结范围随存活历史平移并在端点淘汰后退出")
+    func selectionScopeTracksEviction() async {
+        var terminal = Terminal(
+            size: TerminalSize(columns: 12, rows: 1),
+            scrollbackCapacity: 2
+        )
+        var parser = Parser()
+        parser.feed(Array("drop\r\nhit keep\r\nplain".utf8), handler: &terminal)
+        let selected = SelectionRange(
+            start: TextPosition(line: 1, column: 0),
+            end: TextPosition(line: 1, column: 7)
+        )
+        let terminalView = TerminalMetalView(frame: .zero)
+        terminalView.terminalProvider = { terminal }
+        let controller = TerminalSearchController(
+            terminalProvider: { terminal },
+            terminalView: terminalView,
+            selectionProvider: { _ in selected }
+        )
+        controller.updateQuery("hit")
+        controller.setSelectionOnly(true)
+        await controller.waitForPendingUpdate()
+
+        parser.feed(Array("\r\nnew".utf8), handler: &terminal)
+        controller.refreshForTerminalUpdate()
+        await controller.waitForPendingUpdate()
+        #expect(controller.selectionOnly)
+        #expect(controller.matches.first?.range.start.line == 0)
+
+        parser.feed(Array("\r\nnewer".utf8), handler: &terminal)
+        controller.refreshForTerminalUpdate()
+        await controller.waitForPendingUpdate()
+        #expect(!controller.selectionOnly)
+        #expect(controller.matches.isEmpty)
+    }
+
+    @Test("清除 scrollback 使冻结范围自动退出")
+    func selectionScopeExitsAfterClearingScrollback() async {
+        var terminal = Terminal(
+            size: TerminalSize(columns: 12, rows: 1),
+            scrollbackCapacity: 20
+        )
+        var parser = Parser()
+        parser.feed(Array("hit old\r\nplain".utf8), handler: &terminal)
+        let selected = SelectionRange(
+            start: TextPosition(line: 0, column: 0),
+            end: TextPosition(line: 0, column: 6)
+        )
+        let terminalView = TerminalMetalView(frame: .zero)
+        let controller = TerminalSearchController(
+            terminalProvider: { terminal },
+            terminalView: terminalView,
+            selectionProvider: { _ in selected }
+        )
+        controller.updateQuery("hit")
+        controller.setSelectionOnly(true)
+        await controller.waitForPendingUpdate()
+        #expect(controller.selectionOnly)
+
+        terminal.csiDispatch(
+            prefix: 0,
+            params: [3][...],
+            intermediates: [],
+            final: UInt8(ascii: "J")
+        )
+        controller.refreshForTerminalUpdate()
+        await controller.waitForPendingUpdate()
+
+        #expect(!controller.selectionOnly)
+    }
+
     @Test("查询扫描异步执行而不阻塞主线程")
     func queryRunsOffMainActor() async {
         var terminal = Terminal(
