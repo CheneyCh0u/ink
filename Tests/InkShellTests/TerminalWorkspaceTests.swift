@@ -181,6 +181,7 @@ struct TerminalWorkspaceTests {
         window.isReleasedWhenClosed = false
         window.contentViewController = workspace
         defer { window.close() }
+        workspace.view.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
         workspace.show(tab: tab, config: InkConfig())
         var activations: [PaneID] = []
         workspace.onActivatePane = { activations.append($0) }
@@ -195,6 +196,58 @@ struct TerminalWorkspaceTests {
         #expect(rightContainer.isActive)
         #expect(activations == [right.id])
         #expect(window.firstResponder === rightTerminal)
+    }
+
+    @Test("工作区方向聚焦使用当前 viewport 与分隔线几何")
+    func focusNeighborUsesRuntimeGeometry() throws {
+        let topLeft = makePane()
+        let bottomLeft = makePane()
+        let topRight = makePane()
+        let bottomRight = makePane()
+        let layout = PaneLayout.group(
+            id: SplitID(), axis: .leftRight, weights: [0.5, 0.5],
+            children: [
+                .group(
+                    id: SplitID(), axis: .topBottom,
+                    weights: [299.0 / 399.0, 100.0 / 399.0],
+                    children: [.leaf(topLeft.id), .leaf(bottomLeft.id)]
+                ),
+                .group(
+                    id: SplitID(), axis: .topBottom,
+                    weights: [99.0 / 399.0, 300.0 / 399.0],
+                    children: [.leaf(topRight.id), .leaf(bottomRight.id)]
+                ),
+            ]
+        )
+        let panes = [topLeft, bottomLeft, topRight, bottomRight]
+        let tab = try #require(TerminalTab(
+            restoredLayout: layout,
+            panes: Dictionary(uniqueKeysWithValues: panes.map { ($0.id, $0) }),
+            activePaneID: topLeft.id,
+            customName: nil
+        ))
+        let workspace = TerminalWorkspaceViewController()
+        workspace.view.frame = NSRect(x: 0, y: 0, width: 800, height: 400)
+        workspace.show(tab: tab, config: InkConfig())
+
+        #expect(workspace.focusNeighbor(direction: .right))
+        #expect(tab.activePaneID == topRight.id)
+    }
+
+    @Test("零尺寸工作区不启用不可见 pane 导航")
+    func zeroSizedWorkspaceDisablesNeighborNavigation() {
+        let left = makePane()
+        let right = makePane()
+        let tab = TerminalTab(initialPane: left)
+        _ = tab.insertPane(right, splitting: left.id, direction: .right)
+        _ = tab.activate(left.id)
+        let workspace = TerminalWorkspaceViewController()
+        workspace.show(tab: tab, config: InkConfig())
+
+        #expect(workspace.view.bounds.isEmpty)
+        #expect(!workspace.canFocusNeighbor(direction: .right))
+        #expect(!workspace.focusNeighbor(direction: .right))
+        #expect(tab.activePaneID == left.id)
     }
 
     @Test("工作区方向边界不触发回调或改变响应者")

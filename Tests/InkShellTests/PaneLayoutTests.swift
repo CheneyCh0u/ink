@@ -266,6 +266,94 @@ struct PaneLayoutTests {
         #expect(layout.neighbor(of: left, direction: .right) == rightTop)
     }
 
+    @Test("运行时几何计入分隔线后选择屏幕中心更近的 pane")
+    func viewportGeometryAccountsForDividers() {
+        let topLeft = PaneID()
+        let bottomLeft = PaneID()
+        let topRight = PaneID()
+        let bottomRight = PaneID()
+        let layout = PaneLayout.group(
+            id: SplitID(), axis: .leftRight, weights: [0.5, 0.5],
+            children: [
+                .group(
+                    id: SplitID(), axis: .topBottom,
+                    weights: [299.0 / 399.0, 100.0 / 399.0],
+                    children: [.leaf(topLeft), .leaf(bottomLeft)]
+                ),
+                .group(
+                    id: SplitID(), axis: .topBottom,
+                    weights: [99.0 / 399.0, 300.0 / 399.0],
+                    children: [.leaf(topRight), .leaf(bottomRight)]
+                ),
+            ]
+        )
+
+        #expect(layout.neighbor(of: topLeft, direction: .right) == bottomRight)
+        #expect(layout.neighbor(
+            of: topLeft,
+            direction: .right,
+            geometry: PaneNavigationGeometry(
+                width: 800,
+                height: 400,
+                dividerThickness: 1
+            )
+        ) == topRight)
+    }
+
+    @Test("零面积 active 可沿压缩轴逃到可见 pane")
+    func zeroAreaActiveCanEscapeToVisiblePane() {
+        let collapsedActive = PaneID()
+        let collapsedSibling = PaneID()
+        let visible = PaneID()
+        let layout = PaneLayout.group(
+            id: SplitID(), axis: .leftRight, weights: [0.01, 0.99],
+            children: [
+                .group(
+                    id: SplitID(), axis: .leftRight, weights: [0.5, 0.5],
+                    children: [.leaf(collapsedActive), .leaf(collapsedSibling)]
+                ),
+                .leaf(visible),
+            ]
+        )
+
+        #expect(layout.neighbor(
+            of: collapsedActive,
+            direction: .right,
+            geometry: PaneNavigationGeometry(
+                width: 100,
+                height: 400,
+                dividerThickness: 1
+            )
+        ) == visible)
+    }
+
+    @Test("可见 active 不会进入零面积目标")
+    func zeroAreaCandidateIsRejected() {
+        let visibleActive = PaneID()
+        let collapsedLeft = PaneID()
+        let collapsedRight = PaneID()
+        let layout = PaneLayout.group(
+            id: SplitID(), axis: .leftRight, weights: [0.99, 0.01],
+            children: [
+                .leaf(visibleActive),
+                .group(
+                    id: SplitID(), axis: .leftRight, weights: [0.5, 0.5],
+                    children: [.leaf(collapsedLeft), .leaf(collapsedRight)]
+                ),
+            ]
+        )
+
+        #expect(layout.neighbor(
+            of: visibleActive,
+            direction: .right,
+            geometry: PaneNavigationGeometry(
+                width: 100,
+                height: 400,
+                dividerThickness: 1
+            )
+        ) == nil)
+    }
+
     @Test("对角 pane 不跳转且无效权重等分回退")
     func diagonalIsRejectedAndInvalidWeightsFallBackEqually() {
         let topLeft = PaneID()

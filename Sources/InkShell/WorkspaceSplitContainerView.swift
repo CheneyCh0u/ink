@@ -8,6 +8,8 @@ protocol WorkspaceSplitMinimumSizing: AnyObject {
 /// 按权重显式布局直接子视图，不依赖 NSSplitView 的内部 divider 状态。
 @MainActor
 final class WorkspaceSplitContainerView: NSView, WorkspaceSplitMinimumSizing {
+    static let dividerThickness: CGFloat = 1
+
     private struct DividerDrag {
         let index: Int
         let startCoordinate: CGFloat
@@ -29,7 +31,7 @@ final class WorkspaceSplitContainerView: NSView, WorkspaceSplitMinimumSizing {
     var minimumSplitSize: NSSize {
         guard !subviews.isEmpty else { return Self.fallbackMinimumSize }
         let childSizes = subviews.map(Self.minimumSize(of:))
-        let dividerTotal = CGFloat(max(0, childSizes.count - 1))
+        let dividerTotal = Self.dividerThickness * CGFloat(max(0, childSizes.count - 1))
         return switch axis {
         case .leftRight:
             NSSize(
@@ -68,7 +70,7 @@ final class WorkspaceSplitContainerView: NSView, WorkspaceSplitMinimumSizing {
 
         let resolvedWeights = normalizedWeights(for: count)
         weights = resolvedWeights
-        let dividerTotal = CGFloat(count - 1)
+        let dividerTotal = Self.dividerThickness * CGFloat(count - 1)
         let available = max(0, axisLength - dividerTotal)
         var origin: CGFloat = 0
 
@@ -77,7 +79,7 @@ final class WorkspaceSplitContainerView: NSView, WorkspaceSplitMinimumSizing {
                 ? max(0, axisLength - origin)
                 : available * CGFloat(resolvedWeights[index])
             setFrame(of: subviews[index], origin: origin, length: length)
-            origin += length + 1
+            origin += length + Self.dividerThickness
         }
         needsDisplay = true
         window?.invalidateCursorRects(for: self)
@@ -182,8 +184,14 @@ final class WorkspaceSplitContainerView: NSView, WorkspaceSplitMinimumSizing {
         guard subviews.count > 1 else { return [] }
         return subviews.dropLast().map { child in
             axis == .leftRight
-                ? NSRect(x: child.frame.maxX, y: 0, width: 1, height: bounds.height)
-                : NSRect(x: 0, y: child.frame.maxY, width: bounds.width, height: 1)
+                ? NSRect(
+                    x: child.frame.maxX, y: 0,
+                    width: Self.dividerThickness, height: bounds.height
+                )
+                : NSRect(
+                    x: 0, y: child.frame.maxY,
+                    width: bounds.width, height: Self.dividerThickness
+                )
         }
     }
 

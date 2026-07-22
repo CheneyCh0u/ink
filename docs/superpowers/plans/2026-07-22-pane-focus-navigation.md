@@ -4,9 +4,15 @@
 
 **Goal:** 为 Ink 增加 `⌘⌥←/→/↑/↓` 相邻 pane 聚焦，并让菜单状态、活动边框、第一响应者和工作区保存链路保持一致。
 
-**Architecture:** `PaneLayout` 从权重树推导纯 Swift 归一化矩形并按几何评分选邻居；`TerminalTab` 负责活动 pane 状态；`TerminalWorkspaceViewController` 协调边框、回调和第一响应者；`MainWindowController` 与 AppKit 菜单只做方向路由和可用性校验。
+**Architecture:** `PaneLayout` 从权重树、viewport 与 divider 推导纯 Swift 矩形并按几何评分选邻居；`TerminalTab` 负责活动 pane 状态；`TerminalWorkspaceViewController` 协调边框、回调和第一响应者；`MainWindowController` 与 AppKit 菜单只做方向路由和可用性校验。
 
 **Tech Stack:** Swift 6、Swift Testing、AppKit、SwiftPM；最低 macOS 14.0。
+
+> **评审修正（2026-07-22）：** 运行时导航除布局权重外，还接收 workspace 宽高并扣除
+> 与 `WorkspaceSplitContainerView` 共享的 1pt divider 厚度；评分比较统一使用 epsilon，
+> 零面积 pane 不成为目标，但零面积 active 可沿压缩轴逃到可见 pane。纯模型调用继续
+> 使用单位矩形和零 divider。对应回归测试覆盖嵌套舍入、正常 4-pane divider 反例和
+> 零面积压缩。
 
 ## Global Constraints
 

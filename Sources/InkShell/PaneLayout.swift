@@ -2,6 +2,24 @@ import Foundation
 
 private let paneNavigationEpsilon = 1e-9
 
+struct PaneNavigationGeometry: Equatable, Sendable {
+    let width: Double
+    let height: Double
+    let dividerThickness: Double
+
+    static let normalized = PaneNavigationGeometry(
+        width: 1,
+        height: 1,
+        dividerThickness: 0
+    )
+
+    var isValid: Bool {
+        width.isFinite && width >= 0
+            && height.isFinite && height >= 0
+            && dividerThickness.isFinite && dividerThickness >= 0
+    }
+}
+
 struct PaneID: Hashable, Sendable {
     let rawValue: UUID
 
@@ -44,7 +62,7 @@ enum PaneSplitDirection: Equatable, Sendable {
     }
 }
 
-private struct PaneNormalizedRect: Equatable, Sendable {
+private struct PaneNavigationRect: Equatable, Sendable {
     let x: Double
     let y: Double
     let width: Double
@@ -60,7 +78,7 @@ private struct PaneNormalizedRect: Equatable, Sendable {
 
 private struct PaneNavigationEntry: Sendable {
     let paneID: PaneID
-    let rect: PaneNormalizedRect
+    let rect: PaneNavigationRect
     let ordinal: Int
 }
 
@@ -123,10 +141,20 @@ indirect enum PaneLayout: Equatable, Sendable {
         }
     }
 
-    func neighbor(of paneID: PaneID, direction: PaneSplitDirection) -> PaneID? {
+    func neighbor(
+        of paneID: PaneID,
+        direction: PaneSplitDirection,
+        geometry: PaneNavigationGeometry = .normalized
+    ) -> PaneID? {
+        guard geometry.isValid else { return nil }
         var entries: [PaneNavigationEntry] = []
         collectNavigationEntries(
-            in: PaneNormalizedRect(x: 0, y: 0, width: 1, height: 1),
+            in: PaneNavigationRect(
+                x: 0, y: 0,
+                width: geometry.width,
+                height: geometry.height
+            ),
+            dividerThickness: geometry.dividerThickness,
             into: &entries
         )
         guard let active = entries.first(where: { $0.paneID == paneID }) else {
@@ -233,7 +261,8 @@ indirect enum PaneLayout: Equatable, Sendable {
     }
 
     private func collectNavigationEntries(
-        in rect: PaneNormalizedRect,
+        in rect: PaneNavigationRect,
+        dividerThickness: Double,
         into entries: inout [PaneNavigationEntry]
     ) {
         switch self {
@@ -245,25 +274,38 @@ indirect enum PaneLayout: Equatable, Sendable {
         case let .group(_, axis, weights, children):
             guard !children.isEmpty else { return }
             let resolved = Self.navigationWeights(weights, childCount: children.count)
+            let dividerTotal = dividerThickness * Double(max(0, children.count - 1))
+            let availableLength = max(
+                0,
+                (axis == .leftRight ? rect.width : rect.height) - dividerTotal
+            )
             var cursor = axis == .leftRight ? rect.minX : rect.minY
             for index in children.indices {
                 let isLast = index == children.index(before: children.endIndex)
                 let length: Double
-                let childRect: PaneNormalizedRect
+                let childRect: PaneNavigationRect
                 switch axis {
                 case .leftRight:
-                    length = isLast ? rect.maxX - cursor : rect.width * resolved[index]
-                    childRect = PaneNormalizedRect(
+                    length = isLast
+                        ? max(0, rect.maxX - cursor)
+                        : availableLength * resolved[index]
+                    childRect = PaneNavigationRect(
                         x: cursor, y: rect.y, width: length, height: rect.height
                     )
                 case .topBottom:
-                    length = isLast ? rect.maxY - cursor : rect.height * resolved[index]
-                    childRect = PaneNormalizedRect(
+                    length = isLast
+                        ? max(0, rect.maxY - cursor)
+                        : availableLength * resolved[index]
+                    childRect = PaneNavigationRect(
                         x: rect.x, y: cursor, width: rect.width, height: length
                     )
                 }
-                children[index].collectNavigationEntries(in: childRect, into: &entries)
-                cursor += length
+                children[index].collectNavigationEntries(
+                    in: childRect,
+                    dividerThickness: dividerThickness,
+                    into: &entries
+                )
+                cursor += length + dividerThickness
             }
         }
     }
@@ -284,11 +326,13 @@ indirect enum PaneLayout: Equatable, Sendable {
     }
 
     private static func navigationScore(
-        from active: PaneNormalizedRect,
-        to candidate: PaneNormalizedRect,
+        from active: PaneNavigationRect,
+        to candidate: PaneNavigationRect,
         candidateOrdinal: Int,
         direction: PaneSplitDirection
     ) -> PaneNavigationScore? {
+        guard candidate.width > paneNavigationEpsilon,
+              candidate.height > paneNavigationEpsilon else { return nil }
         let xOverlap = min(active.maxX, candidate.maxX) - max(active.minX, candidate.minX)
         let yOverlap = min(active.maxY, candidate.maxY) - max(active.minY, candidate.minY)
         let axialGap: Double

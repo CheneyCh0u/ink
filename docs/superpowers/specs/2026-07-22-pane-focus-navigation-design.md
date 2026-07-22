@@ -18,7 +18,8 @@ roadmap 的 P1-A 要求补齐 pane 间方向导航。本次使用 `Command-Optio
 - 切换后同步活动 pane、焦点边框、第一响应者和工作区快照。
 - 目标方向没有相邻 pane 时不移动、不循环，也不发出提示音。
 - 菜单项在设置页、单 pane 或对应方向无目标时禁用。
-- 导航算法保持纯 Swift，不依赖 AppKit frame，能够用单元测试完整验证。
+- 导航算法保持纯 Swift，不读取 AppKit frame；运行时只传入 workspace 尺寸和统一的
+  divider 厚度，能够用单元测试完整验证。
 
 ## 非目标
 
@@ -33,24 +34,28 @@ roadmap 的 P1-A 要求补齐 pane 间方向导航。本次使用 `Command-Optio
 
 ## 方案选择
 
-### 采用：从 `PaneLayout` 推导归一化几何
+### 采用：从 `PaneLayout` 推导权重几何
 
-从根节点的单位矩形 `(0, 0, 1, 1)` 开始，按每个分组的轴和权重递归切分，得到每个
-叶子 pane 的归一化矩形。再以当前 pane 为原点筛选目标方向候选，并按确定的几何评分
-选出一个 pane。
+纯模型查询从根节点的单位矩形 `(0, 0, 1, 1)` 开始；真实窗口查询则使用 workspace 的
+当前宽高，并在每层切分时扣除与视图容器共享的 1pt divider 厚度。两者都按每个分组的
+轴和权重递归切分，得到每个叶子 pane 的矩形，再以当前 pane 为原点筛选目标方向候选，
+并按确定的几何评分选出一个 pane。
 
-这一方案与实际布局使用同一棵树、同一组权重，不受窗口像素尺寸和 AppKit 布局时机
-影响。算法放在 `PaneLayout.swift`，只使用 `Double` 和值类型，保持模型可独立测试。
+这一方案与实际布局使用同一棵树、同一组权重、同一 divider 常量和相同的余量吸收规则，
+但不读取叶子 `NSView.frame`，因此不耦合 AppKit 布局完成时机。算法放在
+`PaneLayout.swift`，只使用 `Double` 和值类型，保持模型可独立测试。workspace 尚无有效
+尺寸的短暂阶段传入零尺寸，菜单保持禁用，不能把焦点切到尚不可见的 pane。
 
 ### 未采用：查找布局树中的结构兄弟
 
 结构兄弟适合简单的单层分屏，但嵌套布局中“同一个父节点”不等于视觉相邻。T 形布局
 尤其会得到不符合方向直觉的结果，因此不以树关系直接决定目标。
 
-### 未采用：读取 `NSView.frame`
+### 未采用：读取叶子 `NSView.frame`
 
 真实 frame 能反映当前像素布局，但会把导航决策耦合到 AppKit 视图树、布局完成时机和
-测试窗口。模型层已有足够信息，没必要为此引入 UI 依赖。
+测试窗口。workspace 的宽高与 divider 厚度已经足以纯 Swift 重建同一几何，不需要把
+叶子 frame 或 AppKit 类型传入模型。
 
 ## 快捷键与菜单
 
@@ -75,10 +80,11 @@ roadmap 的 P1-A 要求补齐 pane 间方向导航。本次使用 `Command-Optio
 
 ### 数据表示
 
-`PaneLayout.swift` 增加仅供 shell 模型使用的内部值类型，用四个 `Double` 保存矩形：
+`PaneLayout.swift` 增加仅供 shell 模型使用的内部值类型，用四个 `Double` 保存矩形；
+坐标既可表示单位矩形，也可表示运行时点数：
 
 ```swift
-struct PaneNormalizedRect: Equatable, Sendable {
+struct PaneNavigationRect: Equatable, Sendable {
     let x: Double
     let y: Double
     let width: Double
@@ -92,13 +98,15 @@ struct PaneNormalizedRect: Equatable, Sendable {
 
 ### 递归切分
 
-`PaneLayout` 从单位矩形递归收集 `(paneID, rect, ordinal)`：
+`PaneLayout` 从给定根矩形递归收集 `(paneID, rect, ordinal)`：
 
 1. `.leaf` 直接记录当前矩形。
 2. `.leftRight` 按权重从左到右切分 `width`。
 3. `.topBottom` 按权重从上到下切分 `height`。
-4. 最后一个子节点吸收浮点余量，保证子矩形完整覆盖父矩形。
-5. `ordinal` 使用现有 `paneIDs` 相同的深度优先顺序，作为最终稳定排序键。
+4. 运行时每层先从可用轴长扣除 `dividerThickness × (childCount - 1)`，并在子节点之间
+   推进同一厚度；单位矩形查询的 divider 为零。
+5. 最后一个子节点吸收浮点余量，保证子矩形与 divider 一起完整覆盖父矩形。
+6. `ordinal` 使用现有 `paneIDs` 相同的深度优先顺序，作为最终稳定排序键。
 
 有效运行态的权重数量应与子节点数量相同、每项为有限正数。为了让导航在损坏或手工
 构造的布局上仍有确定结果，几何推导沿用视图容器的防御行为：数量不匹配、非有限值、
@@ -107,6 +115,8 @@ struct PaneNormalizedRect: Equatable, Sendable {
 ### 候选筛选
 
 当前 pane 的矩形记为 `active`，候选记为 `candidate`，浮点比较使用一个固定小 epsilon。
+宽或高不大于 epsilon 的零面积 pane 不能成为目标；若当前 pane 已被窗口压成零面积，
+仍允许沿压缩轴跳到可见候选，避免键盘焦点困在不可见 pane。
 候选必须在目标方向，且在垂直于移动方向的轴上有严格大于 epsilon 的重叠：
 
 - 左：`candidate.maxX <= active.minX + epsilon`，并且 Y 轴正重叠。
@@ -118,7 +128,7 @@ struct PaneNormalizedRect: Equatable, Sendable {
 
 ### 候选评分
 
-每个候选按以下元组升序排序：
+每个候选按以下元组升序排序；前两项之差不超过同一个 epsilon 时视为相等：
 
 1. **轴向间距**：当前 pane 边缘到候选近侧边缘的非负距离。
 2. **横向偏移**：两者在垂直轴上的中心点距离绝对值。
@@ -145,8 +155,8 @@ pane 数量很小，不引入缓存，也避免布局变化后维护失效状态
 
 工作区增加同名查询和动作入口：
 
-1. `canFocusNeighbor(direction:)` 转发到当前标签。
-2. `focusNeighbor(direction:)` 先让标签切换活动 pane。
+1. `canFocusNeighbor(direction:)` 把当前 workspace 宽高与共享 divider 厚度传给当前标签。
+2. `focusNeighbor(direction:)` 使用同一运行时几何让标签切换活动 pane。
 3. 成功后刷新所有 pane 的活动边框。
 4. 调用现有 `onActivatePane`，让主窗口沿用既有的快照保存、标题和 chrome 刷新路径。
 5. 将新活动 pane 的 `TerminalMetalView` 设为窗口第一响应者。
@@ -171,6 +181,8 @@ pane 数量很小，不引入缓存，也避免布局变化后维护失效状态
 - 不同权重：按归一化边界和中心计算，不按子节点索引猜测。
 - 嵌套同方向分组：无论布局是否已扁平化，递归几何结果一致。
 - 完全同分：使用 DFS ordinal，结果不依赖字典顺序或 UUID。
+- divider 差异：运行时按与 `WorkspaceSplitContainerView` 相同的 1pt 分隔线重建矩形。
+- 极端压缩：零面积 pane 不成为目标，但零面积 active 可沿压缩轴逃到可见 pane。
 - 设置页：命令禁用，直接调用 selector 也不改变后台终端焦点。
 
 ## 性能与内存
@@ -195,6 +207,9 @@ pane。临时矩形数组只在查询期间存在，不进入每帧渲染、grid
 - 只有角点接触的 pane 不会发生对角跳转。
 - 无效权重使用等分回退且不修改布局。
 - 不在布局中的 PaneID 返回 `nil`。
+- 数学同分不受嵌套浮点舍入影响，仍按 DFS 顺序决胜。
+- 运行时 viewport 与 divider 可改变理想权重几何的中心近邻选择。
+- 压缩为零面积的目标被拒绝，零面积 active 仍可沿压缩轴逃到可见 pane。
 
 ### `TerminalTabTests`
 
