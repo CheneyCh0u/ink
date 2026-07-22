@@ -39,20 +39,20 @@ struct OSC52Base64Decoder: Sendable {
     }
 
     private mutating func flushQuartet() {
-        let q = withUnsafeBytes(of: quartet) { Array($0) }
-        guard q[0] < 64, q[1] < 64,
-              !(q[2] == 64 && q[3] != 64),
-              q[2] == 64 ? (q[1] & 0x0F) == 0 : true,
-              q[3] == 64 ? (q[2] & 0x03) == 0 : true else {
+        let (q0, q1, q2, q3) = quartet
+        guard q0 < 64, q1 < 64,
+              !(q2 == 64 && q3 != 64),
+              q2 == 64 ? (q1 & 0x0F) == 0 : true,
+              q3 == 64 ? (q2 & 0x03) == 0 : true else {
             invalid = true; discard(); return
         }
-        let outputCount = q[2] == 64 ? 1 : (q[3] == 64 ? 2 : 3)
+        let outputCount = q2 == 64 ? 1 : (q3 == 64 ? 2 : 3)
         guard decoded.count <= Self.maximumDecodedBytes - outputCount else {
             invalid = true; discard(); return
         }
-        decoded.append((q[0] << 2) | (q[1] >> 4))
-        if outputCount > 1 { decoded.append((q[1] << 4) | (q[2] >> 2)) }
-        if outputCount > 2 { decoded.append((q[2] << 6) | q[3]) }
+        decoded.append((q0 << 2) | (q1 >> 4))
+        if outputCount > 1 { decoded.append((q1 << 4) | (q2 >> 2)) }
+        if outputCount > 2 { decoded.append((q2 << 6) | q3) }
         sawPadding = outputCount < 3
         quartetCount = 0
     }
