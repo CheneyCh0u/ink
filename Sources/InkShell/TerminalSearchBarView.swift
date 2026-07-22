@@ -156,19 +156,6 @@ final class TerminalSearchBarView: NSVisualEffectView, NSSearchFieldDelegate {
         copyOutputButton.isEnabled = copyOutputAvailable
     }
 
-    func toggleCaseSensitivity() {
-        let enabled = caseSensitiveButton.state != .on
-        caseSensitiveButton.state = enabled ? .on : .off
-        onCaseSensitivityChange?(enabled)
-    }
-
-    func toggleSelectionScope() {
-        guard selectionButton.isEnabled else { return }
-        let enabled = selectionButton.state != .on
-        selectionButton.state = enabled ? .on : .off
-        onSelectionScopeChange?(enabled)
-    }
-
     func performCopyMatchCommandOutput() {
         guard copyOutputButton.isEnabled else { return }
         onCopyMatchCommandOutput?()
@@ -247,8 +234,13 @@ final class TerminalSearchBarView: NSVisualEffectView, NSSearchFieldDelegate {
         ])
     }
 
-    @objc private func toggleCaseSensitivity(_ sender: Any?) { toggleCaseSensitivity() }
-    @objc private func toggleSelectionScope(_ sender: Any?) { toggleSelectionScope() }
+    @objc private func toggleCaseSensitivity(_ sender: NSButton) {
+        onCaseSensitivityChange?(sender.state == .on)
+    }
+    @objc private func toggleSelectionScope(_ sender: NSButton) {
+        guard sender.isEnabled else { return }
+        onSelectionScopeChange?(sender.state == .on)
+    }
     @objc private func copyMatchCommandOutput(_ sender: Any?) { performCopyMatchCommandOutput() }
     @objc private func previousResult(_ sender: Any?) { onPrevious?() }
     @objc private func nextResult(_ sender: Any?) { onNext?() }

@@ -22,20 +22,23 @@ struct TerminalSearchBarTests {
         #expect(bar.copyOutputEnabled)
     }
 
-    @Test("大小写按钮把下一状态路由给控制器")
-    func caseButtonRouting() {
+    @Test("大小写按钮真实点击把 AppKit 切换后的状态路由给控制器")
+    func caseButtonRouting() throws {
         let bar = TerminalSearchBarView()
         var states: [Bool] = []
         bar.onCaseSensitivityChange = { states.append($0) }
+        let button = try #require(bar.descendants.compactMap { $0 as? NSButton }.first {
+            $0.toolTip == "区分大小写"
+        })
 
-        bar.toggleCaseSensitivity()
-        bar.toggleCaseSensitivity()
+        button.performClick(nil)
+        button.performClick(nil)
 
         #expect(states == [true, false])
     }
 
     @Test("选区与复制按钮路由搜索动作")
-    func scopeAndCopyButtonRouting() {
+    func scopeAndCopyButtonRouting() throws {
         let bar = TerminalSearchBarView()
         var scopeStates: [Bool] = []
         var copyCount = 0
@@ -48,8 +51,11 @@ struct TerminalSearchBarTests {
             copyOutputAvailable: true
         )
 
-        bar.toggleSelectionScope()
-        bar.toggleSelectionScope()
+        let selectionButton = try #require(bar.descendants.compactMap { $0 as? NSButton }.first {
+            $0.toolTip == "仅搜索选区"
+        })
+        selectionButton.performClick(nil)
+        selectionButton.performClick(nil)
         bar.performCopyMatchCommandOutput()
 
         #expect(scopeStates == [true, false])
@@ -85,5 +91,11 @@ struct TerminalSearchBarTests {
         #expect(bar.handleCommand(#selector(NSResponder.cancelOperation(_:)), shiftPressed: false))
 
         #expect(actions == ["next", "previous", "next", "previous", "close"])
+    }
+}
+
+private extension NSView {
+    var descendants: [NSView] {
+        subviews + subviews.flatMap(\.descendants)
     }
 }

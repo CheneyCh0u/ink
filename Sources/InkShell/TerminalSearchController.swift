@@ -186,6 +186,33 @@ final class TerminalSearchController {
         }
     }
 
+    /// scrollback 基址整体归零后，旧 snapshot 的坐标不再可增量复用。
+    /// 保留查询与搜索栏，但推进代次、取消旧扫描并从清理后的快照重建索引。
+    func terminalHistoryDidClear() {
+        let terminal = terminalProvider()
+        updateGeneration &+= 1
+        updateTask?.cancel()
+        updateTask = nil
+        refreshScheduled = false
+        refreshRequestedWhileSearching = false
+        index.clear()
+        currentIndex = nil
+        resultCoordinateSpace = nil
+        if selectionOnly { invalidateSelectionScope() }
+        publish(reveal: false, terminal: terminal)
+        guard !query.isEmpty,
+              let options = resolvedOptions(in: terminal) else { return }
+        startBackgroundUpdate(
+            terminal: terminal.snapshotForSearch(),
+            startingIndex: TerminalSearchIndex(),
+            query: query,
+            options: options,
+            chooseNearest: true,
+            reveal: true,
+            debounce: false
+        )
+    }
+
     func selectNext() {
         guard !matches.isEmpty else { return }
         currentIndex = ((currentIndex ?? -1) + 1) % matches.count
