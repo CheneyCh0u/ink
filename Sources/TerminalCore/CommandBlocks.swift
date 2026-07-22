@@ -13,10 +13,16 @@ public struct SemanticTextRange: Sendable, Equatable {
 public struct CommandBlock: Sendable, Equatable {
     public let commandRange: SemanticTextRange
     public let outputRange: SemanticTextRange?
+    public let completion: CommandCompletion?
 
-    public init(commandRange: SemanticTextRange, outputRange: SemanticTextRange?) {
+    public init(
+        commandRange: SemanticTextRange,
+        outputRange: SemanticTextRange?,
+        completion: CommandCompletion? = nil
+    ) {
         self.commandRange = commandRange
         self.outputRange = outputRange
+        self.completion = completion
     }
 }
 
@@ -38,6 +44,18 @@ extension Terminal {
             guard line < totalLines else { continue }
             overflowByLine[line, default: []].append(transition)
         }
+        var completionsByLine: [Int: [CommandCompletionRecord]] = [:]
+        for record in liveCommandCompletionRecords where record.lineID >= oldestLineID {
+            let line = Int(record.lineID - oldestLineID)
+            guard line < totalLines else { continue }
+            completionsByLine[line, default: []].append(record)
+        }
+
+        func completion(at position: TextPosition) -> CommandCompletion? {
+            completionsByLine[position.line]?
+                .last(where: { Int($0.column) == position.column })?
+                .completion
+        }
 
         func consume(_ mark: SemanticMark, at position: TextPosition) {
             switch mark {
@@ -45,7 +63,8 @@ extension Terminal {
                 if let command = completedCommand, let outputStart {
                     blocks.append(CommandBlock(
                         commandRange: command,
-                        outputRange: SemanticTextRange(start: outputStart, end: position)
+                        outputRange: SemanticTextRange(start: outputStart, end: position),
+                        completion: nil
                     ))
                 }
                 commandStart = position
@@ -62,7 +81,8 @@ extension Terminal {
                 if let command = completedCommand, let outputStart, outputStart <= position {
                     blocks.append(CommandBlock(
                         commandRange: command,
-                        outputRange: SemanticTextRange(start: outputStart, end: position)
+                        outputRange: SemanticTextRange(start: outputStart, end: position),
+                        completion: nil
                     ))
                 }
                 commandStart = nil
@@ -73,7 +93,8 @@ extension Terminal {
                 if let command = completedCommand, let outputStart, outputStart <= position {
                     blocks.append(CommandBlock(
                         commandRange: command,
-                        outputRange: SemanticTextRange(start: outputStart, end: position)
+                        outputRange: SemanticTextRange(start: outputStart, end: position),
+                        completion: completion(at: position)
                     ))
                 }
                 commandStart = nil

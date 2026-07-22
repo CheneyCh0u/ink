@@ -67,4 +67,36 @@ struct CommandStatusTests {
         #expect(MemoryLayout<Cell>.stride == 8)
         #expect(MemoryLayout<RowInfo>.stride == 2)
     }
+
+    @Test("scrollback 淘汰与 ED 2/3 只回收对应完成记录")
+    func completionRecordLifecycle() {
+        var (parser, terminal) = makeTerminal(columns: 20, rows: 2, scrollback: 2)
+        for index in 0..<8 {
+            feed(
+                "\u{1B}]133;B\u{07}c\(index)\u{1B}]133;C\u{07}o"
+                    + "\u{1B}]133;D;0\u{07}\r\n",
+                &parser,
+                &terminal
+            )
+        }
+        #expect(terminal.commandCompletionRecordCount <= terminal.totalLines)
+        #expect(terminal.commandBlocks().count <= 3)
+
+        terminal.csiDispatch(
+            prefix: 0,
+            params: [2][...],
+            intermediates: [],
+            final: UInt8(ascii: "J")
+        )
+        #expect(terminal.commandBlocks().allSatisfy {
+            $0.commandRange.end.line < terminal.scrollback.count
+        })
+        terminal.csiDispatch(
+            prefix: 0,
+            params: [3][...],
+            intermediates: [],
+            final: UInt8(ascii: "J")
+        )
+        #expect(terminal.commandCompletionRecordCount == 0)
+    }
 }

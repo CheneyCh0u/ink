@@ -3,6 +3,30 @@ import Testing
 
 @Suite("OSC 133 命令块")
 struct CommandBlockTests {
+    @Test("命令块携带退出状态与耗时且 reflow 后不变")
+    func completionSurvivesReflow() throws {
+        var (parser, terminal) = makeTerminal(columns: 20, rows: 5)
+        feed(
+            "\u{1B}]133;A\u{07}$ \u{1B}]133;B\u{07}build\r\n",
+            &parser,
+            &terminal
+        )
+        let clock = ContinuousClock()
+        let start = clock.now
+        terminal.handleOSC133(ArraySlice("C".utf8), now: start)
+        feed("long output", &parser, &terminal)
+        terminal.handleOSC133(
+            ArraySlice("D;3".utf8),
+            now: start.advanced(by: .seconds(61))
+        )
+
+        let before = try #require(terminal.commandBlocks().first?.completion)
+        terminal.resize(to: .init(columns: 6, rows: 8))
+        let after = try #require(terminal.commandBlocks().first?.completion)
+        #expect(before == .init(exitStatus: 3, duration: .seconds(61)))
+        #expect(after == before)
+    }
+
     @Test("命令排除提示符，输出排除下一提示符")
     func extractsCommandAndOutput() {
         var (parser, term) = makeTerminal(columns: 30, rows: 5)

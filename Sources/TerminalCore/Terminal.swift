@@ -163,6 +163,7 @@ public struct Terminal: Sendable {
         let oldGrid = grid
         let oldSb = scrollback
         let oldOverflow = semanticOverflowTransitions[semanticOverflowStart...]
+        let oldCompletions = liveCommandCompletionRecords
         let sbCount = oldSb.count
         let totalRows = sbCount + oldGrid.size.rows
         let cursorAbs = sbCount + oldGrid.cursorRow
@@ -176,6 +177,7 @@ public struct Terminal: Sendable {
         var emitted = 0
         var newCursor: (abs: Int, col: Int)?
         var newOverflow: [SemanticOverflowTransition] = []
+        var newCompletions = ContiguousArray<CommandCompletionRecord>()
 
         let oldestOldLineID = oldSb.totalAppendedLines - UInt64(oldSb.count)
         var hyperlinkHeadMapping: [
@@ -191,6 +193,12 @@ public struct Terminal: Sendable {
             let line = Int(transition.lineID - oldestOldLineID)
             guard line < totalRows else { continue }
             overflowByAbsoluteLine[line, default: []].append(transition)
+        }
+        var completionsByAbsoluteLine: [Int: [CommandCompletionRecord]] = [:]
+        for record in oldCompletions where record.lineID >= oldestOldLineID {
+            let line = Int(record.lineID - oldestOldLineID)
+            guard line < totalRows else { continue }
+            completionsByAbsoluteLine[line, default: []].append(record)
         }
 
         func emitRow(_ cells: [Cell], _ info: RowInfo) {
@@ -301,9 +309,22 @@ public struct Terminal: Sendable {
             transitions.sort {
                 $0.offset == $1.offset ? $0.order < $1.order : $0.offset < $1.offset
             }
+            var completions: [(offset: Int, record: CommandCompletionRecord)] = []
+            sourceOffset = 0
+            scan = abs
+            while scan < next {
+                let (rowCells, _) = sourceRow(scan)
+                for record in completionsByAbsoluteLine[scan] ?? [] {
+                    completions.append((sourceOffset + Int(record.column), record))
+                }
+                sourceOffset += rowCells.count
+                scan += 1
+            }
+            completions.sort { $0.offset < $1.offset }
 
             // 按新宽度切块。
             var transitionIndex = 0
+            var completionIndex = 0
             var semantic = transitions.first?.mark.predecessor ?? headInfo.semanticMark
             var isFirst = true
             var lastChunkStart = 0
@@ -337,6 +358,20 @@ public struct Terminal: Sendable {
                     }
                     semantic = transition.mark
                     transitionIndex += 1
+                }
+                while completionIndex < completions.count {
+                    let item = completions[completionIndex]
+                    let belongsHere = item.offset < end
+                        || (item.offset == end && end == cells.count)
+                    guard belongsHere else { break }
+                    if item.offset >= start {
+                        newCompletions.append(CommandCompletionRecord(
+                            lineID: rowID,
+                            column: item.offset - start,
+                            completion: item.record.completion
+                        ))
+                    }
+                    completionIndex += 1
                 }
                 for transition in rowTransitions.dropLast() {
                     newOverflow.append(SemanticOverflowTransition(
@@ -389,6 +424,10 @@ public struct Terminal: Sendable {
         let firstRetainedID = UInt64(max(0, emitted - retainedRows))
         semanticOverflowTransitions = newOverflow.filter { $0.lineID >= firstRetainedID }
         semanticOverflowStart = 0
+        commandCompletionRecords = ContiguousArray(
+            newCompletions.filter { $0.lineID >= firstRetainedID }
+        )
+        commandCompletionStart = 0
         if var store = hyperlinks {
             let delta = store.remapHeads(hyperlinkHeadMapping ?? [:])
             applyHyperlinkReferenceDelta(delta)
@@ -732,7 +771,7 @@ public struct Terminal: Sendable {
                 )
                 let column = pendingWrap ? grid.size.columns : grid.cursorCol
                 let lineID = scrollback.totalAppendedLines + UInt64(grid.cursorRow)
-                commandCompletionRecords.append(.init(
+                appendCommandCompletion(.init(
                     lineID: lineID,
                     column: column,
                     completion: completion
@@ -767,6 +806,26 @@ public struct Terminal: Sendable {
         guard !pendingEvents.isEmpty else { return [] }
         defer { pendingEvents.removeAll(keepingCapacity: true) }
         return Array(pendingEvents)
+    }
+
+    var liveCommandCompletionRecords: ArraySlice<CommandCompletionRecord> {
+        commandCompletionRecords[commandCompletionStart...]
+    }
+
+    var commandCompletionRecordCount: Int {
+        commandCompletionRecords.count - commandCompletionStart
+    }
+
+    private mutating func appendCommandCompletion(_ record: CommandCompletionRecord) {
+        if commandCompletionStart == commandCompletionRecords.count
+            || commandCompletionRecords.last!.lineID <= record.lineID {
+            commandCompletionRecords.append(record)
+            return
+        }
+        let index = commandCompletionRecords[commandCompletionStart...].firstIndex {
+            $0.lineID > record.lineID
+        } ?? commandCompletionRecords.endIndex
+        commandCompletionRecords.insert(record, at: index)
     }
 
     // MARK: - 行为
@@ -1090,6 +1149,9 @@ public struct Terminal: Sendable {
             if semanticOverflowStart < semanticOverflowTransitions.count {
                 pruneSemanticOverflow()
             }
+            if commandCompletionStart < commandCompletionRecords.count {
+                pruneCommandCompletions()
+            }
             pruneHyperlinks()
         } else {
             let top = scrollTop
@@ -1193,6 +1255,19 @@ public struct Terminal: Sendable {
         }
     }
 
+    private mutating func pruneCommandCompletions() {
+        let oldestLineID = scrollback.totalAppendedLines - UInt64(scrollback.count)
+        while commandCompletionStart < commandCompletionRecords.count,
+              commandCompletionRecords[commandCompletionStart].lineID < oldestLineID {
+            commandCompletionStart += 1
+        }
+        if commandCompletionStart >= 256,
+           commandCompletionStart * 2 >= commandCompletionRecords.count {
+            commandCompletionRecords.removeFirst(commandCompletionStart)
+            commandCompletionStart = 0
+        }
+    }
+
     // MARK: - 擦除与编辑
 
     private mutating func eraseDisplay(mode: Int) {
@@ -1218,6 +1293,10 @@ public struct Terminal: Sendable {
             semanticOverflowTransitions = semanticOverflowTransitions[semanticOverflowStart...]
                 .filter { $0.lineID < gridBase }
             semanticOverflowStart = 0
+            commandCompletionRecords = ContiguousArray(
+                liveCommandCompletionRecords.filter { $0.lineID < gridBase }
+            )
+            commandCompletionStart = 0
         case 3:
             let screenFragments = hyperlinkFragments(in: 0...(grid.size.rows - 1))
             removeCurrentHyperlinks()
@@ -1232,6 +1311,17 @@ public struct Terminal: Sendable {
                 )
             }
             semanticOverflowStart = 0
+            commandCompletionRecords = ContiguousArray(
+                liveCommandCompletionRecords.compactMap { record in
+                    guard record.lineID >= gridBase else { return nil }
+                    return CommandCompletionRecord(
+                        lineID: record.lineID - gridBase,
+                        column: Int(record.column),
+                        completion: record.completion
+                    )
+                }
+            )
+            commandCompletionStart = 0
             scrollback.removeAll() // xterm 扩展：连历史一起清
             for fragment in screenFragments { insertHyperlinkFragment(fragment) }
             searchLayoutRevision &+= 1
