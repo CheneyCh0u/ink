@@ -66,6 +66,15 @@ indirect enum PaneLayout: Equatable, Sendable {
         }
     }
 
+    var paneIDs: [PaneID] {
+        switch self {
+        case let .leaf(paneID):
+            [paneID]
+        case let .group(_, _, _, children):
+            children.flatMap(\.paneIDs)
+        }
+    }
+
     func contains(_ paneID: PaneID) -> Bool {
         switch self {
         case let .leaf(candidate):

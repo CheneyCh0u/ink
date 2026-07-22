@@ -25,6 +25,24 @@ final class TerminalTab {
         activePaneID = initialPane.id
     }
 
+    /// 快照恢复必须一次性提供完整布局，不能把半棵树带进运行态。
+    init?(
+        restoredLayout: PaneLayout,
+        panes: [PaneID: TerminalPane],
+        activePaneID: PaneID,
+        customName: String?
+    ) {
+        let paneIDs = restoredLayout.paneIDs
+        guard !paneIDs.isEmpty,
+              Set(paneIDs).count == paneIDs.count,
+              Set(paneIDs) == Set(panes.keys),
+              panes[activePaneID] != nil else { return nil }
+        layout = restoredLayout
+        self.panes = panes
+        self.activePaneID = activePaneID
+        self.customName = customName
+    }
+
     var paneCount: Int { panes.count }
 
     var activePane: TerminalPane? { panes[activePaneID] }
