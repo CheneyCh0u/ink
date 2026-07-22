@@ -1,8 +1,33 @@
+import Foundation
 import Testing
 @testable import InkConfig
 
 @Suite("快捷键配置")
 struct KeyBindingTests {
+    @Test("快捷键 TOML 缺省、覆盖、禁用与非法项往返")
+    func keyBindingTOMLRoundTrip() throws {
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ink-keybindings-\(UUID().uuidString).toml")
+        defer { try? FileManager.default.removeItem(at: file) }
+        try """
+        [keybindings]
+        new_tab = "ctrl+shift+t"
+        split_left = "cmd+ctrl+left"
+        split_right = ""
+        find = "cmd+q"
+        """.write(to: file, atomically: true, encoding: .utf8)
+
+        let loaded = InkConfig.load(from: file)
+        #expect(loaded.keyBindings.binding(for: .newTab)?.serialized == "ctrl+shift+t")
+        #expect(loaded.keyBindings.assignment(for: .splitRight) == .disabled)
+        #expect(loaded.keyBindings.binding(for: .find) == KeyBindingSet.defaults.binding(for: .find))
+        #expect(loaded.keyBindingIssues[.find] != nil)
+
+        try loaded.save(to: file)
+        let reloaded = InkConfig.load(from: file)
+        #expect(reloaded.keyBindings == loaded.keyBindings)
+    }
+
     @Test("默认 action 完整且非空绑定唯一")
     func defaultsAreCompleteAndUnique() {
         let defaults = KeyBindingSet.defaults

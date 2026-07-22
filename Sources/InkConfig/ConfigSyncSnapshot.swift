@@ -81,6 +81,7 @@ private struct WireConfig: Codable {
     let copyOnSelect: Bool
     let osc52WriteEnabled: Bool?
     let scrollbackLines: Int
+    let keyBindings: [String: String]?
 
     init(config: InkConfig) {
         appearanceMode = config.appearanceMode.rawValue
@@ -101,6 +102,7 @@ private struct WireConfig: Codable {
         copyOnSelect = config.copyOnSelect
         osc52WriteEnabled = config.osc52WriteEnabled
         scrollbackLines = config.scrollbackLines
+        keyBindings = config.keyBindings.serializedValues()
     }
 
     func validatedConfig() throws -> InkConfig {
@@ -137,6 +139,7 @@ private struct WireConfig: Codable {
         result.copyOnSelect = copyOnSelect
         result.osc52WriteEnabled = osc52WriteEnabled ?? true
         result.scrollbackLines = scrollbackLines
+        result.applyKeyBindingValues(keyBindings ?? [:])
         return result
     }
 }

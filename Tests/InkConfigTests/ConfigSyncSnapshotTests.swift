@@ -38,6 +38,29 @@ struct ConfigSyncSnapshotTests {
         #expect(object["config"] != nil)
     }
 
+    @Test("schema 1 兼容旧快照并往返快捷键")
+    func migratesMissingKeyBindingsAndRoundTripsOverrides() throws {
+        let legacy = try snapshotJSON { root in
+            var config = try #require(root["config"] as? [String: Any])
+            config.removeValue(forKey: "keyBindings")
+            root["config"] = config
+        }
+        #expect(try ConfigSyncSnapshot.decode(legacy).config.keyBindings == .defaults)
+
+        var config = completeConfig()
+        _ = config.setKeyBinding(
+            .binding(try #require(KeyBinding.parse("ctrl+shift+t"))),
+            for: .newTab
+        )
+        _ = config.setKeyBinding(.disabled, for: .splitRight)
+        let snapshot = ConfigSyncSnapshot(
+            config: config,
+            modifiedAt: Date(timeIntervalSince1970: 1_785_000_000),
+            deviceID: "mac-a"
+        )
+        #expect(try ConfigSyncSnapshot.decode(snapshot.encoded()).config == config)
+    }
+
     @Test("拒绝当前 Ink 不认识的新版 schema")
     func rejectsNewerSchema() throws {
         let data = try snapshotJSON { root in
