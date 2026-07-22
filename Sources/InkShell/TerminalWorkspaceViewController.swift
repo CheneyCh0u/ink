@@ -256,6 +256,9 @@ final class TerminalWorkspaceViewController: NSViewController {
                 session?.resize(to: size)
             }
             terminalView.onFocus = { [weak self] in self?.activate(paneID) }
+            terminalView.onOpenLink = { url in
+                NSWorkspace.shared.open(url)
+            }
             let container = TerminalPaneContainerView(paneID: paneID, terminalView: terminalView)
             paneContainers[paneID] = container
             return container
@@ -283,6 +286,7 @@ final class TerminalWorkspaceViewController: NSViewController {
             terminalView.onGridResize = nil
             terminalView.terminalProvider = nil
             terminalView.onFocus = nil
+            terminalView.onOpenLink = nil
         }
         paneContainers.removeAll()
         NSLayoutConstraint.deactivate(rootConstraints)

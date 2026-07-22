@@ -55,6 +55,46 @@ private struct SpanSearchHighlightLookup: SearchHighlightLookup {
     }
 }
 
+private protocol LinkHighlightLookup {
+    mutating func beginRow(_ visualRow: Int)
+    mutating func contains(column: Int) -> Bool
+}
+
+private struct NoLinkHighlightLookup: LinkHighlightLookup {
+    @inline(__always) mutating func beginRow(_ visualRow: Int) {}
+    @inline(__always) mutating func contains(column: Int) -> Bool { false }
+}
+
+private struct SpanLinkHighlightLookup: LinkHighlightLookup {
+    let spans: [TerminalLinkHighlightSpan]
+    private var visualRow = 0
+    private var cursor = 0
+
+    init(spans: [TerminalLinkHighlightSpan]) {
+        self.spans = spans
+    }
+
+    @inline(__always)
+    mutating func beginRow(_ visualRow: Int) {
+        self.visualRow = visualRow
+        while cursor < spans.count, spans[cursor].visualRow < visualRow {
+            cursor += 1
+        }
+    }
+
+    @inline(__always)
+    mutating func contains(column: Int) -> Bool {
+        while cursor < spans.count,
+              spans[cursor].visualRow == visualRow,
+              spans[cursor].columns.upperBound < column {
+            cursor += 1
+        }
+        return cursor < spans.count
+            && spans[cursor].visualRow == visualRow
+            && spans[cursor].columns.contains(column)
+    }
+}
+
 /// Metal 在驱动自己的 completion queue 上调用完成回调，不能继承
 /// `TerminalRenderer` 的 MainActor 隔离。
 enum MetalCommandCompletion {
@@ -221,6 +261,7 @@ final class TerminalRenderer {
         scrollOffset: Int = 0,
         selection: SelectionRange? = nil,
         searchHighlights: [TerminalSearchHighlightSpan] = [],
+        hoveredLinkRange: SemanticTextRange? = nil,
         preedit: String? = nil
     ) {
         let grid = terminal.grid
@@ -232,10 +273,19 @@ final class TerminalRenderer {
         bufferIndex = (bufferIndex + 1) % instanceBuffers.count
         let buffer = instanceBuffers[bufferIndex]
 
+        let linkHighlights = TerminalLinkHighlights.project(
+            range: hoveredLinkRange,
+            scrollbackCount: terminal.scrollback.count,
+            gridRows: grid.size.rows,
+            scrollOffset: scrollOffset,
+            columns: grid.size.columns
+        )
+
         var count = buildInstances(
             terminal: terminal, cursorOn: cursorOn && preedit == nil,
             scrollOffset: scrollOffset, selection: selection?.normalized,
             searchHighlights: searchHighlights,
+            linkHighlights: linkHighlights,
             into: buffer
         )
         if let preedit, !preedit.isEmpty, scrollOffset == 0 {
@@ -308,35 +358,56 @@ final class TerminalRenderer {
         terminal: Terminal, cursorOn: Bool,
         scrollOffset: Int, selection: SelectionRange?,
         searchHighlights: [TerminalSearchHighlightSpan],
+        linkHighlights: [TerminalLinkHighlightSpan],
         into buffer: MTLBuffer
     ) -> Int {
         if searchHighlights.isEmpty {
-            var lookup = NoSearchHighlightLookup()
+            var searchLookup = NoSearchHighlightLookup()
+            if linkHighlights.isEmpty {
+                var linkLookup = NoLinkHighlightLookup()
+                return buildInstances(
+                    terminal: terminal, cursorOn: cursorOn,
+                    scrollOffset: scrollOffset, selection: selection,
+                    searchLookup: &searchLookup, linkLookup: &linkLookup,
+                    into: buffer
+                )
+            }
+            var linkLookup = SpanLinkHighlightLookup(spans: linkHighlights)
             return buildInstances(
-                terminal: terminal,
-                cursorOn: cursorOn,
-                scrollOffset: scrollOffset,
-                selection: selection,
-                searchLookup: &lookup,
+                terminal: terminal, cursorOn: cursorOn,
+                scrollOffset: scrollOffset, selection: selection,
+                searchLookup: &searchLookup, linkLookup: &linkLookup,
                 into: buffer
             )
         }
-        var lookup = SpanSearchHighlightLookup(spans: searchHighlights)
+        var searchLookup = SpanSearchHighlightLookup(spans: searchHighlights)
+        if linkHighlights.isEmpty {
+            var linkLookup = NoLinkHighlightLookup()
+            return buildInstances(
+                terminal: terminal, cursorOn: cursorOn,
+                scrollOffset: scrollOffset, selection: selection,
+                searchLookup: &searchLookup, linkLookup: &linkLookup,
+                into: buffer
+            )
+        }
+        var linkLookup = SpanLinkHighlightLookup(spans: linkHighlights)
         return buildInstances(
-            terminal: terminal,
-            cursorOn: cursorOn,
-            scrollOffset: scrollOffset,
-            selection: selection,
-            searchLookup: &lookup,
+            terminal: terminal, cursorOn: cursorOn,
+            scrollOffset: scrollOffset, selection: selection,
+            searchLookup: &searchLookup, linkLookup: &linkLookup,
             into: buffer
         )
     }
 
-    /// 泛型 lookup 让 Release 编译器为无搜索状态生成不含搜索判断的专用循环。
-    private func buildInstances<Lookup: SearchHighlightLookup>(
+    /// 泛型 lookup 让 Release 编译器为无搜索、无链接状态生成专用循环。
+    private func buildInstances<
+        SearchLookup: SearchHighlightLookup,
+        LinkLookup: LinkHighlightLookup
+    >(
         terminal: Terminal, cursorOn: Bool,
         scrollOffset: Int, selection: SelectionRange?,
-        searchLookup: inout Lookup,
+        searchLookup: inout SearchLookup,
+        linkLookup: inout LinkLookup,
         into buffer: MTLBuffer
     ) -> Int {
         let grid = terminal.grid
@@ -354,6 +425,7 @@ final class TerminalRenderer {
 
         for visualRow in 0..<rows {
             searchLookup.beginRow(visualRow)
+            linkLookup.beginRow(visualRow)
             let absLine = sbCount - offset + visualRow
             let fromScrollback = visualRow < offset
             let gridRow = visualRow - offset
@@ -374,6 +446,7 @@ final class TerminalRenderer {
                     && (col == cursorCol || (col == cursorCol - 1 && attr & Cell.Attr.wideLeading != 0))
                 let isSelected = selection?.contains(line: absLine, column: col) ?? false
                 let searchKind = searchLookup.kind(column: col, isSelected: isSelected)
+                let isHoveredLink = linkLookup.contains(column: col)
 
                 var (fg, bg) = resolve(attr: attr, colorTable: terminal.colorTable)
                 switch searchKind {
@@ -400,6 +473,7 @@ final class TerminalRenderer {
                 // 纯空白 + 默认背景 + 非光标非选中：不发实例。
                 if !hasGlyph, decorations == 0, !isCursorCell, !isSelected,
                    searchKind == .none,
+                   !isHoveredLink,
                    Cell.Attr.background(of: attr) == Cell.Attr.colorDefault,
                    attr & Cell.Attr.inverse == 0 {
                     continue
@@ -409,6 +483,7 @@ final class TerminalRenderer {
                 var uv = SIMD4<Float>.zero
                 if attr & Cell.Attr.wideLeading != 0 { flags |= CellInstance.wide }
                 if decorations & Cell.Attr.underline != 0 { flags |= CellInstance.underline }
+                if isHoveredLink { flags |= CellInstance.underline }
                 if decorations & Cell.Attr.strikethrough != 0 { flags |= CellInstance.strikethrough }
                 if isCursorCell {
                     if cursorStyle == .bar { flags |= CellInstance.cursorBar }

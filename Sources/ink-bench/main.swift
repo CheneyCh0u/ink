@@ -25,6 +25,81 @@ func mb(_ bytes: Int) -> String {
     String(format: "%.1f MB", Double(bytes) / 1024 / 1024)
 }
 
+enum LinkProfile: String {
+    case plain
+    case sparseOSC8 = "sparse-osc8"
+    case denseOSC8 = "dense-osc8"
+    case alternatingOSC8 = "alternating-osc8"
+    case denseUniqueOSC8 = "dense-unique-osc8"
+    case fragmentedOSC8 = "fragmented-osc8"
+}
+
+if let linkProfile = CommandLine.arguments.dropFirst().first
+    .flatMap(LinkProfile.init(rawValue:)) {
+    let profileLineCount = 1_000_000
+    let visibleText = String(repeating: "x", count: 80)
+    let plainBytes = Array("\(visibleText)\r\n".utf8)
+    var parser = Parser()
+    var terminal = Terminal(
+        size: TerminalSize(columns: 120, rows: 50),
+        scrollbackCapacity: 100_000
+    )
+    var totalBytes = 0
+    let before = footprintBytes()
+    let clock = ContinuousClock()
+    let elapsed = clock.measure {
+        for line in 0..<profileLineCount {
+            let emitsLink: Bool
+            switch linkProfile {
+            case .plain:
+                emitsLink = false
+            case .sparseOSC8:
+                emitsLink = line % 1_000 == 0
+            case .denseOSC8, .denseUniqueOSC8, .fragmentedOSC8:
+                emitsLink = true
+            case .alternatingOSC8:
+                emitsLink = line.isMultiple(of: 2)
+            }
+            if emitsLink {
+                let target: String
+                switch linkProfile {
+                case .denseOSC8, .alternatingOSC8:
+                    target = "https://example.test/dense"
+                case .sparseOSC8, .denseUniqueOSC8:
+                    target = String(format: "https://example.test/%08d", line)
+                case .fragmentedOSC8:
+                    target = line.isMultiple(of: 2)
+                        ? "https://example.test/a"
+                        : "https://example.test/b"
+                case .plain:
+                    preconditionFailure("plain profile 不应生成链接")
+                }
+                let linkedText = linkProfile == .fragmentedOSC8 ? "x" : visibleText
+                let terminator = linkProfile == .fragmentedOSC8 ? "" : "\r\n"
+                let bytes = Array(
+                    "\u{1B}]8;;\(target)\u{07}\(linkedText)\u{1B}]8;;\u{07}\(terminator)".utf8
+                )
+                totalBytes += bytes.count
+                parser.feed(bytes, handler: &terminal)
+            } else {
+                totalBytes += plainBytes.count
+                parser.feed(plainBytes, handler: &terminal)
+            }
+        }
+    }
+    let after = footprintBytes()
+    let seconds = Double(elapsed.components.seconds)
+        + Double(elapsed.components.attoseconds) / 1e18
+    let throughput = Double(totalBytes) / seconds / 1024 / 1024
+    print("链接旁路 profile: \(linkProfile.rawValue)")
+    print("  行数 \(profileLineCount)  字节 \(totalBytes)")
+    print("  耗时 \(elapsed)")
+    print("  吞吐 \(String(format: "%.1f", throughput)) MB/s")
+    print("  footprint 增量 \(mb(after - before))")
+    print("  scrollback \(terminal.scrollback.count) 行")
+    exit(EXIT_SUCCESS)
+}
+
 let lineCount = 100_000
 let columns = 200
 

@@ -54,7 +54,7 @@ final class TerminalSearchController {
             return
         }
 
-        let terminal = terminalProvider()
+        let terminal = terminalProvider().snapshotForSearch()
         index.clear()
         currentIndex = nil
         publish(reveal: false)
@@ -74,7 +74,7 @@ final class TerminalSearchController {
             refreshRequestedWhileSearching = true
             return
         }
-        let terminal = terminalProvider()
+        let terminal = terminalProvider().snapshotForSearch()
         if !index.requiresBackgroundUpdate(in: terminal, query: query) {
             let previousMatch = currentMatch
             let previousIndex = currentIndex
