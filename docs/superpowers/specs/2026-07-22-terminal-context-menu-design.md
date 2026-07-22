@@ -317,4 +317,3 @@ GREEN。
 - [ ] 旧搜索 generation 永不回写，当前 query 自动重启。
 - [ ] 视图滚动、选区、命令锚点和 hover 全部重置。
 - [ ] 无 cell/line 状态、第三方依赖或 Metal 热路径改动。
-

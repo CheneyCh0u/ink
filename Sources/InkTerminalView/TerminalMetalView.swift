@@ -814,7 +814,6 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
             mouseReporting: mouseReporting,
             optionHeld: event.modifierFlags.contains(.option)
         )
-        rightMouseReportsToTUI = false
         rightMouseReportsToTUI = action == .reportToTUI
         if rightMouseReportsToTUI {
             _ = reportMouse(event, action: .press, button: 2)

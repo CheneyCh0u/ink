@@ -33,6 +33,10 @@ struct TerminalLinkInteractionTests {
         ])
         #expect(shownMenu?.items.first { $0.action == #selector(TerminalMetalView.copy(_:)) }?.isEnabled == false)
         #expect(shownMenu?.items.first { $0.action == #selector(TerminalMetalView.paste(_:)) }?.isEnabled == true)
+        #expect(shownMenu?.items.first { $0.title == "向左分屏" }?.isEnabled == true)
+        #expect(shownMenu?.items.first { $0.title == "向右分屏" }?.isEnabled == true)
+        #expect(shownMenu?.items.first { $0.title == "向上分屏" }?.isEnabled == false)
+        #expect(shownMenu?.items.first { $0.title == "向下分屏" }?.isEnabled == false)
     }
 
     @Test("剪贴板没有非空文本时禁用粘贴")

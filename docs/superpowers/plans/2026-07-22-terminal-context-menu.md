@@ -687,4 +687,3 @@ Run: `git status --short --branch`
 Expected: 分支为 `agent/issue-78-terminal-context-menu`，工作树干净。不要 push、
 不要创建 PR、不要 merge、不要运行完整测试或构建；把报告路径与 focused test 摘要
 交给 root agent。
-
