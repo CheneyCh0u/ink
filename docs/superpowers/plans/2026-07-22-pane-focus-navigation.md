@@ -199,7 +199,10 @@ func neighbor(of paneID: PaneID, direction: PaneSplitDirection) -> PaneID? {
     var best: (entry: PaneNavigationEntry, score: PaneNavigationScore)?
     for candidate in entries where candidate.paneID != paneID {
         guard let score = Self.navigationScore(
-            from: active.rect, to: candidate.rect, direction: direction
+            from: active.rect,
+            to: candidate.rect,
+            candidateOrdinal: candidate.ordinal,
+            direction: direction
         ) else { continue }
         if best == nil || score.isBetter(than: best!.score) {
             best = (candidate, score)
@@ -262,6 +265,7 @@ private static func navigationWeights(
 private static func navigationScore(
     from active: PaneNormalizedRect,
     to candidate: PaneNormalizedRect,
+    candidateOrdinal: Int,
     direction: PaneSplitDirection
 ) -> PaneNavigationScore? {
     let epsilon = 1e-9
@@ -291,7 +295,7 @@ private static func navigationScore(
     return PaneNavigationScore(
         axialGap: axialGap,
         perpendicularCenterGap: centerGap,
-        ordinal: candidate.ordinal
+        ordinal: candidateOrdinal
     )
 }
 ```
