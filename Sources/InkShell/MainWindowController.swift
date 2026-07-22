@@ -54,6 +54,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
     private var isSettingsViewInstalled = false
     private var splitShortcutState = SplitShortcutState()
     private var splitShortcutMonitor: Any?
+    private var isClosingWorkspace = false
 
     private var activeProject: Project? {
         projects.indices.contains(activeProjectIndex) ? projects[activeProjectIndex] : nil
@@ -174,6 +175,16 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
             activeProject?.displayName,
             defaults: projectDefaults
         )
+        workspaceDidChange()
+    }
+
+    private func workspaceDidChange() {
+        guard !isClosingWorkspace else { return }
+        workspaceSaveScheduler.schedule(currentWorkspaceSnapshot)
+    }
+
+    private func flushWorkspace() {
+        workspaceSaveScheduler.flush(currentWorkspaceSnapshot)
     }
 
     private func restoreWorkspace(from snapshot: WorkspaceSnapshot) {
@@ -300,6 +311,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
             guard let self, let project = self.activeProject,
                   project.tabs.indices.contains(index) else { return }
             project.tabs[index].customName = name
+            self.workspaceDidChange()
             self.refreshChrome()
         }
         tabBar.onNewTab = { [weak self] in self?.newSession(nil) }
@@ -338,7 +350,13 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         configSyncService.onStatusChange = { [weak self] _ in
             self?.updateConfigSyncControls()
         }
-        workspaceVC.onActivatePane = { [weak self] _ in self?.refreshChrome() }
+        workspaceVC.onActivatePane = { [weak self] _ in
+            self?.workspaceDidChange()
+            self?.refreshChrome()
+        }
+        workspaceVC.onWeightsChange = { [weak self] _, _ in
+            self?.workspaceDidChange()
+        }
 
         if activeProject?.tabs.isEmpty ?? true, !firstSessionScheduled {
             firstSessionScheduled = true
@@ -629,7 +647,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         }
     }
 
-    private func selectProject(at index: Int) {
+    func selectProject(at index: Int) {
         guard projects.indices.contains(index) else { return }
         hideSettings()
         activeProjectIndex = index
@@ -750,6 +768,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
               ) else { return }
         project.tabs.append(TerminalTab(initialPane: pane))
         project.activeTabIndex = project.tabs.count - 1
+        workspaceDidChange()
         attachActiveTab()
         refreshChrome()
     }
@@ -789,6 +808,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
             guard let self, let tab, let removed = tab.removePane(paneID) else { return }
             removed.session.detach()
             removed.session.terminate()
+            self.workspaceDidChange()
             self.attachActiveTab()
             self.refreshChrome()
         }
@@ -845,6 +865,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
             pane.session.terminate()
             return
         }
+        workspaceDidChange()
         attachActiveTab()
         refreshChrome()
     }
@@ -953,6 +974,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
             where tab.panes[paneID] != nil {
                 if tab.paneCount > 1, let pane = tab.removePane(paneID) {
                     pane.session.detach()
+                    workspaceDidChange()
                     if projectIndex == activeProjectIndex,
                        tabIndex == project.activeTabIndex {
                         attachActiveTab()
@@ -961,6 +983,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
                 } else {
                     tab.activePane?.session.detach()
                     _ = project.removeTab(at: tabIndex)
+                    workspaceDidChange()
                     normalizeAfterTabRemoval()
                 }
                 return
@@ -977,6 +1000,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
                   let currentIndex = project.tabs.firstIndex(where: { $0 === tab }),
                   let removed = project.removeTab(at: currentIndex) else { return }
             self.terminate(tab: removed)
+            self.workspaceDidChange()
             self.normalizeAfterTabRemoval()
         }
     }
@@ -1029,6 +1053,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
            let index = projects.firstIndex(where: { !$0.tabs.isEmpty }) {
             activeProjectIndex = index
         }
+        workspaceDidChange()
         attachActiveTab()
         refreshChrome()
     }
@@ -1037,6 +1062,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         guard let project = activeProject, project.tabs.indices.contains(index) else { return }
         hideSettings()
         project.activeTabIndex = index
+        workspaceDidChange()
         attachActiveTab()
         refreshChrome()
     }
@@ -1135,6 +1161,9 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
     }
 
     public func windowWillClose(_ notification: Notification) {
+        guard !isClosingWorkspace else { return }
+        isClosingWorkspace = true
+        flushWorkspace()
         cancelSplitShortcut()
         workspaceVC.closeSearch(returnFocus: false)
         if let splitShortcutMonitor {

@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import InkConfig
+import InkTerminalView
 import Testing
 import TerminalCore
 @testable import InkShell
@@ -8,6 +9,124 @@ import TerminalCore
 @Suite("主窗口会话布局恢复", .serialized)
 @MainActor
 struct WorkspaceRestoreWindowTests {
+    @Test("连续结构变化合并保存最后状态")
+    func persistsCoalescedStructureChanges() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        fixture.seedWorkspace(tabNames: ["初始"])
+        let controller = fixture.makeController(recorder: PaneRecorder())
+        fixture.controller = controller
+        let contentView = try #require(controller.window?.contentView)
+        let tabBar = try #require(descendants(of: TabBarView.self, in: contentView).first)
+
+        tabBar.onRename?(0, "重命名")
+        controller.newSession(nil)
+        let firstTab = NSMenuItem()
+        firstTab.tag = 0
+        controller.selectSessionMenu(firstTab)
+        controller.splitRight(nil)
+
+        let terminalViews = descendants(of: TerminalMetalView.self, in: contentView)
+        #expect(terminalViews.count == 2)
+        terminalViews[0].onFocus?()
+        let split = try #require(
+            descendants(of: WorkspaceSplitContainerView.self, in: contentView).first
+        )
+        split.onWeightsChange?(split.splitID, [0.3, 0.7])
+        try await Task.sleep(for: .milliseconds(400))
+
+        let saved = try #require(fixture.workspaceStore.load())
+        #expect(saved.projects[0].tabs.map(\.customName) == ["重命名", nil])
+        #expect(saved.projects[0].activeTabIndex == 0)
+        #expect(saved.projects[0].tabs[0].layout.weights == [0.3, 0.7])
+        #expect(saved.projects[0].tabs[0].activePaneID
+                == saved.projects[0].tabs[0].layout.firstLeafID)
+    }
+
+    @Test("关闭 pane 与 shell 退出后保存收拢结果")
+    func persistsRemovalAndExit() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        fixture.seedWorkspace(tabNames: ["保留", "退出"])
+        let controller = fixture.makeController(recorder: PaneRecorder())
+        fixture.controller = controller
+
+        let secondTab = NSMenuItem()
+        secondTab.tag = 1
+        controller.selectSessionMenu(secondTab)
+        controller.splitRight(nil)
+        controller.closeActivePane(nil)
+        #expect(controller.currentWorkspaceSnapshot.projects[0].tabs[1].layout.paneCount == 1)
+
+        controller.allPanes.last?.session.onExit?(0)
+        try await Task.sleep(for: .milliseconds(400))
+
+        let saved = try #require(fixture.workspaceStore.load())
+        #expect(saved.projects[0].tabs.map(\.customName) == ["保留"])
+        #expect(saved.projects[0].activeTabIndex == 0)
+    }
+
+    @Test("切换项目保存活动项目")
+    func persistsActiveProjectSelection() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let second = fixture.root.appendingPathComponent("second-project")
+        try FileManager.default.createDirectory(at: second, withIntermediateDirectories: true)
+        let projects = [
+            Project(directory: fixture.projectDirectory),
+            Project(directory: second),
+        ]
+        ProjectStore.save(projects, defaults: fixture.defaults)
+        let secondPath = (second.path as NSString).abbreviatingWithTildeInPath
+        let snapshot = WorkspaceSnapshot(
+            activeProjectPath: fixture.projectDisplayName,
+            projects: [
+                .init(
+                    path: fixture.projectDisplayName,
+                    activeTabIndex: 0,
+                    tabs: [singleTab(
+                        name: "一",
+                        directory: fixture.projectDirectory.path
+                    )]
+                ),
+                .init(
+                    path: secondPath,
+                    activeTabIndex: 0,
+                    tabs: [singleTab(name: "二", directory: second.path)]
+                ),
+            ]
+        )
+        #expect(fixture.workspaceStore.save(snapshot))
+        let controller = fixture.makeController(recorder: PaneRecorder())
+        fixture.controller = controller
+
+        controller.selectProject(at: 1)
+        try await Task.sleep(for: .milliseconds(400))
+
+        #expect(fixture.workspaceStore.load()?.activeProjectPath == secondPath)
+    }
+
+    @Test("窗口关闭先保存再清空且重复通知不覆盖")
+    func windowCloseFlushesBeforeClearing() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        fixture.seedWorkspace(tabNames: ["一", "二"])
+        let controller = fixture.makeController(recorder: PaneRecorder())
+        fixture.controller = controller
+        let contentView = try #require(controller.window?.contentView)
+        let tabBar = try #require(descendants(of: TabBarView.self, in: contentView).first)
+        tabBar.onRename?(0, "关闭前")
+
+        let notification = Notification(name: NSWindow.willCloseNotification)
+        controller.windowWillClose(notification)
+        controller.windowWillClose(notification)
+
+        let saved = try #require(fixture.workspaceStore.load())
+        #expect(saved.projects[0].tabs.map(\.customName) == ["关闭前", "二"])
+        #expect(saved.projects[0].tabs.count == 2)
+        #expect(controller.allPanes.isEmpty)
+    }
+
     @Test("启动恢复标签、活动位置、目录和全新会话")
     func restoresWorkspaceWithFreshSessions() throws {
         let fixture = try Fixture()
@@ -187,6 +306,14 @@ struct WorkspaceRestoreWindowTests {
             layout: .leaf(paneID: name, workingDirectory: directory)
         )
     }
+
+    private func descendants<T>(of type: T.Type, in view: NSView) -> [T] {
+        view.subviews.flatMap { subview in
+            ((subview as? T).map { [$0] } ?? [])
+                + descendants(of: type, in: subview)
+        }
+    }
+
 }
 
 @MainActor
@@ -250,9 +377,41 @@ private final class Fixture {
         )
     }
 
+    func seedWorkspace(tabNames: [String]) {
+        ProjectStore.save(
+            [Project(directory: projectDirectory)],
+            defaults: defaults
+        )
+        let tabs = tabNames.map { name in
+            WorkspaceSnapshot.Tab(
+                customName: name,
+                activePaneID: name,
+                layout: .leaf(
+                    paneID: name,
+                    workingDirectory: projectDirectory.path
+                )
+            )
+        }
+        _ = workspaceStore.save(WorkspaceSnapshot(
+            activeProjectPath: projectDisplayName,
+            projects: [
+                .init(path: projectDisplayName, activeTabIndex: 0, tabs: tabs),
+            ]
+        ))
+    }
+
     func cleanUp() {
         controller?.window?.close()
         defaults.removePersistentDomain(forName: suiteName)
         try? FileManager.default.removeItem(at: root)
+    }
+}
+
+private extension WorkspaceLayoutNode {
+    var firstLeafID: String? {
+        switch self {
+        case let .leaf(paneID, _): paneID
+        case let .group(_, _, children): children.first?.firstLeafID
+        }
     }
 }
