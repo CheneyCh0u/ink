@@ -79,6 +79,9 @@ public struct Terminal: Sendable {
     var oscAccumulator = OSCAccumulator()
     private var pendingEffect: TerminalEffect?
 
+    private static let maxNotificationTitleBytes = 128
+    private static let maxNotificationBodyBytes = 1024
+
     private var currentAttr = Cell.Attr.default
     /// 延迟折行：写满最后一列后光标停在原地，下一个可打印字符才真正折行。
     /// vttest 会验这个行为，少了它满屏输出会多出空行。
@@ -756,6 +759,8 @@ public struct Terminal: Sendable {
         switch code {
         case 0, 2:
             title = String(decoding: payload, as: UTF8.self)
+        case 9:
+            handleOSC9(payload)
         case 8:
             guard let uriSeparator = payload.firstIndex(of: UInt8(ascii: ";")) else { return }
             let uriBytes = payload[payload.index(after: uriSeparator)...]
@@ -768,8 +773,10 @@ public struct Terminal: Sendable {
             setActiveHyperlink(uri.isEmpty ? nil : uri)
         case 133:
             handleOSC133(payload)
+        case 777:
+            handleOSC777(payload)
         default:
-            break // 尚未实现的通知 OSC 留待后续支持。
+            break // 未支持的 OSC 静默忽略
         }
     }
 
@@ -788,6 +795,59 @@ public struct Terminal: Sendable {
         guard let pendingEffect else { return [] }
         self.pendingEffect = nil
         return [pendingEffect]
+    }
+
+    private mutating func handleOSC9(_ payload: ArraySlice<UInt8>) {
+        guard let body = Self.notificationText(
+            payload,
+            maximumBytes: Self.maxNotificationBodyBytes,
+            requiresVisibleContent: true
+        ) else { return }
+        pendingEvents.append(.notification(.init(title: nil, body: body)))
+    }
+
+    private mutating func handleOSC777(_ payload: ArraySlice<UInt8>) {
+        guard let commandSeparator = payload.firstIndex(of: UInt8(ascii: ";")),
+              payload[..<commandSeparator].elementsEqual("notify".utf8)
+        else { return }
+
+        let fields = payload[payload.index(after: commandSeparator)...]
+        guard let titleSeparator = fields.firstIndex(of: UInt8(ascii: ";")) else { return }
+        let titleBytes = fields[..<titleSeparator]
+        let bodyBytes = fields[fields.index(after: titleSeparator)...]
+        guard let title = Self.notificationText(
+                  titleBytes,
+                  maximumBytes: Self.maxNotificationTitleBytes,
+                  requiresVisibleContent: false
+              ),
+              let body = Self.notificationText(
+                  bodyBytes,
+                  maximumBytes: Self.maxNotificationBodyBytes,
+                  requiresVisibleContent: true
+              )
+        else { return }
+
+        pendingEvents.append(.notification(.init(
+            title: title.isEmpty ? nil : title,
+            body: body
+        )))
+    }
+
+    private static func notificationText(
+        _ bytes: ArraySlice<UInt8>,
+        maximumBytes: Int,
+        requiresVisibleContent: Bool
+    ) -> String? {
+        guard bytes.count <= maximumBytes else { return nil }
+        let text = String(decoding: bytes, as: UTF8.self)
+        guard text.utf8.elementsEqual(bytes),
+              !text.unicodeScalars.contains(where: {
+                  $0.value < 0x20 || (0x7F...0x9F).contains($0.value)
+              }),
+              !requiresVisibleContent
+                  || !text.isEmpty && !text.unicodeScalars.allSatisfy({ $0.properties.isWhitespace })
+        else { return nil }
+        return text
     }
 
     mutating func handleOSC133(

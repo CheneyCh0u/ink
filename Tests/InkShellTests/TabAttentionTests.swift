@@ -51,6 +51,12 @@ struct TabAttentionTests {
         #expect(TabAttention.bell.presentation.symbolName == "bell.fill")
     }
 
+    @Test("主动通知沿用 Bell 等级的安静状态")
+    func explicitNotificationAttention() {
+        let event = TerminalEvent.notification(.init(title: nil, body: "完成"))
+        #expect(TabAttention(event: event) == .bell)
+    }
+
     private func makePane() -> TerminalPane {
         TerminalPane(session: TerminalSession(size: .init(columns: 80, rows: 24)))
     }
