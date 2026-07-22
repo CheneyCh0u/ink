@@ -9,9 +9,18 @@ enum KeyBindingAppKitAdapter {
         if flags.contains(.control) { modifiers.insert(.control) }
         if flags.contains(.option) { modifiers.insert(.option) }
         if flags.contains(.shift) { modifiers.insert(.shift) }
-        guard modifiers.contains(.command) || modifiers.contains(.control),
-              let characters = event.charactersIgnoringModifiers,
-              let key = keyToken(for: characters) else { return nil }
+        guard modifiers.contains(.command) || modifiers.contains(.control) else { return nil }
+        let key: String
+        if event.characters == "+" {
+            // “plus” 表示生成的按键，而非物理键上的 Shift 修饰；否则默认的
+            // cmd+plus 会被录制成无法与菜单 keyEquivalent 对齐的 cmd+shift+plus。
+            key = "plus"
+            modifiers.remove(.shift)
+        } else {
+            guard let characters = event.charactersIgnoringModifiers,
+                  let token = keyToken(for: characters) else { return nil }
+            key = token
+        }
         return KeyBinding(key: key, modifiers: modifiers)
     }
 
@@ -75,6 +84,12 @@ enum KeyBindingAppKitAdapter {
     }
 
     private static func keyToken(for characters: String) -> String? {
+        if characters.count == 1, let value = characters.unicodeScalars.first?.value {
+            if (0xF704...0xF717).contains(value) {
+                return "f\(value - 0xF703)"
+            }
+            if value == 0x7F { return "delete" }
+        }
         if let token = namedKeyEquivalents.first(where: { $0.value == characters })?.key {
             return token
         }

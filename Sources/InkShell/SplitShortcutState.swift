@@ -47,7 +47,7 @@ struct SplitShortcutState {
             return handle(.cancel)
         case let .flagsChanged(modifiers):
             guard let prefix else { return handle(.cancel) }
-            return modifiers.isSuperset(of: prefix.modifiers) ? .passThrough : handle(.cancel)
+            return modifiers == prefix.modifiers ? .passThrough : handle(.cancel)
         case let .keyUp(keyCode):
             guard keyCode == pendingKeyCode else { return .passThrough }
             pendingKeyCode = nil
@@ -60,7 +60,7 @@ struct SplitShortcutState {
             }
             guard phase != .idle,
                   let binding,
-                  binding.modifiers.isSuperset(of: prefix.modifiers),
+                  binding.modifiers == prefix.modifiers,
                   let direction = Self.direction(for: keyCode) else {
                 return .passThrough
             }

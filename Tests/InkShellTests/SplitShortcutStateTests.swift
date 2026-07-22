@@ -91,4 +91,20 @@ struct SplitShortcutStateTests {
         state.updatePrefix(KeyBinding.parse("cmd+d"))
         #expect(state.handleKeyEvent(.keyUp(keyCode: 40)) == .passThrough)
     }
+
+    @Test("前缀后增加额外修饰键会取消待定分屏")
+    func additionalModifierCancelsPendingChord() {
+        var state = SplitShortcutState()
+        #expect(state.handleKeyEvent(
+            .keyDown(keyCode: 2, isRepeat: false, binding: KeyBinding.parse("cmd+d"))
+        ) == .consume)
+
+        #expect(state.handleKeyEvent(
+            .flagsChanged(modifiers: [.command, .shift])
+        ) == .passThrough)
+        #expect(state.handleKeyEvent(
+            .keyDown(keyCode: 123, isRepeat: false, binding: KeyBinding.parse("cmd+shift+left"))
+        ) == .passThrough)
+        #expect(state.handleKeyEvent(.keyUp(keyCode: 2)) == .passThrough)
+    }
 }

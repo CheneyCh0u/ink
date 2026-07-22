@@ -326,6 +326,14 @@ final class SettingsViewController: NSViewController {
             labels.trailingAnchor.constraint(lessThanOrEqualTo: control.leadingAnchor, constant: -InkDesignTokens.Spacing.md),
             control.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -InkDesignTokens.Spacing.md),
             control.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            control.topAnchor.constraint(
+                greaterThanOrEqualTo: row.topAnchor,
+                constant: InkDesignTokens.Spacing.xs
+            ),
+            control.bottomAnchor.constraint(
+                lessThanOrEqualTo: row.bottomAnchor,
+                constant: -InkDesignTokens.Spacing.xs
+            ),
             control.widthAnchor.constraint(lessThanOrEqualToConstant: InkDesignTokens.Settings.controlWidth),
         ])
         return row

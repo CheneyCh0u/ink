@@ -27,6 +27,8 @@ enum SidebarDisplayMode: Equatable {
 @MainActor
 public final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation {
 
+    var onKeyBindingsChange: ((KeyBindingSet) -> Void)?
+
     private let splitVC = ShellSplitViewController()
     private var sidebarItem: NSSplitViewItem?
     private let sidebarVC = SidebarViewController()
@@ -149,10 +151,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
     private func applyConfig(_ config: InkConfig) {
         cancelSplitShortcut()
         splitShortcutState.updatePrefix(config.keyBindings.binding(for: .splitPrefix))
-        NSApplication.shared.mainMenu = AppDelegate.makeMainMenu(
-            settingsTarget: NSApplication.shared.delegate as AnyObject?,
-            keyBindings: config.keyBindings
-        )
+        onKeyBindingsChange?(config.keyBindings)
         NSApplication.shared.appearance =
             switch config.appearanceMode {
             case .system: nil

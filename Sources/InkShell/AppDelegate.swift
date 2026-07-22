@@ -6,6 +6,11 @@ import InkTerminalView
 @MainActor
 public final class AppDelegate: NSObject, NSApplicationDelegate {
 
+    struct LaunchPreparation {
+        let config: InkConfig
+        let menu: NSMenu
+    }
+
     private var mainWindowController: MainWindowController?
 
     public override init() {
@@ -13,8 +18,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
-        buildMenu()
-        let controller = MainWindowController()
+        let configURL = InkConfig.defaultURL
+        let launch = Self.prepareLaunch(configURL: configURL, settingsTarget: self)
+        NSApplication.shared.mainMenu = launch.menu
+        let controller = MainWindowController(
+            initialConfig: launch.config,
+            configURL: configURL,
+            configSyncService: ConfigSyncService()
+        )
+        controller.onKeyBindingsChange = { [weak self] keyBindings in
+            self?.buildMenu(keyBindings: keyBindings)
+        }
         controller.showWindow(nil)
         mainWindowController = controller
         NSApplication.shared.activate()
@@ -39,8 +53,22 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - 菜单
 
-    private func buildMenu() {
-        NSApplication.shared.mainMenu = Self.makeMainMenu(settingsTarget: self)
+    private func buildMenu(keyBindings: KeyBindingSet) {
+        NSApplication.shared.mainMenu = Self.makeMainMenu(
+            settingsTarget: self,
+            keyBindings: keyBindings
+        )
+    }
+
+    static func prepareLaunch(
+        configURL: URL = InkConfig.defaultURL,
+        settingsTarget: AnyObject? = nil
+    ) -> LaunchPreparation {
+        let config = InkConfig.load(from: configURL)
+        return LaunchPreparation(
+            config: config,
+            menu: makeMainMenu(settingsTarget: settingsTarget, keyBindings: config.keyBindings)
+        )
     }
 
     static func makeMainMenu(
@@ -68,40 +96,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let fileItem = NSMenuItem()
         let fileMenu = NSMenu(title: "文件")
-        fileMenu.addItem(
-            withTitle: "新建项目…",
-            action: #selector(MainWindowController.newProject(_:)),
-            keyEquivalent: "n"
-        )
-        fileMenu.addItem(
-            withTitle: "新建标签",
-            action: #selector(MainWindowController.newSession(_:)),
-            keyEquivalent: "t"
-        )
-        fileMenu.addItem(
-            withTitle: "向左分屏",
-            action: #selector(MainWindowController.splitLeft(_:)),
-            keyEquivalent: ""
-        )
-        fileMenu.addItem(
-            withTitle: "向右分屏",
-            action: #selector(MainWindowController.splitRight(_:)),
-            keyEquivalent: ""
-        )
-        fileMenu.addItem(
-            withTitle: "向上分屏",
-            action: #selector(MainWindowController.splitUp(_:)),
-            keyEquivalent: ""
-        )
-        fileMenu.addItem(
-            withTitle: "向下分屏",
-            action: #selector(MainWindowController.splitDown(_:)),
-            keyEquivalent: ""
-        )
-        fileMenu.addItem(
-            withTitle: "关闭当前分屏",
-            action: #selector(MainWindowController.closeActivePane(_:)),
-            keyEquivalent: "w"
+        addConfiguredDescriptors(
+            MenuCommandDescriptor.descriptors(in: .file),
+            to: fileMenu,
+            bindings: keyBindings
         )
         fileMenu.addItem(.separator())
         fileMenu.addItem(
@@ -114,106 +112,56 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let editItem = NSMenuItem()
         let editMenu = NSMenu(title: "编辑")
-        editMenu.addItem(
-            withTitle: "查找…",
-            action: #selector(MainWindowController.findInActivePane(_:)),
-            keyEquivalent: "f"
+        addConfiguredDescriptors(
+            MenuCommandDescriptor.descriptors(in: .edit).filter { $0.action == .find },
+            to: editMenu,
+            bindings: keyBindings
         )
         editMenu.addItem(.separator())
         editMenu.addItem(withTitle: "拷贝", action: #selector(TerminalMetalView.copy(_:)), keyEquivalent: "c")
         editMenu.addItem(withTitle: "粘贴", action: #selector(TerminalMetalView.paste(_:)), keyEquivalent: "v")
         editMenu.addItem(.separator())
-        let previousCommand = NSMenuItem(
-            title: "上一条命令",
-            action: #selector(MainWindowController.previousCommand(_:)),
-            keyEquivalent: "\u{F700}"
+        addConfiguredDescriptors(
+            MenuCommandDescriptor.descriptors(in: .edit).filter { $0.action != .find },
+            to: editMenu,
+            bindings: keyBindings
         )
-        previousCommand.keyEquivalentModifierMask = [.command, .shift]
-        editMenu.addItem(previousCommand)
-        let nextCommand = NSMenuItem(
-            title: "下一条命令",
-            action: #selector(MainWindowController.nextCommand(_:)),
-            keyEquivalent: "\u{F701}"
-        )
-        nextCommand.keyEquivalentModifierMask = [.command, .shift]
-        editMenu.addItem(nextCommand)
-        let copyCommand = NSMenuItem(
-            title: "拷贝命令",
-            action: #selector(MainWindowController.copyCommand(_:)),
-            keyEquivalent: "c"
-        )
-        copyCommand.keyEquivalentModifierMask = [.command, .shift]
-        editMenu.addItem(copyCommand)
-        let copyOutput = NSMenuItem(
-            title: "拷贝命令输出",
-            action: #selector(MainWindowController.copyCommandOutput(_:)),
-            keyEquivalent: "o"
-        )
-        copyOutput.keyEquivalentModifierMask = [.command, .shift]
-        editMenu.addItem(copyOutput)
         editItem.submenu = editMenu
         mainMenu.addItem(editItem)
 
         let viewItem = NSMenuItem()
         let viewMenu = NSMenu(title: "显示")
-        viewMenu.addItem(
-            withTitle: "放大字号",
-            action: #selector(MainWindowController.increaseFontSize(_:)),
-            keyEquivalent: "+"
-        )
-        viewMenu.addItem(
-            withTitle: "缩小字号",
-            action: #selector(MainWindowController.decreaseFontSize(_:)),
-            keyEquivalent: "-"
-        )
-        viewMenu.addItem(
-            withTitle: "恢复默认字号",
-            action: #selector(MainWindowController.resetFontSize(_:)),
-            keyEquivalent: "0"
+        let viewDescriptors = MenuCommandDescriptor.descriptors(in: .view)
+        addConfiguredDescriptors(
+            viewDescriptors.filter { $0.action != .toggleSidebar },
+            to: viewMenu,
+            bindings: keyBindings
         )
         viewMenu.addItem(.separator())
-        let sidebarItem = NSMenuItem(
-            title: "切换侧边栏",
-            action: #selector(MainWindowController.toggleSidebarMode(_:)),
-            keyEquivalent: "s"
+        addConfiguredDescriptors(
+            viewDescriptors.filter { $0.action == .toggleSidebar },
+            to: viewMenu,
+            bindings: keyBindings
         )
-        sidebarItem.keyEquivalentModifierMask = [.command, .control]
-        viewMenu.addItem(sidebarItem)
         viewItem.submenu = viewMenu
         mainMenu.addItem(viewItem)
 
         let windowItem = NSMenuItem()
         let windowMenu = NSMenu(title: "窗口")
-        let paneFocusItems: [(String, Selector, String)] = [
-            ("聚焦左侧 pane", #selector(MainWindowController.focusPaneLeft(_:)), "\u{F702}"),
-            ("聚焦右侧 pane", #selector(MainWindowController.focusPaneRight(_:)), "\u{F703}"),
-            ("聚焦上方 pane", #selector(MainWindowController.focusPaneUp(_:)), "\u{F700}"),
-            ("聚焦下方 pane", #selector(MainWindowController.focusPaneDown(_:)), "\u{F701}"),
-        ]
-        for (title, action, keyEquivalent) in paneFocusItems {
-            let item = NSMenuItem(
-                title: title,
-                action: action,
-                keyEquivalent: keyEquivalent
-            )
-            item.keyEquivalentModifierMask = [.command, .option]
-            windowMenu.addItem(item)
-        }
+        let windowDescriptors = MenuCommandDescriptor.descriptors(in: .window)
+        addConfiguredDescriptors(
+            windowDescriptors.filter {
+                [.focusLeft, .focusRight, .focusUp, .focusDown].contains($0.action)
+            },
+            to: windowMenu,
+            bindings: keyBindings
+        )
         windowMenu.addItem(.separator())
-        let nextItem = NSMenuItem(
-            title: "下一个会话",
-            action: #selector(MainWindowController.nextSession(_:)),
-            keyEquivalent: "]"
+        addConfiguredDescriptors(
+            windowDescriptors.filter { $0.action == .nextTab || $0.action == .previousTab },
+            to: windowMenu,
+            bindings: keyBindings
         )
-        nextItem.keyEquivalentModifierMask = [.command, .shift]
-        windowMenu.addItem(nextItem)
-        let prevItem = NSMenuItem(
-            title: "上一个会话",
-            action: #selector(MainWindowController.previousSession(_:)),
-            keyEquivalent: "["
-        )
-        prevItem.keyEquivalentModifierMask = [.command, .shift]
-        windowMenu.addItem(prevItem)
         windowMenu.addItem(.separator())
         for i in 1...9 {
             let item = NSMenuItem(
@@ -227,32 +175,27 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         windowItem.submenu = windowMenu
         mainMenu.addItem(windowItem)
 
-        apply(keyBindings, to: mainMenu)
         return mainMenu
     }
 
-    private static func apply(_ bindings: KeyBindingSet, to menu: NSMenu) {
-        for descriptor in MenuCommandDescriptor.all {
-            guard let item = menuItem(with: descriptor.selector, in: menu) else { continue }
-            guard let binding = bindings.binding(for: descriptor.action) else {
-                item.keyEquivalent = ""
-                item.keyEquivalentModifierMask = []
-                continue
-            }
-            item.keyEquivalent = KeyBindingAppKitAdapter.keyEquivalent(for: binding)
-            item.keyEquivalentModifierMask = KeyBindingAppKitAdapter.modifierFlags(for: binding)
+    private static func addConfiguredDescriptors(
+        _ descriptors: [MenuCommandDescriptor],
+        to menu: NSMenu,
+        bindings: KeyBindingSet
+    ) {
+        for descriptor in descriptors {
+            let binding = bindings.binding(for: descriptor.action)
+            let item = NSMenuItem(
+                title: descriptor.title,
+                action: descriptor.selector,
+                keyEquivalent: binding.map(KeyBindingAppKitAdapter.keyEquivalent(for:)) ?? ""
+            )
+            item.keyEquivalentModifierMask = binding.map(
+                KeyBindingAppKitAdapter.modifierFlags(for:)
+            ) ?? []
+            item.tag = descriptor.tag
+            menu.addItem(item)
         }
-    }
-
-    private static func menuItem(with selector: Selector, in menu: NSMenu) -> NSMenuItem? {
-        for item in menu.items {
-            if item.action == selector { return item }
-            if let submenu = item.submenu,
-               let match = menuItem(with: selector, in: submenu) {
-                return match
-            }
-        }
-        return nil
     }
 
     @objc private func showSettings(_ sender: Any?) {
