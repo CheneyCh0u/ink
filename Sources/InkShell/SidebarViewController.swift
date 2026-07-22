@@ -1,6 +1,28 @@
 import AppKit
 import InkDesign
 
+enum SidebarProjectDropIntent: Equatable {
+    case reorder(Int)
+    case importDirectories([URL])
+    case reject
+}
+
+@MainActor
+enum SidebarProjectDropDecoder {
+    static func intent(from pasteboard: NSPasteboard) -> SidebarProjectDropIntent {
+        if let raw = pasteboard.string(forType: SidebarViewController.dragType),
+           let index = Int(raw) {
+            return .reorder(index)
+        }
+        let urls = (pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [NSURL] ?? []).map { $0 as URL }
+        let directories = ProjectDirectoryImportPlanner.validDirectories(from: urls)
+        return directories.isEmpty ? .reject : .importDirectories(directories)
+    }
+}
+
 enum ProjectLabelIndicatorStyle: Equatable {
     case dot
     case rail
@@ -75,6 +97,7 @@ final class SidebarViewController: NSViewController {
     var onSetLabel: ((Int, InkProjectLabel) -> Void)?
     /// 拖动排序：把第 from 行移动到第 to 位。
     var onReorder: ((Int, Int) -> Void)?
+    var onImportDirectories: (([URL]) -> Void)?
 
     static let dragType = NSPasteboard.PasteboardType("com.ink.project-row")
 
@@ -95,6 +118,7 @@ final class SidebarViewController: NSViewController {
         root.isEmphasized = true
         root.rowStack = rowStack
         root.onDrop = { [weak self] from, to in self?.onReorder?(from, to) }
+        root.onImportDirectories = { [weak self] in self?.onImportDirectories?($0) }
 
         rowStack.orientation = .vertical
         rowStack.spacing = 2
@@ -220,13 +244,14 @@ final class SidebarViewController: NSViewController {
 
 /// 承接项目行拖拽的容器：按落点 y 算插入位置。
 @MainActor
-private final class ProjectDropView: NSVisualEffectView {
+final class ProjectDropView: NSVisualEffectView {
     weak var rowStack: NSStackView?
     var onDrop: ((Int, Int) -> Void)?
+    var onImportDirectories: (([URL]) -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        registerForDraggedTypes([SidebarViewController.dragType])
+        registerForDraggedTypes([SidebarViewController.dragType, .fileURL])
     }
 
     @available(*, unavailable)
@@ -235,24 +260,44 @@ private final class ProjectDropView: NSVisualEffectView {
     /// 侧栏空白区域与标题栏一样可以拖动窗口。
     override var mouseDownCanMoveWindow: Bool { true }
 
-    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation { .move }
-    override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation { .move }
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        operation(for: SidebarProjectDropDecoder.intent(from: sender.draggingPasteboard))
+    }
+
+    override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        operation(for: SidebarProjectDropDecoder.intent(from: sender.draggingPasteboard))
+    }
+
+    private func operation(for intent: SidebarProjectDropIntent) -> NSDragOperation {
+        switch intent {
+        case .reorder: .move
+        case .importDirectories: .copy
+        case .reject: []
+        }
+    }
 
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
-        guard
-            let raw = sender.draggingPasteboard.string(forType: SidebarViewController.dragType),
-            let from = Int(raw),
-            let rows = rowStack?.arrangedSubviews, !rows.isEmpty
-        else { return false }
+        switch SidebarProjectDropDecoder.intent(from: sender.draggingPasteboard) {
+        case let .importDirectories(directories):
+            onImportDirectories?(directories)
+            return true
+        case let .reorder(from):
+            return performReorder(from: from, sender: sender)
+        case .reject:
+            return false
+        }
+    }
 
+    private func performReorder(from: Int, sender: any NSDraggingInfo) -> Bool {
+        guard let rows = rowStack?.arrangedSubviews, !rows.isEmpty else { return false }
         let point = convert(sender.draggingLocation, from: nil)
         var target = rows.count - 1
-        for (i, row) in rows.enumerated() {
+        for (index, row) in rows.enumerated() {
             let frame = row.convert(row.bounds, to: self)
             if point.y < frame.midY { // isFlipped == false：y 向上
                 continue
             }
-            target = i
+            target = index
             break
         }
         if target != from {
