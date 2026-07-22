@@ -339,6 +339,9 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
             self?.setProjectLabel(label, at: index)
         }
         sidebarVC.onReorder = { [weak self] from, to in self?.reorderProject(from: from, to: to) }
+        sidebarVC.onImportDirectories = { [weak self] directories in
+            self?.importProjectDirectories(directories)
+        }
         settingsVC.onChange = { [weak self] fresh in self?.saveConfig(fresh) }
         settingsVC.onDone = { [weak self] in self?.hideSettings() }
         settingsVC.onOpenConfig = { [weak self] in self?.openConfigFile() }
@@ -635,22 +638,26 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
+        panel.allowsMultipleSelection = true
         panel.prompt = "添加项目"
         panel.message = "选择一个目录作为项目，新会话将在该目录打开"
         panel.beginSheetModal(for: window) { [weak self] response in
-            guard let self, response == .OK, let url = panel.url else { return }
+            guard let self, response == .OK else { return }
+            let directories = panel.urls
             MainActor.assumeIsolated {
-                // 已存在就直接切过去。
-                if let existing = self.projects.firstIndex(where: { $0.directory == url }) {
-                    self.selectProject(at: existing)
-                    return
-                }
-                self.projects.append(Project(directory: url))
-                self.persistProjects()
-                self.selectProject(at: self.projects.count - 1)
+                self.importProjectDirectories(directories)
             }
         }
+    }
+
+    func importProjectDirectories(_ candidates: [URL]) {
+        let plan = ProjectDirectoryImportPlanner.plan(
+            candidates: candidates,
+            existingDirectories: projects.map(\.directory)
+        )
+        guard let selectedIndex = plan.selectedIndex else { return }
+        projects.append(contentsOf: plan.directoriesToAdd.map { Project(directory: $0) })
+        selectProject(at: selectedIndex)
     }
 
     func selectProject(at index: Int) {
