@@ -40,6 +40,12 @@ import Foundation
 ///
 /// [scrollback]
 /// lines = 100_000      # 改动只对新会话生效
+///
+/// [keybindings]
+/// new_tab = "cmd+t"
+/// split_prefix = "cmd+d"
+/// focus_left = "cmd+alt+left"
+/// split_left = ""      # 空字符串禁用
 /// ```
 public struct InkConfig: Equatable, Sendable {
 
@@ -83,6 +89,8 @@ public struct InkConfig: Equatable, Sendable {
     /// 是否允许终端程序通过 OSC 52 写入本机剪贴板（只写，不能读取）。
     public var osc52WriteEnabled = true
     public var scrollbackLines = 100_000
+    public private(set) var keyBindings: KeyBindingSet = .defaults
+    public private(set) var keyBindingIssues: [KeyBindingAction: KeyBindingValidationIssue] = [:]
 
     public init() {}
 
@@ -159,7 +167,41 @@ public struct InkConfig: Equatable, Sendable {
         if let lines = values.int("scrollback.lines"), (100...2_000_000).contains(lines) {
             config.scrollbackLines = lines
         }
+        var rawKeyBindings: [String: String] = [:]
+        for action in KeyBindingAction.allCases {
+            if let value = values.string("keybindings.\(action.rawValue)") {
+                rawKeyBindings[action.rawValue] = value
+            }
+        }
+        config.applyKeyBindingValues(rawKeyBindings)
         return config
+    }
+
+    @discardableResult
+    public mutating func setKeyBinding(
+        _ assignment: KeyBindingAssignment,
+        for action: KeyBindingAction
+    ) -> Result<Void, KeyBindingValidationIssue> {
+        switch keyBindings.replacing(action, with: assignment) {
+        case .success(let updated):
+            keyBindings = updated
+            keyBindingIssues.removeValue(forKey: action)
+            return .success(())
+        case .failure(let issue):
+            keyBindingIssues[action] = issue
+            return .failure(issue)
+        }
+    }
+
+    public mutating func resetKeyBindings() {
+        keyBindings = .defaults
+        keyBindingIssues.removeAll(keepingCapacity: false)
+    }
+
+    mutating func applyKeyBindingValues(_ raw: [String: String]) {
+        let resolved = KeyBindingSet.resolving(raw)
+        keyBindings = resolved.bindings
+        keyBindingIssues = resolved.issues
     }
 
     /// 原子写回已知设置。原文件中的注释、空行、未知 section 和未知键全部保留；
@@ -175,7 +217,7 @@ public struct InkConfig: Equatable, Sendable {
     }
 
     private var tomlValues: [(key: String, value: String)] {
-        [
+        var values = [
             ("appearance.mode", quote(appearanceMode.rawValue)),
             ("sidebar.startup_mode", quote(startupSidebarMode.rawValue)),
             ("window.remember_frame", rememberWindowFrame ? "true" : "false"),
@@ -195,6 +237,11 @@ public struct InkConfig: Equatable, Sendable {
             ("clipboard.osc52_write", osc52WriteEnabled ? "true" : "false"),
             ("scrollback.lines", "\(scrollbackLines)"),
         ]
+        let serialized = keyBindings.serializedValues()
+        for action in KeyBindingAction.allCases {
+            values.append(("keybindings.\(action.rawValue)", quote(serialized[action.rawValue] ?? "")))
+        }
+        return values
     }
 
     private func quote(_ value: String) -> String {

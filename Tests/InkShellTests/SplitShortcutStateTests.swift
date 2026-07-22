@@ -1,4 +1,5 @@
 import Testing
+import InkConfig
 @testable import InkShell
 
 @Suite("分屏复合快捷键状态机")
@@ -54,14 +55,14 @@ struct SplitShortcutStateTests {
         var state = SplitShortcutState()
 
         #expect(state.handleKeyEvent(
-            .keyDown(keyCode: 2, isRepeat: false, commandDown: true)
+            .keyDown(keyCode: 2, isRepeat: false, binding: KeyBinding.parse("cmd+d"))
         ) == .consume)
         #expect(state.handleKeyEvent(
-            .keyDown(keyCode: 126, isRepeat: false, commandDown: true)
+            .keyDown(keyCode: 126, isRepeat: false, binding: KeyBinding.parse("cmd+up"))
         ) == .split(.up))
         #expect(state.handleKeyEvent(.keyUp(keyCode: 126)) == .passThrough)
         #expect(state.handleKeyEvent(
-            .keyDown(keyCode: 123, isRepeat: false, commandDown: true)
+            .keyDown(keyCode: 123, isRepeat: false, binding: KeyBinding.parse("cmd+left"))
         ) == .consume)
         #expect(state.handleKeyEvent(.keyUp(keyCode: 2)) == .consume)
     }
@@ -70,10 +71,40 @@ struct SplitShortcutStateTests {
     func contextLossBeforeDUpCancelsChord() {
         var state = SplitShortcutState()
         _ = state.handleKeyEvent(
-            .keyDown(keyCode: 2, isRepeat: false, commandDown: true)
+            .keyDown(keyCode: 2, isRepeat: false, binding: KeyBinding.parse("cmd+d"))
         )
 
         #expect(state.handleKeyEvent(.contextLost) == .passThrough)
+        #expect(state.handleKeyEvent(.keyUp(keyCode: 2)) == .passThrough)
+    }
+
+    @Test("自定义 Control-K 前缀并在热更新时取消旧状态")
+    func customPrefixAndUpdate() {
+        var state = SplitShortcutState(prefix: KeyBinding.parse("ctrl+k"))
+        #expect(state.handleKeyEvent(
+            .keyDown(keyCode: 40, isRepeat: false, binding: KeyBinding.parse("ctrl+k"))
+        ) == .consume)
+        #expect(state.handleKeyEvent(
+            .keyDown(keyCode: 123, isRepeat: false, binding: KeyBinding.parse("ctrl+left"))
+        ) == .split(.left))
+
+        state.updatePrefix(KeyBinding.parse("cmd+d"))
+        #expect(state.handleKeyEvent(.keyUp(keyCode: 40)) == .passThrough)
+    }
+
+    @Test("前缀后增加额外修饰键会取消待定分屏")
+    func additionalModifierCancelsPendingChord() {
+        var state = SplitShortcutState()
+        #expect(state.handleKeyEvent(
+            .keyDown(keyCode: 2, isRepeat: false, binding: KeyBinding.parse("cmd+d"))
+        ) == .consume)
+
+        #expect(state.handleKeyEvent(
+            .flagsChanged(modifiers: [.command, .shift])
+        ) == .passThrough)
+        #expect(state.handleKeyEvent(
+            .keyDown(keyCode: 123, isRepeat: false, binding: KeyBinding.parse("cmd+shift+left"))
+        ) == .passThrough)
         #expect(state.handleKeyEvent(.keyUp(keyCode: 2)) == .passThrough)
     }
 }

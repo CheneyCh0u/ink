@@ -54,6 +54,7 @@ final class SettingsViewController: NSViewController {
         value: 100_000, range: 100...2_000_000, increment: 1_000, decimals: 0, suffix: "行"
     )
     private let preview = TerminalSettingsPreview()
+    private var keyBindingRecorders: [KeyBindingAction: KeyBindingRecorderControl] = [:]
 
     init(config: InkConfig) {
         self.config = config
@@ -208,6 +209,7 @@ final class SettingsViewController: NSViewController {
                 ),
             ]
         ))
+        content.addArrangedSubview(makeKeyBindingsSection())
         content.addArrangedSubview(makeSection(
             title: "iCloud",
             rows: [
@@ -324,6 +326,14 @@ final class SettingsViewController: NSViewController {
             labels.trailingAnchor.constraint(lessThanOrEqualTo: control.leadingAnchor, constant: -InkDesignTokens.Spacing.md),
             control.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -InkDesignTokens.Spacing.md),
             control.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            control.topAnchor.constraint(
+                greaterThanOrEqualTo: row.topAnchor,
+                constant: InkDesignTokens.Spacing.xs
+            ),
+            control.bottomAnchor.constraint(
+                lessThanOrEqualTo: row.bottomAnchor,
+                constant: -InkDesignTokens.Spacing.xs
+            ),
             control.widthAnchor.constraint(lessThanOrEqualToConstant: InkDesignTokens.Settings.controlWidth),
         ])
         return row
@@ -348,6 +358,41 @@ final class SettingsViewController: NSViewController {
             stack.centerYAnchor.constraint(equalTo: row.centerYAnchor),
         ])
         return row
+    }
+
+    private func makeKeyBindingsSection() -> NSView {
+        var rows: [NSView] = KeyBindingAction.allCases.map { action in
+            let assignment = config.keyBindings.assignment(for: action) ?? .disabled
+            let recorder = KeyBindingRecorderControl(action: action, assignment: assignment)
+            recorder.onCandidate = { [weak self, weak recorder] assignment in
+                guard let self else { return .success(()) }
+                var fresh = self.config
+                switch fresh.setKeyBinding(assignment, for: action) {
+                case .success:
+                    self.config = fresh
+                    self.updateKeyBindingControls()
+                    self.onChange?(fresh)
+                    return .success(())
+                case .failure(let issue):
+                    recorder?.update(assignment: recorder?.assignment ?? assignment, issue: issue)
+                    return .failure(issue)
+                }
+            }
+            keyBindingRecorders[action] = recorder
+            return makeRow(title: action.displayTitle, detail: nil, control: recorder)
+        }
+        let reset = NSButton(
+            title: "恢复全部快捷键默认值…",
+            target: self,
+            action: #selector(resetKeyBindingsAction)
+        )
+        reset.bezelStyle = .rounded
+        rows.append(makeRow(
+            title: "快捷键默认值",
+            detail: "只恢复快捷键，不改动其它设置。",
+            control: reset
+        ))
+        return makeSection(title: "快捷键", rows: rows)
     }
 
     private func makeSyncActionsRow() -> NSView {
@@ -533,8 +578,40 @@ final class SettingsViewController: NSViewController {
         copyOnSelectSwitch.state = config.copyOnSelect ? .on : .off
         osc52WriteSwitch.state = config.osc52WriteEnabled ? .on : .off
         scrollbackControl.value = Double(config.scrollbackLines)
+        updateKeyBindingControls()
         updatePreview()
         suppressChanges = false
+    }
+
+    private func updateKeyBindingControls() {
+        for action in KeyBindingAction.allCases {
+            keyBindingRecorders[action]?.update(
+                assignment: config.keyBindings.assignment(for: action) ?? .disabled,
+                issue: config.keyBindingIssues[action]
+            )
+        }
+    }
+
+    func resetAllKeyBindings(confirm: () -> Bool) {
+        guard confirm() else { return }
+        config.resetKeyBindings()
+        updateKeyBindingControls()
+        onChange?(config)
+    }
+
+    @objc private func resetKeyBindingsAction() {
+        guard let window = view.window else {
+            resetAllKeyBindings(confirm: { true })
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "恢复全部快捷键默认值？"
+        alert.informativeText = "其它设置不会改变。"
+        alert.addButton(withTitle: "恢复默认值")
+        alert.addButton(withTitle: "取消")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            self?.resetAllKeyBindings(confirm: { response == .alertFirstButtonReturn })
+        }
     }
 
     @objc private func controlChanged() {
