@@ -68,9 +68,10 @@ struct CommandStatusWindowTests {
         )))
 
         #expect(fixture.notifier.requests.count == 1)
-        #expect(fixture.notifier.requests[0].completion.exitStatus == 1)
-        #expect(fixture.notifier.requests[0].tabTitle == "前台")
-        #expect(!fixture.notifier.requests[0].tabTitle.contains("/"))
+        #expect(fixture.notifier.requests[0].title == "命令失败")
+        #expect(fixture.notifier.requests[0].body.contains("退出状态 1"))
+        #expect(fixture.notifier.requests[0].body.contains("前台"))
+        #expect(!fixture.notifier.requests[0].body.contains("/"))
     }
 
     private func attentionLabels(in controller: MainWindowController) throws -> [String] {

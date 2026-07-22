@@ -1043,7 +1043,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
                        isApplicationActive: applicationActive,
                        completion: completion
                    ) {
-                    notificationCoordinator.submit(CommandNotificationRequest(
+                    notificationCoordinator.submit(.command(
                         tabTitle: notificationTabTitle(tab),
                         completion: completion
                     ))
