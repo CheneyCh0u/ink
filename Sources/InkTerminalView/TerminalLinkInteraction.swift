@@ -1,5 +1,12 @@
 import Foundation
 
+public enum TerminalContextSplitDirection: String, Sendable, Equatable {
+    case left
+    case right
+    case up
+    case down
+}
+
 enum LinkContextAction: Sendable, Equatable {
     case reportToTUI
     case showNativeMenu

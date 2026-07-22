@@ -123,6 +123,20 @@ struct TerminalCommandActionTests {
         #expect(!view.copyCurrentCommand())
     }
 
+    @Test("清历史通知归零滚动并丢弃命令导航锚点")
+    func clearScrollbackResetsCoordinateState() {
+        let terminal = makeCommandTerminal()
+        let view = TerminalMetalView(frame: .zero)
+        view.terminalProvider = { terminal }
+        #expect(view.navigateToPreviousCommand())
+        #expect(view.commandNavigationLine != nil)
+
+        view.scrollbackDidClear()
+
+        #expect(view.searchScrollOffset == 0)
+        #expect(view.commandNavigationLine == nil)
+    }
+
     private func makeCommandTerminal() -> Terminal {
         var terminal = Terminal(
             size: TerminalSize(columns: 20, rows: 3),
