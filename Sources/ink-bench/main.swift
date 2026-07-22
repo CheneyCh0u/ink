@@ -28,6 +28,10 @@ func mb(_ bytes: Int) -> String {
 enum LinkProfile: String {
     case plain
     case sparseOSC8 = "sparse-osc8"
+    case denseOSC8 = "dense-osc8"
+    case alternatingOSC8 = "alternating-osc8"
+    case denseUniqueOSC8 = "dense-unique-osc8"
+    case fragmentedOSC8 = "fragmented-osc8"
 }
 
 if let linkProfile = CommandLine.arguments.dropFirst().first
@@ -45,10 +49,35 @@ if let linkProfile = CommandLine.arguments.dropFirst().first
     let clock = ContinuousClock()
     let elapsed = clock.measure {
         for line in 0..<profileLineCount {
-            if linkProfile == .sparseOSC8, line % 1_000 == 0 {
-                let target = String(format: "https://example.test/%08d", line)
+            let emitsLink: Bool
+            switch linkProfile {
+            case .plain:
+                emitsLink = false
+            case .sparseOSC8:
+                emitsLink = line % 1_000 == 0
+            case .denseOSC8, .denseUniqueOSC8, .fragmentedOSC8:
+                emitsLink = true
+            case .alternatingOSC8:
+                emitsLink = line.isMultiple(of: 2)
+            }
+            if emitsLink {
+                let target: String
+                switch linkProfile {
+                case .denseOSC8, .alternatingOSC8:
+                    target = "https://example.test/dense"
+                case .sparseOSC8, .denseUniqueOSC8:
+                    target = String(format: "https://example.test/%08d", line)
+                case .fragmentedOSC8:
+                    target = line.isMultiple(of: 2)
+                        ? "https://example.test/a"
+                        : "https://example.test/b"
+                case .plain:
+                    preconditionFailure("plain profile 不应生成链接")
+                }
+                let linkedText = linkProfile == .fragmentedOSC8 ? "x" : visibleText
+                let terminator = linkProfile == .fragmentedOSC8 ? "" : "\r\n"
                 let bytes = Array(
-                    "\u{1B}]8;;\(target)\u{07}\(visibleText)\u{1B}]8;;\u{07}\r\n".utf8
+                    "\u{1B}]8;;\(target)\u{07}\(linkedText)\u{1B}]8;;\u{07}\(terminator)".utf8
                 )
                 totalBytes += bytes.count
                 parser.feed(bytes, handler: &terminal)

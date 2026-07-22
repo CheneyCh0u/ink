@@ -55,4 +55,30 @@ struct TerminalURLLinkTests {
         #expect(link.target == "https://example.test/path")
         #expect(link.range.start == TextPosition(line: 0, column: 3))
     }
+
+    @Test("超长软折逻辑行不会进入同步链接扫描")
+    func boundsSynchronousLookupWork() {
+        var terminal = Terminal(
+            size: TerminalSize(columns: 80, rows: 2),
+            scrollbackCapacity: 2_000
+        )
+        var parser = Parser()
+        let text = String(repeating: "x", count: 70_000) + "https://tail.test"
+        parser.feed(Array(text.utf8), handler: &terminal)
+
+        let position = TextPosition(
+            line: terminal.totalLines - 1,
+            column: max(0, terminal.grid.cursorCol - 1)
+        )
+        #expect(terminal.link(at: position) == nil)
+    }
+
+    @Test("重复无效 scheme 的单个 token 只做线性候选检查")
+    func rejectsRepeatedInvalidSchemes() {
+        var (parser, terminal) = makeTerminal(columns: 80, rows: 2, scrollback: 1_000)
+        let text = String(repeating: "http:///", count: 4_000)
+        feed(text, &parser, &terminal)
+
+        #expect(terminal.link(at: TextPosition(line: 0, column: 2)) == nil)
+    }
 }

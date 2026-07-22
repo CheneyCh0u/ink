@@ -580,11 +580,14 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     /// 尝试把鼠标事件上报给应用。返回 true 表示已消费（不再做本地选区）。
     /// 按住 Option 强制走本地选区——在 vim 里也能选中复制，跟 iTerm2 一致。
     private func reportMouse(
-        _ event: NSEvent, action: KeyEncoder.MouseAction, button: Int
+        _ event: NSEvent,
+        action: KeyEncoder.MouseAction,
+        button: Int,
+        optionOverrides: Bool = true
     ) -> Bool {
         guard let terminal = terminalProvider?(),
               terminal.modes.mouseMode != .none,
-              !event.modifierFlags.contains(.option),
+              (!optionOverrides || !event.modifierFlags.contains(.option)),
               let cell = hitCell(event, terminal: terminal)
         else { return false }
         if action == .drag, terminal.modes.mouseMode == .click { return true } // 级别不够，吞掉
@@ -610,7 +613,8 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     private func hitPosition(
         at point: NSPoint,
         terminal: Terminal,
-        renderer: TerminalRenderer
+        renderer: TerminalRenderer,
+        clampToGrid: Bool = true
     ) -> TextPosition? {
         let cell = renderer.cellSizePoints
         let inset = InkDesignTokens.Spacing.sm
@@ -618,6 +622,13 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         let visualRow = Int((point.y - inset) / cell.height)
         let cols = terminal.grid.size.columns
         let rows = terminal.grid.size.rows
+        if !clampToGrid {
+            guard point.x >= inset,
+                  point.y >= inset,
+                  col >= 0, col < cols,
+                  visualRow >= 0, visualRow < rows
+            else { return nil }
+        }
         let absLine = terminal.scrollback.count - min(scrollOffset, terminal.scrollback.count)
             + max(0, min(visualRow, rows - 1))
         return TextPosition(
@@ -627,7 +638,15 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     }
 
     private func link(at event: NSEvent) -> TerminalLink? {
-        guard let terminal = terminalProvider?(), let position = hitPosition(event) else { return nil }
+        guard let terminal = terminalProvider?(),
+              let renderer,
+              let position = hitPosition(
+                  at: convert(event.locationInWindow, from: nil),
+                  terminal: terminal,
+                  renderer: renderer,
+                  clampToGrid: false
+              )
+        else { return nil }
         return terminal.link(at: position)
     }
 
@@ -636,7 +655,12 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
             setHoveredLink(nil, cell: nil)
             return
         }
-        let position = hitPosition(at: point, terminal: terminal, renderer: renderer)
+        let position = hitPosition(
+            at: point,
+            terminal: terminal,
+            renderer: renderer,
+            clampToGrid: false
+        )
         guard position != hoveredCell || hoverNeedsRefresh else { return }
         setHoveredLink(position.flatMap { terminal.link(at: $0) }, cell: position)
     }
@@ -761,7 +785,12 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     public override func rightMouseUp(with event: NSEvent) {
         guard rightMouseReportsToTUI else { return }
         rightMouseReportsToTUI = false
-        _ = reportMouse(event, action: .release, button: 2)
+        _ = reportMouse(
+            event,
+            action: .release,
+            button: 2,
+            optionOverrides: false
+        )
     }
 
     @objc func openLink(_ sender: NSMenuItem) {

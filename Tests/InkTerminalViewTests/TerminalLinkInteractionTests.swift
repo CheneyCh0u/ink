@@ -56,6 +56,9 @@ struct TerminalLinkInteractionTests {
         view.rightMouseDown(with: try event(.rightMouseDown, in: window, modifiers: []))
         #expect(!input.isEmpty)
         #expect(shownMenu == nil)
+        let bytesAfterDown = input.count
+        view.rightMouseUp(with: try event(.rightMouseUp, in: window, modifiers: [.option]))
+        #expect(input.count > bytesAfterDown)
 
         view.rightMouseDown(with: try event(.rightMouseDown, in: window, modifiers: [.option]))
         #expect(shownMenu?.items.map(\.title) == ["打开链接", "复制链接"])
@@ -87,6 +90,33 @@ struct TerminalLinkInteractionTests {
         #expect(view.hoveredLinkForTesting?.target == "https://example.test")
         #expect(view.hoveredLinkForTesting?.range.start == TextPosition(line: 0, column: 0))
     }
+
+    @Test("终端内容 inset 不会夹到边缘链接 cell")
+    func paddingDoesNotHitEdgeLink() throws {
+        let terminal = linkedTerminal(mouseReporting: false)
+        let (window, view) = makeWindowView(terminal: { terminal })
+        var opened: URL?
+        view.onOpenLink = { opened = $0 }
+        let paddingEvent = try event(
+            .mouseMoved,
+            in: window,
+            modifiers: [],
+            x: 2,
+            yFromTop: 2
+        )
+
+        view.mouseMoved(with: paddingEvent)
+        view.mouseDown(with: try event(
+            .leftMouseDown,
+            in: window,
+            modifiers: [.command],
+            x: 2,
+            yFromTop: 2
+        ))
+
+        #expect(view.hoveredLinkForTesting == nil)
+        #expect(opened == nil)
+    }
 }
 
 private func linkedTerminal(mouseReporting: Bool) -> Terminal {
@@ -116,11 +146,13 @@ private func makeWindowView(
 private func event(
     _ type: NSEvent.EventType,
     in window: NSWindow,
-    modifiers: NSEvent.ModifierFlags
+    modifiers: NSEvent.ModifierFlags,
+    x: CGFloat = 12,
+    yFromTop: CGFloat = 12
 ) throws -> NSEvent {
     try #require(NSEvent.mouseEvent(
         with: type,
-        location: NSPoint(x: 12, y: window.contentView!.bounds.height - 12),
+        location: NSPoint(x: x, y: window.contentView!.bounds.height - yFromTop),
         modifierFlags: modifiers,
         timestamp: 0,
         windowNumber: window.windowNumber,

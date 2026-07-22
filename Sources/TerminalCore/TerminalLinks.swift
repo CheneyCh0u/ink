@@ -74,34 +74,45 @@ enum TerminalURLDetector {
         containing logicalOffset: Int
     ) -> Match? {
         let scalars = line.scalars
-        guard !scalars.isEmpty else { return nil }
+        guard let hitIndex = scalars.firstIndex(where: {
+            $0.startOffset <= logicalOffset && logicalOffset < $0.endOffset
+        }) else { return nil }
 
-        for index in scalars.indices where isSchemeStart(scalars, at: index) {
-            let candidateEnd = endOfCandidate(in: scalars, from: index)
-            let end = trimTrailingPunctuation(in: scalars, start: index, end: candidateEnd)
-            guard end > index else { continue }
-
-            let offsets = scalars[index].startOffset..<scalars[end - 1].endOffset
-            guard offsets.contains(logicalOffset) else { continue }
-
-            var target = ""
-            for scalar in scalars[index..<end] {
-                guard let unicode = Unicode.Scalar(scalar.value) else {
-                    target = ""
-                    break
-                }
-                target.unicodeScalars.append(unicode)
-            }
-            guard !target.isEmpty,
-                  let components = URLComponents(string: target),
-                  let scheme = components.scheme?.lowercased(),
-                  scheme == "http" || scheme == "https",
-                  components.host?.isEmpty == false
-            else { continue }
-
-            return Match(target: target, offsets: offsets)
+        var tokenStart = hitIndex
+        while tokenStart > scalars.startIndex,
+              !isDelimiter(scalars[tokenStart - 1].value) {
+            tokenStart -= 1
         }
-        return nil
+        var tokenEnd = hitIndex + 1
+        while tokenEnd < scalars.endIndex,
+              !isDelimiter(scalars[tokenEnd].value) {
+            tokenEnd += 1
+        }
+
+        // 同一无分隔 token 只验证一个候选，避免重复 `http:///` 触发二次扫描。
+        var schemeStart: Int?
+        for index in tokenStart...hitIndex where isSchemeStart(scalars, at: index) {
+            schemeStart = index
+        }
+        guard let start = schemeStart else { return nil }
+        let end = trimTrailingPunctuation(in: scalars, start: start, end: tokenEnd)
+        guard end > start else { return nil }
+
+        let offsets = scalars[start].startOffset..<scalars[end - 1].endOffset
+        guard offsets.contains(logicalOffset) else { return nil }
+
+        var target = ""
+        for scalar in scalars[start..<end] {
+            guard let unicode = Unicode.Scalar(scalar.value) else { return nil }
+            target.unicodeScalars.append(unicode)
+        }
+        guard let components = URLComponents(string: target),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              components.host?.isEmpty == false
+        else { return nil }
+
+        return Match(target: target, offsets: offsets)
     }
 
     private static func isSchemeStart(
@@ -117,29 +128,19 @@ enum TerminalURLDetector {
         in scalars: ContiguousArray<TerminalLogicalScalar>,
         at index: Int
     ) -> Bool {
-        let bytes = needle.withUTF8Buffer { Array($0) }
-        guard index + bytes.count <= scalars.count else { return false }
-        for offset in bytes.indices {
-            let actual = scalars[index + offset].value
-            let expected = UInt32(bytes[offset])
-            guard asciiLower(actual) == asciiLower(expected) else { return false }
+        needle.withUTF8Buffer { bytes in
+            guard index + bytes.count <= scalars.count else { return false }
+            for offset in bytes.indices {
+                let actual = scalars[index + offset].value
+                let expected = UInt32(bytes[offset])
+                guard asciiLower(actual) == asciiLower(expected) else { return false }
+            }
+            return true
         }
-        return true
     }
 
     private static func asciiLower(_ scalar: UInt32) -> UInt32 {
         (0x41...0x5A).contains(scalar) ? scalar + 0x20 : scalar
-    }
-
-    private static func endOfCandidate(
-        in scalars: ContiguousArray<TerminalLogicalScalar>,
-        from start: Int
-    ) -> Int {
-        var index = start
-        while index < scalars.count, !isDelimiter(scalars[index].value) {
-            index += 1
-        }
-        return index
     }
 
     private static func isDelimiter(_ value: UInt32) -> Bool {
@@ -162,6 +163,15 @@ enum TerminalURLDetector {
         end initialEnd: Int
     ) -> Int {
         var end = initialEnd
+        var openingCounts: [UInt32: Int] = [:]
+        var closingCounts: [UInt32: Int] = [:]
+        for scalar in scalars[start..<end] {
+            if matchingClosing(for: scalar.value) != nil {
+                openingCounts[scalar.value, default: 0] += 1
+            } else if matchingOpening(for: scalar.value) != nil {
+                closingCounts[scalar.value, default: 0] += 1
+            }
+        }
         while end > start {
             let value = scalars[end - 1].value
             if isSentencePunctuation(value) {
@@ -169,9 +179,9 @@ enum TerminalURLDetector {
                 continue
             }
             guard let opening = matchingOpening(for: value),
-                  count(value, in: scalars, start: start, end: end)
-                    > count(opening, in: scalars, start: start, end: end)
+                  closingCounts[value, default: 0] > openingCounts[opening, default: 0]
             else { break }
+            closingCounts[value, default: 0] -= 1
             end -= 1
         }
         return end
@@ -196,23 +206,32 @@ enum TerminalURLDetector {
         }
     }
 
-    private static func count(
-        _ value: UInt32,
-        in scalars: ContiguousArray<TerminalLogicalScalar>,
-        start: Int,
-        end: Int
-    ) -> Int {
-        scalars[start..<end].reduce(into: 0) { result, scalar in
-            if scalar.value == value { result += 1 }
+    private static func matchingClosing(for opening: UInt32) -> UInt32? {
+        switch opening {
+        case 0x28: 0x29
+        case 0x5B: 0x5D
+        case 0x7B: 0x7D
+        default: nil
         }
     }
 }
 
 extension Terminal {
+    /// 鼠标命中必须同步返回；限制单次冷路径物化，避免恶意超长软折行阻塞主线程。
+    private static let maxLinkSnapshotCells = 65_536
+    private static let maxLinkSnapshotRows = 2_048
+    private static let maxExplicitProjectionRows = 2_048
+
     public func link(at position: TextPosition) -> TerminalLink? {
         if let explicit = explicitLink(at: position) { return explicit }
-        guard let line = logicalLine(containing: position),
-              let offset = line.logicalOffset(at: position),
+        guard let line = logicalLine(
+            containing: position,
+            preserveGridTrailingBlanks: true,
+            cellLimit: Self.maxLinkSnapshotCells,
+            rowLimit: Self.maxLinkSnapshotRows
+        ), let offset = line.logicalOffset(at: position)
+        else { return nil }
+        guard
               let match = TerminalURLDetector.match(in: line, containing: offset),
               let start = line.position(at: match.offsets.lowerBound),
               let end = line.position(at: match.offsets.upperBound)
@@ -226,21 +245,41 @@ extension Terminal {
 
     var hyperlinkMetadataAllocated: Bool { hyperlinks != nil }
 
-    var explicitHyperlinkRecordCount: Int { hyperlinks?.lines.count ?? 0 }
+    var explicitHyperlinkRecordCount: Int { hyperlinks?.lineCount ?? 0 }
+    var explicitHyperlinkStorageCount: Int { hyperlinks?.lineStorageCount ?? 0 }
+    var explicitHyperlinkRowAnchorCount: Int { hyperlinks?.rowIndex.count ?? 0 }
 
     private func explicitLink(at position: TextPosition) -> TerminalLink? {
+        guard position.line >= 0, position.line < totalLines, position.column >= 0 else { return nil }
+        let physicalCellCount = position.line < scrollback.count
+            ? scrollback[position.line].count
+            : grid.size.columns
+        guard position.column < physicalCellCount else { return nil }
+        let oldestLineID = scrollback.totalAppendedLines - UInt64(scrollback.count)
+        let stableLineID = oldestLineID + UInt64(position.line)
         guard let hyperlinks,
               let targets = hyperlinkTargets,
-              let line = logicalLine(containing: position),
-              let offset = line.logicalOffset(at: position),
-              let record = hyperlinks.record(headLineID: line.headLineID),
-              let span = record.spans.first(where: {
-                  $0.offsets.contains(UInt32(clamping: offset))
-              }),
-              let target = targets.uri(for: span.targetID),
-              let start = line.position(at: Int(span.offsets.lowerBound)),
-              let end = line.position(at: Int(span.offsets.upperBound))
+              let anchor = hyperlinks.anchor(for: stableLineID),
+              let record = hyperlinks.record(headLineID: anchor.headLineID),
+              let span = record.span(
+                  containing: anchor.startOffset + UInt32(clamping: position.column)
+              ),
+              let target = targets.uri(for: span.targetID)
         else { return nil }
+        let fallbackEnd = TextPosition(
+            line: position.line,
+            column: min(physicalCellCount, position.column + 1)
+        )
+        let start = projectExplicitOffset(
+            span.offsets.lowerBound,
+            from: stableLineID,
+            headLineID: anchor.headLineID
+        ) ?? position
+        let end = projectExplicitOffset(
+            span.offsets.upperBound,
+            from: stableLineID,
+            headLineID: anchor.headLineID
+        ) ?? fallbackEnd
         return TerminalLink(
             target: target,
             range: SemanticTextRange(start: start, end: end),
@@ -248,16 +287,90 @@ extension Terminal {
         )
     }
 
-    func logicalLine(containing position: TextPosition) -> TerminalLogicalLine? {
+    /// 通过稀疏 row anchor 从命中行向端点走，普通短链接是常数工作；极端跨越超过
+    /// 2,048 行时只降级悬停高亮范围，目标仍可打开，不在主线程构造整条逻辑行。
+    private func projectExplicitOffset(
+        _ offset: UInt32,
+        from hitLineID: UInt64,
+        headLineID: UInt64
+    ) -> TextPosition? {
+        guard let hyperlinks else { return nil }
+        let oldestLineID = scrollback.totalAppendedLines - UInt64(scrollback.count)
+        var lineID = hitLineID
+        var visited = 0
+        while visited < Self.maxExplicitProjectionRows,
+              lineID >= oldestLineID {
+            guard let anchor = hyperlinks.anchor(for: lineID),
+                  anchor.headLineID == headLineID
+            else { return nil }
+            let absoluteLine = Int(lineID - oldestLineID)
+            guard absoluteLine >= 0, absoluteLine < totalLines else { return nil }
+            guard let cellCount = logicalSegmentCellCount(
+                at: absoluteLine,
+                preserveGridTrailingBlanks: true
+            ) else { return nil }
+            let segmentEnd = anchor.startOffset + UInt32(clamping: cellCount)
+            if offset < anchor.startOffset {
+                guard lineID > oldestLineID else { return nil }
+                lineID -= 1
+            } else if offset < segmentEnd {
+                return TextPosition(
+                    line: absoluteLine,
+                    column: Int(offset - anchor.startOffset)
+                )
+            } else if offset == segmentEnd {
+                let nextLine = absoluteLine + 1
+                if nextLine < totalLines, absoluteLineInfo(nextLine)?.isWrapped == true {
+                    return TextPosition(line: nextLine, column: 0)
+                }
+                return TextPosition(line: absoluteLine, column: cellCount)
+            } else {
+                lineID += 1
+            }
+            visited += 1
+        }
+        return nil
+    }
+
+    /// wrapped 后继意味着该历史段来自当时的满宽 grid；即使入库裁掉了行尾补白，
+    /// 逻辑偏移仍保留这一概念宽度，避免后续 continuation 整体左移。
+    func logicalSegmentCellCount(
+        at lineIndex: Int,
+        preserveGridTrailingBlanks: Bool
+    ) -> Int? {
+        guard lineIndex >= 0, lineIndex < totalLines else { return nil }
+        if lineIndex < scrollback.count {
+            let nextIsWrapped = lineIndex + 1 < totalLines
+                && absoluteLineInfo(lineIndex + 1)?.isWrapped == true
+            return nextIsWrapped ? grid.size.columns : scrollback[lineIndex].count
+        }
+        let row = grid.row(lineIndex - scrollback.count)
+        guard !preserveGridTrailingBlanks else { return row.count }
+        var trimmedCount = row.count
+        while trimmedCount > 0, row[row.startIndex + trimmedCount - 1].isBlank {
+            trimmedCount -= 1
+        }
+        return trimmedCount
+    }
+
+    func logicalLine(
+        containing position: TextPosition,
+        preserveGridTrailingBlanks: Bool = false,
+        cellLimit: Int? = nil,
+        rowLimit: Int? = nil,
+        includeScalars: Bool = true
+    ) -> TerminalLogicalLine? {
         guard position.line >= 0, position.line < totalLines else { return nil }
 
         var head = position.line
         while head > 0, absoluteLineInfo(head)?.isWrapped == true {
             head -= 1
+            if let rowLimit, position.line - head + 1 > rowLimit { return nil }
         }
         var tail = position.line + 1
         while tail < totalLines, absoluteLineInfo(tail)?.isWrapped == true {
             tail += 1
+            if let rowLimit, tail - head > rowLimit { return nil }
         }
 
         let oldestLineID = scrollback.totalAppendedLines - UInt64(scrollback.count)
@@ -266,19 +379,29 @@ extension Terminal {
         var segments = ContiguousArray<TerminalLogicalSegment>()
 
         for lineIndex in head..<tail {
-            guard var cells = absoluteLine(lineIndex)?.cells else { return nil }
-            while let last = cells.last, last.isBlank {
-                cells.removeLast()
-            }
+            guard let cellCount = logicalSegmentCellCount(
+                at: lineIndex,
+                preserveGridTrailingBlanks: preserveGridTrailingBlanks
+            ) else { return nil }
+            if let cellLimit, logicalOffset > cellLimit - cellCount { return nil }
             segments.append(TerminalLogicalSegment(
                 lineID: oldestLineID + UInt64(lineIndex),
                 absoluteLine: lineIndex,
                 startOffset: logicalOffset,
-                cellCount: cells.count
+                cellCount: cellCount
             ))
 
-            for column in cells.indices {
-                let cell = cells[column]
+            guard includeScalars else {
+                logicalOffset += cellCount
+                continue
+            }
+            let storedCellCount = lineIndex < scrollback.count
+                ? scrollback[lineIndex].count
+                : cellCount
+            for column in 0..<storedCellCount {
+                let cell = lineIndex < scrollback.count
+                    ? scrollback[lineIndex].cell(at: column)
+                    : grid[lineIndex - scrollback.count, column]
                 if cell.attr & Cell.Attr.wideTrailing != 0 { continue }
                 let startOffset = logicalOffset + column
                 let endOffset = startOffset
@@ -299,7 +422,7 @@ extension Terminal {
                     ))
                 }
             }
-            logicalOffset += cells.count
+            logicalOffset += cellCount
         }
 
         return TerminalLogicalLine(
