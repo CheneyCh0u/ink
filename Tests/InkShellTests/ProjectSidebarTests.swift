@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import InkDesign
+import TerminalCore
 import Testing
 @testable import InkShell
 
@@ -85,6 +86,37 @@ struct ProjectSidebarTests {
 @Suite("项目侧边栏布局", .serialized)
 @MainActor
 struct ProjectSidebarLayoutTests {
+    @Test("项目侧边栏显示可访问的 Bell 图形")
+    func projectAttentionUsesAccessibleSymbol() throws {
+        let controller = SidebarViewController()
+        controller.view.frame = NSRect(
+            x: 0,
+            y: 0,
+            width: InkDesignTokens.Sidebar.width,
+            height: 700
+        )
+        controller.reload(rows: [
+            .init(
+                title: "ink",
+                detail: "~/work/code",
+                status: "1 个标签",
+                fullPath: "~/work/code/ink",
+                active: false,
+                pinned: false,
+                label: .red,
+                attention: .bell
+            ),
+        ])
+        controller.view.layoutSubtreeIfNeeded()
+
+        let image = try #require(
+            descendants(of: NSImageView.self, in: controller.view)
+                .first { $0.accessibilityLabel() == "终端响铃" }
+        )
+        #expect(image.image != nil)
+        #expect(!image.isHidden)
+    }
+
     @Test("点击长目录时项目文字区域保持稳定")
     func longPathUsesStableProjectNameLayout() throws {
         let controller = SidebarViewController()

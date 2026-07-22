@@ -34,6 +34,11 @@ enum LinkProfile: String {
     case fragmentedOSC8 = "fragmented-osc8"
 }
 
+enum CommandProfile: String {
+    case plain = "command-plain"
+    case status = "command-status"
+}
+
 if let linkProfile = CommandLine.arguments.dropFirst().first
     .flatMap(LinkProfile.init(rawValue:)) {
     let profileLineCount = 1_000_000
@@ -97,6 +102,52 @@ if let linkProfile = CommandLine.arguments.dropFirst().first
     print("  吞吐 \(String(format: "%.1f", throughput)) MB/s")
     print("  footprint 增量 \(mb(after - before))")
     print("  scrollback \(terminal.scrollback.count) 行")
+    exit(EXIT_SUCCESS)
+}
+
+if let commandProfile = CommandLine.arguments.dropFirst().first
+    .flatMap(CommandProfile.init(rawValue:)) {
+    let profileLineCount = 1_000_000
+    let visibleText = String(repeating: "x", count: 52)
+    let plainBytes = Array(
+        "\(visibleText)\(String(repeating: " ", count: 26))\r\n".utf8
+    )
+    let statusBytes = Array((
+        "\u{1B}]133;B\u{07}x"
+            + "\u{1B}]133;C\u{07}\(String(repeating: "x", count: 51))"
+            + "\u{1B}]133;D;0\u{07}\r\n"
+    ).utf8)
+    precondition(plainBytes.count == statusBytes.count)
+    let bytes = commandProfile == .status ? statusBytes : plainBytes
+    var parser = Parser()
+    var terminal = Terminal(
+        size: TerminalSize(columns: 120, rows: 50),
+        scrollbackCapacity: 100_000
+    )
+    let before = footprintBytes()
+    let clock = ContinuousClock()
+    let elapsed = clock.measure {
+        for line in 0..<profileLineCount {
+            parser.feed(bytes, handler: &terminal)
+            if line.isMultiple(of: 256) { _ = terminal.takeEvents() }
+        }
+        _ = terminal.takeEvents()
+    }
+    let after = footprintBytes()
+    let seconds = Double(elapsed.components.seconds)
+        + Double(elapsed.components.attoseconds) / 1e18
+    let totalBytes = bytes.count * profileLineCount
+    let throughput = Double(totalBytes) / seconds / 1024 / 1024
+    let completionCount = commandProfile == .status
+        ? terminal.commandBlocks().count
+        : 0
+    print("命令状态 profile: \(commandProfile.rawValue)")
+    print("  行数 \(profileLineCount)  字节 \(totalBytes)")
+    print("  耗时 \(elapsed)")
+    print("  吞吐 \(String(format: "%.1f", throughput)) MB/s")
+    print("  footprint 增量 \(mb(after - before))")
+    print("  scrollback \(terminal.scrollback.count) 行")
+    print("  可查询完成块 \(completionCount)")
     exit(EXIT_SUCCESS)
 }
 

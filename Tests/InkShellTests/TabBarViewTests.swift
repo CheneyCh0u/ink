@@ -1,11 +1,57 @@
 import AppKit
 import InkDesign
+import TerminalCore
 import Testing
 @testable import InkShell
 
 @Suite("顶部标签栏", .serialized)
 @MainActor
 struct TabBarViewTests {
+    @Test("失败状态使用独立图形且悬停关闭按钮不移动布局")
+    func failureAttentionIsNotColorOnly() throws {
+        let failure = TabAttention.failed(.init(exitStatus: 2, duration: .seconds(12)))
+        let tabBar = makeTabBar(width: 800, tabs: [
+            .init(
+                title: "构建",
+                shortcut: "⌘1",
+                active: false,
+                attention: failure
+            ),
+        ])
+        let stack = try #require(tabBar.subviews.first { $0 is NSStackView } as? NSStackView)
+        let item = try #require(stack.arrangedSubviews.first)
+        let image = try #require(descendants(of: NSImageView.self, in: item).first)
+        let close = try #require(descendants(of: NSButton.self, in: item).first)
+        let before = close.frame
+
+        #expect(image.accessibilityLabel() == "命令失败，退出状态 2，12 秒")
+        #expect(image.image != nil)
+        #expect(!image.isHidden)
+        item.mouseEntered(with: try mouseEvent())
+        item.layoutSubtreeIfNeeded()
+        #expect(close.frame == before)
+        #expect(!close.isHidden)
+        #expect(image.isHidden)
+    }
+
+    @Test("溢出菜单同步显示未读图形")
+    func overflowMenuShowsAttention() throws {
+        let failure = TabAttention.failed(.init(exitStatus: 2, duration: .seconds(12)))
+        let tabs = (0..<8).map { index in
+            TabBarView.Tab(
+                title: "标签 \(index)",
+                shortcut: "",
+                active: index == 6,
+                attention: index == 0 ? failure : nil
+            )
+        }
+        let tabBar = makeTabBar(width: 400, tabs: tabs)
+        let item = try #require(tabBar.overflowMenu?.items.first { $0.tag == 0 })
+
+        #expect(item.image?.accessibilityDescription == "命令失败，退出状态 2，12 秒")
+        #expect(item.image != nil)
+    }
+
     @Test("设置齿轮固定在最右侧并提供辅助信息")
     func settingsButtonUsesTrailingSlot() throws {
         let tabBar = makeTabBar()
@@ -179,5 +225,25 @@ struct TabBarViewTests {
                 active: $0 == active
             )
         }
+    }
+
+    private func descendants<T: NSView>(of type: T.Type, in view: NSView) -> [T] {
+        view.subviews.flatMap { child in
+            (child as? T).map { [$0] } ?? descendants(of: type, in: child)
+        }
+    }
+
+    private func mouseEvent() throws -> NSEvent {
+        try #require(NSEvent.mouseEvent(
+            with: .mouseMoved,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 0,
+            pressure: 0
+        ))
     }
 }

@@ -14,6 +14,8 @@ public final class TerminalSession {
     public var onUpdate: (() -> Void)?
     /// shell 退出。
     public var onExit: ((Int32) -> Void)?
+    /// Core 产生的命令完成与 BEL 事件。
+    public var onEvent: ((TerminalEvent) -> Void)?
 
     private let pty = PTYSession()
     private var parser = Parser()
@@ -26,16 +28,7 @@ public final class TerminalSession {
 
     public func start() throws {
         pty.onOutput = { [weak self] data in
-            guard let self else { return }
-            data.withUnsafeBytes { raw in
-                self.parser.feed(raw, handler: &self.terminal)
-            }
-            // DSR/DA 等查询的应答写回，TUI 探测终端在等这个。
-            let responses = self.terminal.takeResponses()
-            if !responses.isEmpty {
-                self.pty.write(Data(responses))
-            }
-            self.onUpdate?()
+            self?.consumeOutput(data)
         }
         pty.onExit = { [weak self] status in
             self?.onExit?(status)
@@ -49,6 +42,21 @@ public final class TerminalSession {
 
     public func write(_ data: Data) {
         pty.write(data)
+    }
+
+    func consumeOutput(_ data: Data) {
+        data.withUnsafeBytes { raw in
+            parser.feed(raw, handler: &terminal)
+        }
+        for event in terminal.takeEvents() {
+            onEvent?(event)
+        }
+        // DSR/DA 等查询的应答写回，TUI 探测终端在等这个。
+        let responses = terminal.takeResponses()
+        if !responses.isEmpty {
+            pty.write(Data(responses))
+        }
+        onUpdate?()
     }
 
     public func resize(to size: TerminalSize) {
@@ -85,5 +93,6 @@ public final class TerminalSession {
     public func detach() {
         onExit = nil
         onUpdate = nil
+        onEvent = nil
     }
 }

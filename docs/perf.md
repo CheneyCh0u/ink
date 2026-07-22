@@ -102,6 +102,45 @@ Time Profiler。采样覆盖各 10 万行的 reflow、搜索、ASCII 短行、AS
 失效项才批量压缩，避免逐行搬数组；小容量环反复 400 次的回归测试同时约束活动
 项与滞留前缀，不允许内存随会话时长无限增长。
 
+## 命令耗时、退出状态与安静通知
+
+2026-07-22 在 Apple M4 Pro（Mac16,8）、macOS 27.0（26A5388g）上运行
+Release `CommandStatusTests` 与两组 100 万行 Core profile。`command-plain` 和
+`command-status` 都输入 80,000,000 字节、保留 10 万行 scrollback；普通组用
+尾部空格补齐 OSC 133 的字节数，因而比较的是等输入字节下的端到端解析、grid、
+scrollback 与事件取走成本。
+
+| Profile | 耗时 | 吞吐 | Footprint 增量 | 可查询完成块 |
+|---|---:|---:|---:|---:|
+| `command-plain` | **1.295819333 s** | **58.9 MB/s** | **11.3 MB** | 0 |
+| `command-status` | **1.383231625 s** | **55.2 MB/s** | **37.7 MB** | 100,049 |
+
+状态组耗时增加约 6.7%，footprint 增量增加 26.4 MB；这项压力场景让每一行都
+包含 B/C/D，密度远高于真实 shell。总增量仍低于 10 万行 200 MB 指标。完成记录
+固定为 16 字节稀疏值，不进入 `Cell` 或 `RowInfo`；Release 规模测试确认
+`CommandCompletionRecord` / `Cell` / `RowInfo` stride 分别为 16 / 8 / 2 字节，
+活动记录为 100,000 条并受 scrollback + grid 容量约束。10 万条密集记录随 reflow
+从 120 列变 80 列耗时 98.457 ms，恢复 120 列耗时 94.655 ms。
+
+原始输出位于 `/tmp/ink-issue70-command-status-tests.txt`、
+`/tmp/ink-issue70-command-plain.txt` 和
+`/tmp/ink-issue70-command-status.txt`。Time Profiler trace 位于
+`/tmp/ink-issue70-command-plain.trace` 与
+`/tmp/ink-issue70-command-status.trace`，时长分别为 2.587137 秒和
+2.074911 秒，均因目标进程正常退出而结束；导出的 `time-profile` 表与 TOC 使用
+同名前缀的 `.xml` 和 `-toc.xml` 文件。
+
+普通 profile 的采样只有 `Parser.feed`、`Terminal.print`、`Grid.scrollUp` 和
+`ScrollbackBuffer.append` 等既有栈，没有 `handleOSC133`、
+`appendCommandCompletion`、`pruneCommandCompletions` 或完成记录构造。状态 profile
+才在 OSC 133 事件上采到这些追加与批量回收 helper；完成记录逻辑没有进入普通
+可打印字节或渲染路径。
+
+系统通知不保存命令文本、输出或目录；没有用户自定义标签名时统一显示“终端任务”。
+只有 Ink 不活跃且完整命令耗时至少 10 秒才会按需申请 alert 权限并投递，不设置
+声音或 badge。拒绝、不可用与投递错误不会影响会话。OSC 9 / 777 仍未实现，属于
+roadmap 的 P1-B 后续增强。
+
 ## 字体度量与增粗
 
 2026-07-21 在 Apple M4 Pro、macOS 27.0、2x 缩放下，对 debug 构建运行

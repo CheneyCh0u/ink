@@ -36,6 +36,27 @@ final class SidebarViewController: NSViewController {
         let active: Bool
         let pinned: Bool
         let label: InkProjectLabel
+        let attention: TabAttention?
+
+        init(
+            title: String,
+            detail: String,
+            status: String,
+            fullPath: String,
+            active: Bool,
+            pinned: Bool,
+            label: InkProjectLabel,
+            attention: TabAttention? = nil
+        ) {
+            self.title = title
+            self.detail = detail
+            self.status = status
+            self.fullPath = fullPath
+            self.active = active
+            self.pinned = pinned
+            self.label = label
+            self.attention = attention
+        }
     }
 
     var displayMode: DisplayMode = .expanded {
@@ -278,7 +299,10 @@ private final class ProjectRowView: NSView, NSDraggingSource {
         layer?.cornerRadius = InkDesignTokens.Radius.item
         layer?.cornerCurve = .continuous
         updateLayerColors()
-        toolTip = compact ? "\(row.fullPath)\n\(row.status)" : row.fullPath
+        let attentionToolTip = row.attention.map { "\n\($0.presentation.toolTip)" } ?? ""
+        toolTip = compact
+            ? "\(row.fullPath)\n\(row.status)\(attentionToolTip)"
+            : "\(row.fullPath)\(attentionToolTip)"
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
         setAccessibilityLabel(row.fullPath)
@@ -293,11 +317,13 @@ private final class ProjectRowView: NSView, NSDraggingSource {
 
         let indicator = ProjectLabelIndicator(label: row.label, style: indicatorStyle)
         indicator.translatesAutoresizingMaskIntoConstraints = false
+        let attentionImage = Self.attentionImage(for: row.attention)
 
         if compact {
             icon.translatesAutoresizingMaskIntoConstraints = false
             addSubview(icon)
             addSubview(indicator)
+            if let attentionImage { addSubview(attentionImage) }
             NSLayoutConstraint.activate([
                 heightAnchor.constraint(equalToConstant: InkDesignTokens.Sidebar.projectRowHeight),
                 icon.centerXAnchor.constraint(equalTo: centerXAnchor),
@@ -314,6 +340,14 @@ private final class ProjectRowView: NSView, NSDraggingSource {
                     equalToConstant: InkDesignTokens.Sidebar.labelRailHeight
                 ),
             ])
+            if let attentionImage {
+                NSLayoutConstraint.activate([
+                    attentionImage.centerXAnchor.constraint(equalTo: icon.trailingAnchor),
+                    attentionImage.centerYAnchor.constraint(equalTo: icon.bottomAnchor),
+                    attentionImage.widthAnchor.constraint(equalToConstant: 12),
+                    attentionImage.heightAnchor.constraint(equalToConstant: 12),
+                ])
+            }
             installTrackingArea()
             return
         }
@@ -347,7 +381,14 @@ private final class ProjectRowView: NSView, NSDraggingSource {
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         setCloseButtonRevealed(revealsCloseButton)
 
-        let metadataStack = NSStackView(views: [detail, status])
+        var metadataViews: [NSView] = [detail]
+        if let attentionImage {
+            metadataViews.append(attentionImage)
+            attentionImage.widthAnchor.constraint(equalToConstant: 12).isActive = true
+            attentionImage.heightAnchor.constraint(equalToConstant: 12).isActive = true
+        }
+        metadataViews.append(status)
+        let metadataStack = NSStackView(views: metadataViews)
         metadataStack.orientation = .horizontal
         metadataStack.alignment = .centerY
         metadataStack.spacing = InkDesignTokens.Spacing.xs
@@ -392,6 +433,19 @@ private final class ProjectRowView: NSView, NSDraggingSource {
         ])
 
         installTrackingArea()
+    }
+
+    private static func attentionImage(for attention: TabAttention?) -> NSImageView? {
+        guard let presentation = attention?.presentation else { return nil }
+        let view = NSImageView(image: NSImage(
+            systemSymbolName: presentation.symbolName,
+            accessibilityDescription: presentation.accessibilityLabel
+        )!)
+        view.contentTintColor = presentation.tintColor
+        view.toolTip = presentation.toolTip
+        view.setAccessibilityLabel(presentation.accessibilityLabel)
+        view.translatesAutoresizingMaskIntoConstraints = false
+        return view
     }
 
     private func installTrackingArea() {

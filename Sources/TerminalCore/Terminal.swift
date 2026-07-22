@@ -72,6 +72,10 @@ public struct Terminal: Sendable {
     /// 待写回 PTY 的应答（DSR / DA 等查询的回复）。TUI 启动时会探测终端
     /// 并**等待回音**，没有应答通道它们会直接卡死。会话层每次 feed 后取走。
     private var responseBuffer: [UInt8] = []
+    private var commandStartedAt: ContinuousClock.Instant?
+    private var commandCompletionRecords: ContiguousArray<CommandCompletionRecord> = []
+    private var commandCompletionStart = 0
+    private var pendingEvents: ContiguousArray<TerminalEvent> = []
 
     private var currentAttr = Cell.Attr.default
     /// 延迟折行：写满最后一列后光标停在原地，下一个可打印字符才真正折行。
@@ -91,14 +95,18 @@ public struct Terminal: Sendable {
         self.scrollBottom = size.rows - 1
     }
 
-    /// 后台搜索只读取 cell、行信息与簇表；主动剥离链接旁路，避免搜索任务持有
-    /// 10 万条链接记录并让前台后续写入触发整表 COW。
+    /// 后台搜索只读取 cell、行信息与簇表；主动剥离链接、命令状态和事件旁路，
+    /// 避免搜索任务持有长会话记录并让前台后续写入触发整表 COW。
     public func snapshotForSearch() -> Terminal {
         var snapshot = self
         snapshot.hyperlinkTargets = nil
         snapshot.hyperlinks = nil
         snapshot.activeHyperlinkTargetID = nil
         snapshot.savedPrimaryHyperlinks = nil
+        snapshot.commandStartedAt = nil
+        snapshot.commandCompletionRecords = []
+        snapshot.commandCompletionStart = 0
+        snapshot.pendingEvents = []
         return snapshot
     }
 
@@ -159,6 +167,7 @@ public struct Terminal: Sendable {
         let oldGrid = grid
         let oldSb = scrollback
         let oldOverflow = semanticOverflowTransitions[semanticOverflowStart...]
+        let oldCompletions = liveCommandCompletionRecords
         let sbCount = oldSb.count
         let totalRows = sbCount + oldGrid.size.rows
         let cursorAbs = sbCount + oldGrid.cursorRow
@@ -172,6 +181,7 @@ public struct Terminal: Sendable {
         var emitted = 0
         var newCursor: (abs: Int, col: Int)?
         var newOverflow: [SemanticOverflowTransition] = []
+        var newCompletions = ContiguousArray<CommandCompletionRecord>()
 
         let oldestOldLineID = oldSb.totalAppendedLines - UInt64(oldSb.count)
         var hyperlinkHeadMapping: [
@@ -187,6 +197,12 @@ public struct Terminal: Sendable {
             let line = Int(transition.lineID - oldestOldLineID)
             guard line < totalRows else { continue }
             overflowByAbsoluteLine[line, default: []].append(transition)
+        }
+        var completionsByAbsoluteLine: [Int: [CommandCompletionRecord]] = [:]
+        for record in oldCompletions where record.lineID >= oldestOldLineID {
+            let line = Int(record.lineID - oldestOldLineID)
+            guard line < totalRows else { continue }
+            completionsByAbsoluteLine[line, default: []].append(record)
         }
 
         func emitRow(_ cells: [Cell], _ info: RowInfo) {
@@ -297,9 +313,34 @@ public struct Terminal: Sendable {
             transitions.sort {
                 $0.offset == $1.offset ? $0.order < $1.order : $0.offset < $1.offset
             }
+            var completions: [(
+                offset: Int,
+                order: Int,
+                record: CommandCompletionRecord
+            )] = []
+            var completionOrder = 0
+            sourceOffset = 0
+            scan = abs
+            while scan < next {
+                let (rowCells, _) = sourceRow(scan)
+                for record in completionsByAbsoluteLine[scan] ?? [] {
+                    completions.append((
+                        sourceOffset + Int(record.column),
+                        completionOrder,
+                        record
+                    ))
+                    completionOrder += 1
+                }
+                sourceOffset += rowCells.count
+                scan += 1
+            }
+            completions.sort {
+                $0.offset == $1.offset ? $0.order < $1.order : $0.offset < $1.offset
+            }
 
             // 按新宽度切块。
             var transitionIndex = 0
+            var completionIndex = 0
             var semantic = transitions.first?.mark.predecessor ?? headInfo.semanticMark
             var isFirst = true
             var lastChunkStart = 0
@@ -333,6 +374,20 @@ public struct Terminal: Sendable {
                     }
                     semantic = transition.mark
                     transitionIndex += 1
+                }
+                while completionIndex < completions.count {
+                    let item = completions[completionIndex]
+                    let belongsHere = item.offset < end
+                        || (item.offset == end && end == cells.count)
+                    guard belongsHere else { break }
+                    if item.offset >= start {
+                        newCompletions.append(CommandCompletionRecord(
+                            lineID: rowID,
+                            column: item.offset - start,
+                            completion: item.record.completion
+                        ))
+                    }
+                    completionIndex += 1
                 }
                 for transition in rowTransitions.dropLast() {
                     newOverflow.append(SemanticOverflowTransition(
@@ -385,6 +440,10 @@ public struct Terminal: Sendable {
         let firstRetainedID = UInt64(max(0, emitted - retainedRows))
         semanticOverflowTransitions = newOverflow.filter { $0.lineID >= firstRetainedID }
         semanticOverflowStart = 0
+        commandCompletionRecords = ContiguousArray(
+            newCompletions.filter { $0.lineID >= firstRetainedID }
+        )
+        commandCompletionStart = 0
         if var store = hyperlinks {
             let delta = store.remapHeads(hyperlinkHeadMapping ?? [:])
             applyHyperlinkReferenceDelta(delta)
@@ -520,6 +579,8 @@ public struct Terminal: Sendable {
 
     public mutating func execute(_ control: UInt8) {
         switch control {
+        case 0x07:
+            pendingEvents.append(.bell)
         case 0x0A, 0x0B, 0x0C: // LF VT FF
             lineFeed()
         case 0x0D:
@@ -532,7 +593,7 @@ public struct Terminal: Sendable {
             let next = (grid.cursorCol / 8 + 1) * 8
             grid.cursorCol = min(next, grid.size.columns - 1)
         default:
-            break // BEL 等交给外壳层关心，核心不管
+            break
         }
     }
 
@@ -695,23 +756,92 @@ public struct Terminal: Sendable {
             else { return }
             setActiveHyperlink(uri.isEmpty ? nil : uri)
         case 133:
-            // 语义标记（任务 #8 细化）：A 提示符 / B 命令 / C 输出 / D 结束。
-            let mark: SemanticMark
-            switch payload.first.map({ Character(UnicodeScalar($0)) }) {
-            case "A": mark = .prompt
-            case "B": mark = .command
-            case "C": mark = .output
-            case "D": mark = .none
-            default: return
-            }
-            currentSemantic = mark
-            // DECAWM 的延迟折行状态下，光标仍停在末格，但语义边界实际位于
-            // 行尾之后；下一可打印字符才会进入 wrapped 延续行。
-            let transitionColumn = pendingWrap ? grid.size.columns : grid.cursorCol
-            stampSemantic(mark, at: transitionColumn)
+            handleOSC133(payload)
         default:
             break // OSC 8 超链接、52 剪贴板是 P1（roadmap）
         }
+    }
+
+    mutating func handleOSC133(
+        _ payload: ArraySlice<UInt8>,
+        now: ContinuousClock.Instant = ContinuousClock().now
+    ) {
+        guard let code = payload.first else { return }
+        let mark: SemanticMark
+        switch code {
+        case UInt8(ascii: "A"):
+            mark = .prompt
+            commandStartedAt = nil
+        case UInt8(ascii: "B"):
+            mark = .command
+            commandStartedAt = nil
+        case UInt8(ascii: "C"):
+            mark = .output
+            commandStartedAt = now
+        case UInt8(ascii: "D"):
+            mark = .none
+            if let startedAt = commandStartedAt {
+                let completion = CommandCompletion(
+                    exitStatus: Self.osc133ExitStatus(payload),
+                    duration: startedAt.duration(to: now)
+                )
+                let column = pendingWrap ? grid.size.columns : grid.cursorCol
+                let lineID = scrollback.totalAppendedLines + UInt64(grid.cursorRow)
+                appendCommandCompletion(.init(
+                    lineID: lineID,
+                    column: column,
+                    completion: completion
+                ))
+                pendingEvents.append(.commandCompleted(completion))
+            }
+            commandStartedAt = nil
+        default:
+            return
+        }
+        currentSemantic = mark
+        // DECAWM 的延迟折行状态下，光标仍停在末格，但语义边界实际位于
+        // 行尾之后；下一可打印字符才会进入 wrapped 延续行。
+        let transitionColumn = pendingWrap ? grid.size.columns : grid.cursorCol
+        stampSemantic(mark, at: transitionColumn)
+    }
+
+    private static func osc133ExitStatus(_ payload: ArraySlice<UInt8>) -> UInt8? {
+        guard payload.count >= 3 else { return nil }
+        let separator = payload.index(after: payload.startIndex)
+        guard payload[separator] == UInt8(ascii: ";") else { return nil }
+        let digits = payload[payload.index(after: separator)...]
+        guard !digits.isEmpty,
+              digits.allSatisfy({ (48...57).contains($0) }),
+              let value = UInt16(String(decoding: digits, as: UTF8.self)),
+              value <= 255
+        else { return nil }
+        return UInt8(value)
+    }
+
+    public mutating func takeEvents() -> [TerminalEvent] {
+        guard !pendingEvents.isEmpty else { return [] }
+        defer { pendingEvents.removeAll(keepingCapacity: true) }
+        return Array(pendingEvents)
+    }
+
+    var liveCommandCompletionRecords: ArraySlice<CommandCompletionRecord> {
+        commandCompletionRecords[commandCompletionStart...]
+    }
+
+    var commandCompletionRecordCount: Int {
+        commandCompletionRecords.count - commandCompletionStart
+    }
+
+    private mutating func appendCommandCompletion(_ record: CommandCompletionRecord) {
+        if commandCompletionStart == commandCompletionRecords.count
+            || commandCompletionRecords.last!.lineID <= record.lineID {
+            commandCompletionRecords.append(record)
+            return
+        }
+        let index = commandCompletionRecords[commandCompletionStart...].firstIndex {
+            $0.lineID > record.lineID
+        } ?? commandCompletionRecords.endIndex
+        commandCompletionRecords.insert(record, at: index)
     }
 
     // MARK: - 行为
@@ -1035,6 +1165,9 @@ public struct Terminal: Sendable {
             if semanticOverflowStart < semanticOverflowTransitions.count {
                 pruneSemanticOverflow()
             }
+            if commandCompletionStart < commandCompletionRecords.count {
+                pruneCommandCompletions()
+            }
             pruneHyperlinks()
         } else {
             let top = scrollTop
@@ -1138,6 +1271,19 @@ public struct Terminal: Sendable {
         }
     }
 
+    private mutating func pruneCommandCompletions() {
+        let oldestLineID = scrollback.totalAppendedLines - UInt64(scrollback.count)
+        while commandCompletionStart < commandCompletionRecords.count,
+              commandCompletionRecords[commandCompletionStart].lineID < oldestLineID {
+            commandCompletionStart += 1
+        }
+        if commandCompletionStart >= 256,
+           commandCompletionStart * 2 >= commandCompletionRecords.count {
+            commandCompletionRecords.removeFirst(commandCompletionStart)
+            commandCompletionStart = 0
+        }
+    }
+
     // MARK: - 擦除与编辑
 
     private mutating func eraseDisplay(mode: Int) {
@@ -1163,6 +1309,10 @@ public struct Terminal: Sendable {
             semanticOverflowTransitions = semanticOverflowTransitions[semanticOverflowStart...]
                 .filter { $0.lineID < gridBase }
             semanticOverflowStart = 0
+            commandCompletionRecords = ContiguousArray(
+                liveCommandCompletionRecords.filter { $0.lineID < gridBase }
+            )
+            commandCompletionStart = 0
         case 3:
             let screenFragments = hyperlinkFragments(in: 0...(grid.size.rows - 1))
             removeCurrentHyperlinks()
@@ -1177,6 +1327,17 @@ public struct Terminal: Sendable {
                 )
             }
             semanticOverflowStart = 0
+            commandCompletionRecords = ContiguousArray(
+                liveCommandCompletionRecords.compactMap { record in
+                    guard record.lineID >= gridBase else { return nil }
+                    return CommandCompletionRecord(
+                        lineID: record.lineID - gridBase,
+                        column: Int(record.column),
+                        completion: record.completion
+                    )
+                }
+            )
+            commandCompletionStart = 0
             scrollback.removeAll() // xterm 扩展：连历史一起清
             for fragment in screenFragments { insertHyperlinkFragment(fragment) }
             searchLayoutRevision &+= 1

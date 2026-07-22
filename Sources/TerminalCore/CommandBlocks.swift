@@ -13,10 +13,16 @@ public struct SemanticTextRange: Sendable, Equatable {
 public struct CommandBlock: Sendable, Equatable {
     public let commandRange: SemanticTextRange
     public let outputRange: SemanticTextRange?
+    public let completion: CommandCompletion?
 
-    public init(commandRange: SemanticTextRange, outputRange: SemanticTextRange?) {
+    public init(
+        commandRange: SemanticTextRange,
+        outputRange: SemanticTextRange?,
+        completion: CommandCompletion? = nil
+    ) {
         self.commandRange = commandRange
         self.outputRange = outputRange
+        self.completion = completion
     }
 }
 
@@ -29,6 +35,7 @@ extension Terminal {
         var commandStart: TextPosition?
         var completedCommand: SemanticTextRange?
         var outputStart: TextPosition?
+        var completionStarted = false
 
         let oldestLineID = scrollback.totalAppendedLines - UInt64(scrollback.count)
         var overflowByLine: [Int: [SemanticOverflowTransition]] = [:]
@@ -38,14 +45,33 @@ extension Terminal {
             guard line < totalLines else { continue }
             overflowByLine[line, default: []].append(transition)
         }
+        var completionsByLine: [Int: [CommandCompletionRecord]] = [:]
+        for record in liveCommandCompletionRecords where record.lineID >= oldestLineID {
+            let line = Int(record.lineID - oldestLineID)
+            guard line < totalLines else { continue }
+            completionsByLine[line, default: []].append(record)
+        }
+
+        var completionCursorByLine: [Int: Int] = [:]
+        func takeCompletion(at position: TextPosition) -> CommandCompletion? {
+            guard let records = completionsByLine[position.line] else { return nil }
+            let start = completionCursorByLine[position.line, default: 0]
+            guard let index = records.indices[start...].first(where: {
+                Int(records[$0].column) == position.column
+            }) else { return nil }
+            completionCursorByLine[position.line] = index + 1
+            return records[index].completion
+        }
 
         func consume(_ mark: SemanticMark, at position: TextPosition) {
             switch mark {
             case .command:
+                completionStarted = false
                 if let command = completedCommand, let outputStart {
                     blocks.append(CommandBlock(
                         commandRange: command,
-                        outputRange: SemanticTextRange(start: outputStart, end: position)
+                        outputRange: SemanticTextRange(start: outputStart, end: position),
+                        completion: nil
                     ))
                 }
                 commandStart = position
@@ -53,16 +79,19 @@ extension Terminal {
                 outputStart = nil
 
             case .output:
+                completionStarted = true
                 guard let start = commandStart, start <= position else { return }
                 completedCommand = SemanticTextRange(start: start, end: position)
                 commandStart = nil
                 outputStart = position
 
             case .prompt:
+                completionStarted = false
                 if let command = completedCommand, let outputStart, outputStart <= position {
                     blocks.append(CommandBlock(
                         commandRange: command,
-                        outputRange: SemanticTextRange(start: outputStart, end: position)
+                        outputRange: SemanticTextRange(start: outputStart, end: position),
+                        completion: nil
                     ))
                 }
                 commandStart = nil
@@ -70,10 +99,13 @@ extension Terminal {
                 outputStart = nil
 
             case .none:
+                let completion = completionStarted ? takeCompletion(at: position) : nil
+                completionStarted = false
                 if let command = completedCommand, let outputStart, outputStart <= position {
                     blocks.append(CommandBlock(
                         commandRange: command,
-                        outputRange: SemanticTextRange(start: outputStart, end: position)
+                        outputRange: SemanticTextRange(start: outputStart, end: position),
+                        completion: completion
                     ))
                 }
                 commandStart = nil
