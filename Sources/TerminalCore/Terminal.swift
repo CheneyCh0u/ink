@@ -81,6 +81,7 @@ public struct Terminal: Sendable {
 
     private static let maxNotificationTitleBytes = 128
     private static let maxNotificationBodyBytes = 1024
+    private static let maxPendingEvents = 64
 
     private var currentAttr = Cell.Attr.default
     /// 延迟折行：写满最后一列后光标停在原地，下一个可打印字符才真正折行。
@@ -594,7 +595,7 @@ public struct Terminal: Sendable {
     public mutating func execute(_ control: UInt8) {
         switch control {
         case 0x07:
-            pendingEvents.append(.bell)
+            emit(.bell)
         case 0x0A, 0x0B, 0x0C: // LF VT FF
             lineFeed()
         case 0x0D:
@@ -803,7 +804,7 @@ public struct Terminal: Sendable {
             maximumBytes: Self.maxNotificationBodyBytes,
             requiresVisibleContent: true
         ) else { return }
-        pendingEvents.append(.notification(.init(title: nil, body: body)))
+        emit(.notification(.init(title: nil, body: body)))
     }
 
     private mutating func handleOSC777(_ payload: ArraySlice<UInt8>) {
@@ -827,7 +828,7 @@ public struct Terminal: Sendable {
               )
         else { return }
 
-        pendingEvents.append(.notification(.init(
+        emit(.notification(.init(
             title: title.isEmpty ? nil : title,
             body: body
         )))
@@ -880,7 +881,7 @@ public struct Terminal: Sendable {
                     column: column,
                     completion: completion
                 ))
-                pendingEvents.append(.commandCompleted(completion))
+                emit(.commandCompleted(completion))
             }
             commandStartedAt = nil
         default:
@@ -910,6 +911,11 @@ public struct Terminal: Sendable {
         guard !pendingEvents.isEmpty else { return [] }
         defer { pendingEvents.removeAll(keepingCapacity: true) }
         return Array(pendingEvents)
+    }
+
+    private mutating func emit(_ event: TerminalEvent) {
+        guard pendingEvents.count < Self.maxPendingEvents else { return }
+        pendingEvents.append(event)
     }
 
     var liveCommandCompletionRecords: ArraySlice<CommandCompletionRecord> {

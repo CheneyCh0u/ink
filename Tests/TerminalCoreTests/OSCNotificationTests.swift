@@ -109,6 +109,22 @@ struct OSCNotificationTests {
         #expect(events(for: [Array("\u{1B}]9;坏 ST\u{1B}x".utf8)]).isEmpty)
         #expect(events(for: [Array("\u{1B}]9;未结束".utf8)]).isEmpty)
     }
+
+    @Test("单个输出 chunk 最多积压六十四个通知事件")
+    func boundedEventQueue() {
+        let input = (0..<80)
+            .map { "\u{1B}]9;消息\($0)\u{7}" }
+            .joined()
+        let received = events(for: [Array(input.utf8)])
+
+        #expect(received.count == 64)
+        #expect(received.first == .notification(.init(title: nil, body: "消息0")))
+        #expect(received.last == .notification(.init(title: nil, body: "消息63")))
+
+        #expect(events(for: [Array("\u{1B}]9;下一批\u{7}".utf8)]) == [
+            .notification(.init(title: nil, body: "下一批")),
+        ])
+    }
 }
 
 private func events(for chunks: [[UInt8]]) -> [TerminalEvent] {
