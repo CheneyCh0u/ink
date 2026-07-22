@@ -76,6 +76,30 @@ struct TerminalLinkInteractionTests {
         #expect(input.isEmpty)
     }
 
+    @Test("上下文 Shell 项按捕获方向转发")
+    func contextShellItemsForwardActions() throws {
+        let terminal = Terminal(size: TerminalSize(columns: 40, rows: 6))
+        let (window, view) = makeWindowView(terminal: { terminal })
+        var shownMenu: NSMenu?
+        var findCount = 0
+        var clearCount = 0
+        var splits: [TerminalContextSplitDirection] = []
+        view.onFind = { findCount += 1 }
+        view.onSplit = { splits.append($0) }
+        view.onClearScrollback = { clearCount += 1 }
+        view.contextMenuPresenter = { menu, _, _ in shownMenu = menu }
+        view.rightMouseDown(with: try event(.rightMouseDown, in: window, modifiers: []))
+
+        for title in ["查找…", "向左分屏", "向右分屏", "向上分屏", "向下分屏", "清除滚动缓冲区"] {
+            let item = try #require(shownMenu?.items.first { $0.title == title })
+            _ = NSApp.sendAction(try #require(item.action), to: item.target, from: item)
+        }
+
+        #expect(findCount == 1)
+        #expect(splits == [.left, .right, .up, .down])
+        #expect(clearCount == 1)
+    }
+
     @Test("鼠标上报时普通右键上报，Option 右键开原生菜单")
     func routesContextClick() {
         #expect(LinkMouseRouter.contextAction(mouseReporting: true, optionHeld: false) == .reportToTUI)

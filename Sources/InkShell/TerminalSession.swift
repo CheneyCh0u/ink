@@ -71,6 +71,12 @@ public final class TerminalSession {
         onUpdate?()
     }
 
+    /// 本地删除历史并保留屏幕；不向 PTY 写转义序列。
+    public func clearScrollback() {
+        terminal.clearScrollback()
+        onUpdate?()
+    }
+
     public func terminate() {
         pty.terminate()
     }

@@ -369,6 +369,9 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         workspaceVC.onWeightsChange = { [weak self] _, _ in
             self?.workspaceDidChange()
         }
+        workspaceVC.onSplitPane = { [weak self] _, direction in
+            self?.splitActivePane(direction: direction)
+        }
 
         if activeProject?.tabs.isEmpty ?? true, !firstSessionScheduled {
             firstSessionScheduled = true

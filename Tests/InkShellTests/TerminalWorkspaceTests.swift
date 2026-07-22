@@ -336,6 +336,67 @@ struct TerminalWorkspaceTests {
         #expect(terminalView.fontThickenStrength == 160)
     }
 
+    @Test("右键清历史只作用点击 pane 并激活它")
+    func contextClearTargetsClickedPane() throws {
+        let first = TerminalPane(session: TerminalSession(
+            size: TerminalSize(columns: 12, rows: 2),
+            scrollbackLines: 20
+        ))
+        let second = TerminalPane(session: TerminalSession(
+            size: TerminalSize(columns: 12, rows: 2),
+            scrollbackLines: 20
+        ))
+        first.session.consumeOutput(Data("first old\r\nfirst mid\r\nfirst screen".utf8))
+        second.session.consumeOutput(Data("second old\r\nsecond mid\r\nsecond screen".utf8))
+        let firstScreen = (0..<first.session.terminal.grid.size.rows).map {
+            Array(first.session.terminal.grid.row($0))
+        }
+        let secondHistoryCount = second.session.terminal.scrollback.count
+        let tab = TerminalTab(initialPane: first)
+        _ = tab.insertPane(second, splitting: first.id, direction: .right)
+        let workspace = TerminalWorkspaceViewController()
+        workspace.show(tab: tab, config: InkConfig())
+        let firstView = try #require(workspace.terminalView(for: first.id))
+
+        firstView.onClearScrollback?()
+
+        #expect(tab.activePaneID == first.id)
+        #expect(first.session.terminal.scrollback.count == 0)
+        #expect((0..<first.session.terminal.grid.size.rows).map {
+            Array(first.session.terminal.grid.row($0))
+        } == firstScreen)
+        #expect(second.session.terminal.scrollback.count == secondHistoryCount)
+    }
+
+    @Test("右键查找与四方向分屏按点击 pane 路由")
+    func contextActionsTargetClickedPane() throws {
+        let first = makePane()
+        let second = makePane()
+        let tab = TerminalTab(initialPane: first)
+        _ = tab.insertPane(second, splitting: first.id, direction: .right)
+        let workspace = TerminalWorkspaceViewController()
+        workspace.show(tab: tab, config: InkConfig())
+        let firstView = try #require(workspace.terminalView(for: first.id))
+        var splits: [(PaneID, PaneSplitDirection)] = []
+        workspace.onSplitPane = { splits.append(($0, $1)) }
+
+        firstView.onFind?()
+        #expect(tab.activePaneID == first.id)
+        #expect(workspace.activeSearchPaneID == first.id)
+        workspace.closeSearch(returnFocus: false)
+
+        for direction in [
+            TerminalContextSplitDirection.left,
+            .right,
+            .up,
+            .down,
+        ] {
+            firstView.onSplit?(direction)
+        }
+        #expect(splits.map(\.0) == Array(repeating: first.id, count: 4))
+        #expect(splits.map(\.1) == [.left, .right, .up, .down])
+    }
+
     private func makePane() -> TerminalPane {
         TerminalPane(session: TerminalSession(size: TerminalSize(columns: 80, rows: 24)))
     }
