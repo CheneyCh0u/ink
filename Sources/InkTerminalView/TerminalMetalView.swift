@@ -40,6 +40,9 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     var contextMenuPresenter: (NSMenu, NSEvent, NSView) -> Void = {
         NSMenu.popUpContextMenu($0, with: $1, for: $2)
     }
+    var commandMenuPresenter: (NSMenu, NSView, NSPoint) -> Void = { menu, view, point in
+        menu.popUp(positioning: nil, at: point, in: view)
+    }
 
     // MARK: - 配置项（外壳从 InkConfig 映射进来）
 
@@ -200,8 +203,8 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
                 systemSymbolName: "ellipsis.circle",
                 accessibilityDescription: "命令操作"
             ) ?? NSImage(),
-            target: nil,
-            action: nil
+            target: self,
+            action: #selector(showCommandHoverMenu(_:))
         )
         button.identifier = NSUserInterfaceItemIdentifier("ink.command-hover")
         button.imagePosition = .imageOnly
@@ -739,7 +742,8 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     private func updateHover(
         at point: NSPoint,
         terminal: Terminal,
-        modifiers: NSEvent.ModifierFlags = []
+        modifiers: NSEvent.ModifierFlags = [],
+        allowsCommandHover: Bool = true
     ) {
         guard let renderer, bounds.contains(point) else {
             setHoveredLink(nil, cell: nil)
@@ -757,6 +761,10 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
             setHoveredLink(position.flatMap { terminal.link(at: $0) }, cell: position)
         }
 
+        guard allowsCommandHover else {
+            hideCommandHover()
+            return
+        }
         guard let position else {
             hideCommandHover()
             return
@@ -813,6 +821,86 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         )
     }
 
+    @objc private func showCommandHoverMenu(_ sender: NSButton) {
+        guard let target = hoveredCommandTarget,
+              let terminal = terminalProvider?(),
+              let resolution = CommandHoverResolver.resolve(target, in: terminal)
+        else {
+            hideCommandHover()
+            return
+        }
+
+        func item(_ title: String, action: Selector?, enabled: Bool) -> NSMenuItem {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            item.target = self
+            item.representedObject = CommandHoverMenuPayload(target: target)
+            item.isEnabled = enabled
+            return item
+        }
+
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        menu.items = [
+            item(
+                "上一条命令",
+                action: #selector(navigateToHoveredPreviousCommand(_:)),
+                enabled: resolution.previous != nil
+            ),
+            item(
+                "下一条命令",
+                action: #selector(navigateToHoveredNextCommand(_:)),
+                enabled: resolution.next != nil
+            ),
+            .separator(),
+            item("拷贝命令", action: #selector(copyHoveredCommand(_:)), enabled: true),
+            item(
+                "拷贝命令输出",
+                action: #selector(copyHoveredCommandOutput(_:)),
+                enabled: resolution.block.outputRange != nil
+            ),
+        ]
+        commandMenuPresenter(menu, self, NSPoint(
+            x: sender.frame.minX,
+            y: sender.frame.minY
+        ))
+    }
+
+    @objc func navigateToHoveredPreviousCommand(_ sender: NSMenuItem) {
+        guard let (terminal, resolution) = resolveHoveredCommand(from: sender),
+              let previous = resolution.previous else { return }
+        revealCommand(previous, in: terminal)
+    }
+
+    @objc func navigateToHoveredNextCommand(_ sender: NSMenuItem) {
+        guard let (terminal, resolution) = resolveHoveredCommand(from: sender),
+              let next = resolution.next else { return }
+        revealCommand(next, in: terminal)
+    }
+
+    @objc func copyHoveredCommand(_ sender: NSMenuItem) {
+        guard let (terminal, resolution) = resolveHoveredCommand(from: sender) else { return }
+        _ = writeToPasteboard(terminal.extractText(in: resolution.block.commandRange))
+    }
+
+    @objc func copyHoveredCommandOutput(_ sender: NSMenuItem) {
+        guard let (terminal, resolution) = resolveHoveredCommand(from: sender),
+              let outputRange = resolution.block.outputRange else { return }
+        _ = writeToPasteboard(terminal.extractText(in: outputRange))
+    }
+
+    private func resolveHoveredCommand(
+        from sender: NSMenuItem
+    ) -> (Terminal, CommandHoverResolution)? {
+        guard let payload = sender.representedObject as? CommandHoverMenuPayload,
+              let terminal = terminalProvider?(),
+              let resolution = CommandHoverResolver.resolve(payload.target, in: terminal)
+        else {
+            hideCommandHover()
+            return nil
+        }
+        return (terminal, resolution)
+    }
+
     private func setHoveredLink(_ link: TerminalLink?, cell: TextPosition?) {
         let changed = link != hoveredLink
         hoveredLink = link
@@ -830,7 +918,8 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         }
         updateHover(
             at: convert(window.mouseLocationOutsideOfEventStream, from: nil),
-            terminal: terminal
+            terminal: terminal,
+            allowsCommandHover: false
         )
         hoverNeedsRefresh = false
     }

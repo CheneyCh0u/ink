@@ -81,7 +81,7 @@ struct TerminalCommandHoverTests {
         #expect(input.isEmpty)
     }
 
-    @Test("终端更新立即隐藏入口")
+    @Test("终端更新隐藏入口且帧刷新不重新扫描")
     func terminalUpdateHidesEntry() throws {
         let terminal = makeCommandHoverTerminal()
         let line = try #require(terminal.commandBlocks().first?.commandRange.start.line)
@@ -92,6 +92,10 @@ struct TerminalCommandHoverTests {
 
         view.markDirty()
 
+        #expect(button.isHidden)
+        let frameTick = NSSelectorFromString("frameTick")
+        #expect(view.responds(to: frameTick))
+        _ = view.perform(frameTick)
         #expect(button.isHidden)
     }
 
@@ -131,13 +135,83 @@ struct TerminalCommandHoverTests {
 
         #expect(button.isHidden)
     }
+
+    @Test("命令入口菜单提供相对导航与精确拷贝")
+    func menuStructureAndAvailability() throws {
+        let terminal = makeCommandHoverTerminal()
+        let line = try #require(terminal.commandBlocks().first?.commandRange.start.line)
+        let (window, view) = makeCommandHoverWindow(terminal: { terminal })
+        var shownMenu: NSMenu?
+        view.commandMenuPresenter = { menu, _, _ in shownMenu = menu }
+        view.mouseMoved(with: try hoverEvent(in: window, view: view, absoluteLine: line))
+        let button = try #require(commandHoverButton(in: view))
+
+        button.performClick(nil)
+
+        let menu = try #require(shownMenu)
+        #expect(menu.items.map(\.title) == [
+            "上一条命令", "下一条命令", "", "拷贝命令", "拷贝命令输出",
+        ])
+        #expect(!menu.items[0].isEnabled)
+        #expect(menu.items[1].isEnabled)
+        #expect(menu.items[3].isEnabled)
+        #expect(menu.items[4].isEnabled)
+    }
+
+    @Test("拷贝动作使用悬停命令并拒绝 reflow 后旧载荷")
+    func copiesHoveredBlockAndRejectsStalePayload() throws {
+        var terminal = makeCommandHoverTerminal()
+        let line = try #require(terminal.commandBlocks().first?.commandRange.start.line)
+        let (window, view) = makeCommandHoverWindow(terminal: { terminal })
+        var shownMenu: NSMenu?
+        var copied: [String] = []
+        view.commandMenuPresenter = { menu, _, _ in shownMenu = menu }
+        view.pasteboardWriter = { copied.append($0); return true }
+        view.mouseMoved(with: try hoverEvent(in: window, view: view, absoluteLine: line))
+        try #require(commandHoverButton(in: view)).performClick(nil)
+        let menu = try #require(shownMenu)
+
+        view.copyHoveredCommand(menu.items[3])
+        view.copyHoveredCommandOutput(menu.items[4])
+
+        #expect(copied == ["first", "one"])
+
+        terminal.resize(to: .init(columns: 20, rows: 12))
+        view.copyHoveredCommand(menu.items[3])
+        #expect(copied == ["first", "one"])
+    }
+
+    @Test("上一条与下一条始终相对悬停命令导航")
+    func navigatesRelativeToHoveredBlock() throws {
+        let terminal = makeCommandHoverTerminal()
+        let blocks = terminal.commandBlocks()
+        let firstLine = try #require(blocks.first?.commandRange.start.line)
+        let middleLine = try #require(blocks.dropFirst().first?.commandRange.start.line)
+        let lastLine = try #require(blocks.last?.commandRange.start.line)
+        let (window, view) = makeCommandHoverWindow(terminal: { terminal })
+        var shownMenu: NSMenu?
+        view.commandMenuPresenter = { menu, _, _ in shownMenu = menu }
+        view.mouseMoved(with: try hoverEvent(
+            in: window,
+            view: view,
+            absoluteLine: middleLine
+        ))
+        try #require(commandHoverButton(in: view)).performClick(nil)
+        let menu = try #require(shownMenu)
+
+        view.navigateToHoveredPreviousCommand(menu.items[0])
+        #expect(view.commandNavigationLine == firstLine)
+
+        view.navigateToHoveredNextCommand(menu.items[1])
+        #expect(view.commandNavigationLine == lastLine)
+    }
 }
 
 @MainActor
 private func makeCommandHoverWindow(
     terminal: @escaping () -> Terminal
 ) -> (NSWindow, TerminalMetalView) {
-    let window = NSWindow(
+    let window = CommandHoverTestWindow(
         contentRect: NSRect(x: 0, y: 0, width: 720, height: 420),
         styleMask: [.titled], backing: .buffered, defer: false
     )
@@ -178,9 +252,11 @@ private func hoverEvent(
     let yFromTop = (oneRow - cellHeight) / 2
         + CGFloat(visualRow) * cellHeight
         + cellHeight / 2
+    let location = NSPoint(x: x, y: view.bounds.height - yFromTop)
+    (window as? CommandHoverTestWindow)?.testMouseLocation = location
     return try #require(NSEvent.mouseEvent(
         with: .mouseMoved,
-        location: NSPoint(x: x, y: view.bounds.height - yFromTop),
+        location: location,
         modifierFlags: modifiers,
         timestamp: 0,
         windowNumber: window.windowNumber,
@@ -189,6 +265,13 @@ private func hoverEvent(
         clickCount: 0,
         pressure: 0
     ))
+}
+
+@MainActor
+private final class CommandHoverTestWindow: NSWindow {
+    var testMouseLocation = NSPoint.zero
+
+    override var mouseLocationOutsideOfEventStream: NSPoint { testMouseLocation }
 }
 
 @MainActor
