@@ -191,6 +191,27 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     private var hoveredCell: TextPosition?
     private var hoverNeedsRefresh = true
     private var rightMouseReportsToTUI = false
+    private var hoveredCommandTarget: CommandHoverTarget?
+    private var commandHoverExaminedLine: Int?
+    private var hoveredCommandVisualRow: Int?
+    private lazy var commandHoverButton: NSButton = {
+        let button = NSButton(
+            image: NSImage(
+                systemSymbolName: "ellipsis.circle",
+                accessibilityDescription: "命令操作"
+            ) ?? NSImage(),
+            target: nil,
+            action: nil
+        )
+        button.identifier = NSUserInterfaceItemIdentifier("ink.command-hover")
+        button.imagePosition = .imageOnly
+        button.bezelStyle = .accessoryBarAction
+        button.toolTip = "命令操作"
+        button.setAccessibilityLabel("命令操作")
+        button.isHidden = true
+        addSubview(button)
+        return button
+    }()
 
     var hoveredLinkForTesting: TerminalLink? { hoveredLink }
 
@@ -235,6 +256,7 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     /// 切换会话时清掉视图侧的瞬态（滚动位置、选区、预编辑）。
     /// 这些状态属于"这块玻璃"而不是会话，切走就没有意义了。
     public func resetTransientState() {
+        hideCommandHover()
         scrollOffset = 0
         scrollAccumulator = 0
         clearSelection()
@@ -440,6 +462,7 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     }
 
     public func markDirty() {
+        hideCommandHover()
         dirty = true
         hoverNeedsRefresh = true
         // 有输出时让光标立即实心，观感跟系统终端一致。
@@ -452,6 +475,7 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard window != nil else {
+            hideCommandHover()
             displayLink?.invalidate()
             displayLink = nil
             return
@@ -494,6 +518,9 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     public override func layout() {
         super.layout()
         updateDrawableSize()
+        if let visualRow = hoveredCommandVisualRow {
+            positionCommandHoverButton(visualRow: visualRow)
+        }
     }
 
     private func rebuildRenderer() {
@@ -577,6 +604,7 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     // MARK: - 滚动
 
     public override func scrollWheel(with event: NSEvent) {
+        hideCommandHover()
         guard let renderer, let terminal = terminalProvider?() else { return }
 
         scrollAccumulator += event.scrollingDeltaY
@@ -708,9 +736,14 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         return terminal.link(at: position)
     }
 
-    private func updateHover(at point: NSPoint, terminal: Terminal) {
+    private func updateHover(
+        at point: NSPoint,
+        terminal: Terminal,
+        modifiers: NSEvent.ModifierFlags = []
+    ) {
         guard let renderer, bounds.contains(point) else {
             setHoveredLink(nil, cell: nil)
+            hideCommandHover()
             return
         }
         let position = hitPosition(
@@ -719,8 +752,65 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
             renderer: renderer,
             clampToGrid: false
         )
-        guard position != hoveredCell || hoverNeedsRefresh else { return }
-        setHoveredLink(position.flatMap { terminal.link(at: $0) }, cell: position)
+        let needsLinkRefresh = position != hoveredCell || hoverNeedsRefresh
+        if needsLinkRefresh {
+            setHoveredLink(position.flatMap { terminal.link(at: $0) }, cell: position)
+        }
+
+        guard let position else {
+            hideCommandHover()
+            return
+        }
+        let nativeMouseAllowed = terminal.modes.mouseMode == .none
+            || modifiers.contains(.option)
+        guard hoveredLink == nil, nativeMouseAllowed else {
+            hideCommandHover()
+            return
+        }
+        guard position.line != commandHoverExaminedLine else { return }
+        commandHoverExaminedLine = position.line
+        guard let target = CommandHoverResolver.target(
+            startingAt: position.line,
+            in: terminal
+        ) else {
+            hideCommandHover(resetExaminedLine: false)
+            return
+        }
+        let viewportStart = terminal.scrollback.count
+            - min(scrollOffset, terminal.scrollback.count)
+        showCommandHover(target: target, visualRow: position.line - viewportStart)
+    }
+
+    private func showCommandHover(target: CommandHoverTarget, visualRow: Int) {
+        hoveredCommandTarget = target
+        hoveredCommandVisualRow = visualRow
+        positionCommandHoverButton(visualRow: visualRow)
+        commandHoverButton.isHidden = false
+    }
+
+    private func hideCommandHover(resetExaminedLine: Bool = true) {
+        if !commandHoverButton.isHidden {
+            commandHoverButton.isHidden = true
+        }
+        hoveredCommandTarget = nil
+        hoveredCommandVisualRow = nil
+        if resetExaminedLine { commandHoverExaminedLine = nil }
+    }
+
+    private func positionCommandHoverButton(visualRow: Int) {
+        guard let renderer else { return }
+        let size = NSSize(width: 22, height: 22)
+        let inset = InkDesignTokens.Spacing.sm
+        let rowTop = inset + CGFloat(visualRow) * renderer.cellSizePoints.height
+        commandHoverButton.frame = NSRect(
+            x: max(inset, bounds.maxX - inset - size.width),
+            y: max(0, min(
+                rowTop + (renderer.cellSizePoints.height - size.height) / 2,
+                bounds.maxY - size.height
+            )),
+            width: size.width,
+            height: size.height
+        )
     }
 
     private func setHoveredLink(_ link: TerminalLink?, cell: TextPosition?) {
@@ -747,14 +837,20 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
 
     public override func mouseMoved(with event: NSEvent) {
         guard let terminal = terminalProvider?() else { return }
-        updateHover(at: convert(event.locationInWindow, from: nil), terminal: terminal)
+        updateHover(
+            at: convert(event.locationInWindow, from: nil),
+            terminal: terminal,
+            modifiers: event.modifierFlags
+        )
     }
 
     public override func mouseExited(with event: NSEvent) {
         setHoveredLink(nil, cell: nil)
+        hideCommandHover()
     }
 
     public override func mouseDown(with event: NSEvent) {
+        hideCommandHover()
         window?.makeFirstResponder(self)
         if event.modifierFlags.contains(.command),
            let link = link(at: event),
@@ -789,6 +885,7 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     }
 
     public override func mouseDragged(with event: NSEvent) {
+        hideCommandHover()
         if reportMouse(event, action: .drag, button: 0) { return }
         guard let anchor = selectionAnchor,
               let pos = hitPosition(event),
@@ -936,6 +1033,7 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     }
 
     public override func keyDown(with event: NSEvent) {
+        hideCommandHover()
         if event.modifierFlags.contains(.command) {
             super.keyDown(with: event)
             return
