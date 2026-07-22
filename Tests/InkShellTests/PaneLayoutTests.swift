@@ -240,6 +240,32 @@ struct PaneLayoutTests {
         #expect(nearBottom.neighbor(of: left, direction: .right) == rightBottom)
     }
 
+    @Test("嵌套偏移中的数学同分仍按布局顺序决胜")
+    func nestedOffsetTieUsesDFSOrderDespiteRounding() {
+        let spacer = PaneID()
+        let left = PaneID()
+        let rightTop = PaneID()
+        let rightBottom = PaneID()
+        let layout = PaneLayout.group(
+            id: SplitID(), axis: .topBottom, weights: [0.002, 0.998],
+            children: [
+                .leaf(spacer),
+                .group(
+                    id: SplitID(), axis: .leftRight, weights: [0.5, 0.5],
+                    children: [
+                        .leaf(left),
+                        .group(
+                            id: SplitID(), axis: .topBottom, weights: [0.5, 0.5],
+                            children: [.leaf(rightTop), .leaf(rightBottom)]
+                        ),
+                    ]
+                ),
+            ]
+        )
+
+        #expect(layout.neighbor(of: left, direction: .right) == rightTop)
+    }
+
     @Test("对角 pane 不跳转且无效权重等分回退")
     func diagonalIsRejectedAndInvalidWeightsFallBackEqually() {
         let topLeft = PaneID()

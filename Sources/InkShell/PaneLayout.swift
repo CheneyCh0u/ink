@@ -1,5 +1,7 @@
 import Foundation
 
+private let paneNavigationEpsilon = 1e-9
+
 struct PaneID: Hashable, Sendable {
     let rawValue: UUID
 
@@ -68,8 +70,11 @@ private struct PaneNavigationScore {
     let ordinal: Int
 
     func isBetter(than other: Self) -> Bool {
-        if axialGap != other.axialGap { return axialGap < other.axialGap }
-        if perpendicularCenterGap != other.perpendicularCenterGap {
+        if abs(axialGap - other.axialGap) > paneNavigationEpsilon {
+            return axialGap < other.axialGap
+        }
+        if abs(perpendicularCenterGap - other.perpendicularCenterGap)
+            > paneNavigationEpsilon {
             return perpendicularCenterGap < other.perpendicularCenterGap
         }
         return ordinal < other.ordinal
@@ -284,7 +289,6 @@ indirect enum PaneLayout: Equatable, Sendable {
         candidateOrdinal: Int,
         direction: PaneSplitDirection
     ) -> PaneNavigationScore? {
-        let epsilon = 1e-9
         let xOverlap = min(active.maxX, candidate.maxX) - max(active.minX, candidate.minX)
         let yOverlap = min(active.maxY, candidate.maxY) - max(active.minY, candidate.minY)
         let axialGap: Double
@@ -292,23 +296,23 @@ indirect enum PaneLayout: Equatable, Sendable {
 
         switch direction {
         case .left:
-            guard candidate.maxX <= active.minX + epsilon,
-                  yOverlap > epsilon else { return nil }
+            guard candidate.maxX <= active.minX + paneNavigationEpsilon,
+                  yOverlap > paneNavigationEpsilon else { return nil }
             axialGap = max(0, active.minX - candidate.maxX)
             centerGap = abs(active.midY - candidate.midY)
         case .right:
-            guard candidate.minX >= active.maxX - epsilon,
-                  yOverlap > epsilon else { return nil }
+            guard candidate.minX >= active.maxX - paneNavigationEpsilon,
+                  yOverlap > paneNavigationEpsilon else { return nil }
             axialGap = max(0, candidate.minX - active.maxX)
             centerGap = abs(active.midY - candidate.midY)
         case .up:
-            guard candidate.maxY <= active.minY + epsilon,
-                  xOverlap > epsilon else { return nil }
+            guard candidate.maxY <= active.minY + paneNavigationEpsilon,
+                  xOverlap > paneNavigationEpsilon else { return nil }
             axialGap = max(0, active.minY - candidate.maxY)
             centerGap = abs(active.midX - candidate.midX)
         case .down:
-            guard candidate.minY >= active.maxY - epsilon,
-                  xOverlap > epsilon else { return nil }
+            guard candidate.minY >= active.maxY - paneNavigationEpsilon,
+                  xOverlap > paneNavigationEpsilon else { return nil }
             axialGap = max(0, candidate.minY - active.maxY)
             centerGap = abs(active.midX - candidate.midX)
         }
