@@ -418,4 +418,46 @@ struct OSC8HyperlinkTests {
         #expect(terminal.scrollback.count == 0)
         #expect(terminal.link(at: .init(line: 1, column: 1))?.target == "https://screen.test")
     }
+
+    @Test("公共清历史回收旧 OSC 8 并把屏上链接重编号")
+    func directClearRebasesVisibleHyperlinks() {
+        var (parser, terminal) = makeTerminal(columns: 10, rows: 2)
+        feed(
+            "\u{1B}]8;;https://old.test\u{07}old\u{1B}]8;;\u{07}\r\nnext\r\n",
+            &parser,
+            &terminal
+        )
+        feed(
+            "\u{1B}]8;;https://screen.test\u{07}screen\u{1B}]8;;\u{07}",
+            &parser,
+            &terminal
+        )
+        #expect(terminal.scrollback.count > 0)
+
+        terminal.clearScrollback()
+
+        #expect(terminal.scrollback.count == 0)
+        #expect(terminal.link(at: .init(line: 1, column: 1))?.target == "https://screen.test")
+        #expect(terminal.explicitHyperlinkRecordCount == 1)
+        #expect(terminal.explicitHyperlinkRowAnchorCount == 1)
+    }
+
+    @Test("备用屏清历史同时重编号可见与保存主屏链接")
+    func directClearRebasesAlternateAndSavedPrimaryLinks() {
+        var (parser, terminal) = makeTerminal(columns: 10, rows: 2)
+        feed("old\r\nnext\r\n", &parser, &terminal)
+        feed(
+            "\u{1B}]8;;https://main.test\u{07}main\u{1B}]8;;\u{07}\u{1B}[?1049h",
+            &parser,
+            &terminal
+        )
+        feed("\u{1B}]8;;https://alt.test\u{07}alt\u{1B}]8;;\u{07}", &parser, &terminal)
+
+        terminal.clearScrollback()
+
+        #expect(terminal.link(at: .init(line: 0, column: 1))?.target == "https://alt.test")
+        feed("\u{1B}[?1049l", &parser, &terminal)
+        #expect(terminal.scrollback.count == 0)
+        #expect(terminal.link(at: .init(line: 1, column: 1))?.target == "https://main.test")
+    }
 }

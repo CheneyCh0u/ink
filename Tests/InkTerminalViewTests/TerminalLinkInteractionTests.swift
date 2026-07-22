@@ -6,6 +6,104 @@ import TerminalCore
 @Suite("终端链接交互")
 @MainActor
 struct TerminalLinkInteractionTests {
+    @Test("普通位置弹出完整原生菜单且显示前已聚焦")
+    func ordinaryPositionShowsCompleteMenuAfterFocus() throws {
+        let terminal = Terminal(size: TerminalSize(columns: 40, rows: 3))
+        let (window, view) = makeWindowView(terminal: { terminal })
+        var shownMenu: NSMenu?
+        var focusedBeforePresentation = false
+        var focused = false
+        view.onFocus = { focused = true }
+        view.onFind = {}
+        view.onSplit = { _ in }
+        view.onClearScrollback = {}
+        view.pasteboardReader = { "paste text" }
+        view.contextMenuPresenter = { menu, _, _ in
+            focusedBeforePresentation = focused
+            shownMenu = menu
+        }
+
+        view.rightMouseDown(with: try event(.rightMouseDown, in: window, modifiers: []))
+
+        #expect(focusedBeforePresentation)
+        #expect(menuTitles(shownMenu) == [
+            "拷贝", "粘贴", "—", "查找…", "—",
+            "向左分屏", "向右分屏", "向上分屏", "向下分屏",
+            "—", "清除滚动缓冲区",
+        ])
+        #expect(shownMenu?.items.first { $0.action == #selector(TerminalMetalView.copy(_:)) }?.isEnabled == false)
+        #expect(shownMenu?.items.first { $0.action == #selector(TerminalMetalView.paste(_:)) }?.isEnabled == true)
+        #expect(shownMenu?.items.first { $0.title == "向左分屏" }?.isEnabled == true)
+        #expect(shownMenu?.items.first { $0.title == "向右分屏" }?.isEnabled == true)
+        #expect(shownMenu?.items.first { $0.title == "向上分屏" }?.isEnabled == false)
+        #expect(shownMenu?.items.first { $0.title == "向下分屏" }?.isEnabled == false)
+    }
+
+    @Test("剪贴板没有非空文本时禁用粘贴")
+    func disablesPasteWithoutText() throws {
+        let terminal = Terminal(size: TerminalSize(columns: 40, rows: 3))
+        let (window, view) = makeWindowView(terminal: { terminal })
+        var shownMenu: NSMenu?
+        view.contextMenuPresenter = { menu, _, _ in shownMenu = menu }
+        view.pasteboardReader = { nil }
+
+        view.rightMouseDown(with: try event(.rightMouseDown, in: window, modifiers: []))
+        #expect(shownMenu?.items.first { $0.action == #selector(TerminalMetalView.paste(_:)) }?.isEnabled == false)
+
+        view.pasteboardReader = { "" }
+        view.rightMouseDown(with: try event(.rightMouseDown, in: window, modifiers: []))
+        #expect(shownMenu?.items.first { $0.action == #selector(TerminalMetalView.paste(_:)) }?.isEnabled == false)
+    }
+
+    @Test("上下文粘贴仍经过 SafePaste 风险确认")
+    func contextPasteUsesSafePaste() throws {
+        let terminal = Terminal(size: TerminalSize(columns: 40, rows: 6))
+        let (window, view) = makeWindowView(terminal: { terminal })
+        let presenter = ContextMenuSafePastePresenter()
+        var shownMenu: NSMenu?
+        var input = Data()
+        view.safePastePresenter = presenter
+        view.pasteboardReader = { "rm one\nrm two" }
+        view.onInput = { input.append($0) }
+        view.contextMenuPresenter = { menu, _, _ in shownMenu = menu }
+
+        view.rightMouseDown(with: try event(.rightMouseDown, in: window, modifiers: []))
+        let pasteItem = try #require(shownMenu?.items.first {
+            $0.action == #selector(TerminalMetalView.paste(_:))
+        })
+        _ = NSApp.sendAction(try #require(pasteItem.action), to: pasteItem.target, from: pasteItem)
+
+        #expect(presenter.assessments == [SafePasteAssessment(
+            lineCount: 2,
+            risks: [.multipleLines, .unprotectedTarget]
+        )])
+        #expect(input.isEmpty)
+    }
+
+    @Test("上下文 Shell 项按捕获方向转发")
+    func contextShellItemsForwardActions() throws {
+        let terminal = Terminal(size: TerminalSize(columns: 40, rows: 6))
+        let (window, view) = makeWindowView(terminal: { terminal })
+        var shownMenu: NSMenu?
+        var findCount = 0
+        var clearCount = 0
+        var splits: [TerminalContextSplitDirection] = []
+        view.onFind = { findCount += 1 }
+        view.onSplit = { splits.append($0) }
+        view.onClearScrollback = { clearCount += 1 }
+        view.contextMenuPresenter = { menu, _, _ in shownMenu = menu }
+        view.rightMouseDown(with: try event(.rightMouseDown, in: window, modifiers: []))
+
+        for title in ["查找…", "向左分屏", "向右分屏", "向上分屏", "向下分屏", "清除滚动缓冲区"] {
+            let item = try #require(shownMenu?.items.first { $0.title == title })
+            _ = NSApp.sendAction(try #require(item.action), to: item.target, from: item)
+        }
+
+        #expect(findCount == 1)
+        #expect(splits == [.left, .right, .up, .down])
+        #expect(clearCount == 1)
+    }
+
     @Test("鼠标上报时普通右键上报，Option 右键开原生菜单")
     func routesContextClick() {
         #expect(LinkMouseRouter.contextAction(mouseReporting: true, optionHeld: false) == .reportToTUI)
@@ -61,7 +159,14 @@ struct TerminalLinkInteractionTests {
         #expect(input.count > bytesAfterDown)
 
         view.rightMouseDown(with: try event(.rightMouseDown, in: window, modifiers: [.option]))
-        #expect(shownMenu?.items.map(\.title) == ["打开链接", "复制链接"])
+        #expect(menuTitles(shownMenu) == [
+            "打开链接", "复制链接", "—", "拷贝", "粘贴", "—", "查找…", "—",
+            "向左分屏", "向右分屏", "向上分屏", "向下分屏",
+            "—", "清除滚动缓冲区",
+        ])
+        let bytesBeforeUp = input.count
+        view.rightMouseUp(with: try event(.rightMouseUp, in: window, modifiers: [.option]))
+        #expect(input.count == bytesBeforeUp)
     }
 
     @Test("复制动作使用菜单创建时的目标")
@@ -73,7 +178,9 @@ struct TerminalLinkInteractionTests {
         view.contextMenuPresenter = { menu, _, _ in shownMenu = menu }
         view.pasteboardWriter = { copied = $0; return true }
         view.rightMouseDown(with: try event(.rightMouseDown, in: window, modifiers: []))
-        let copyItem = try #require(shownMenu?.items.last)
+        let copyItem = try #require(shownMenu?.items.first {
+            $0.action == #selector(TerminalMetalView.copyLink(_:))
+        })
 
         var parser = Parser()
         terminal = Terminal(size: TerminalSize(columns: 40, rows: 3))
@@ -89,6 +196,43 @@ struct TerminalLinkInteractionTests {
         view.mouseMoved(with: try event(.mouseMoved, in: window, modifiers: []))
         #expect(view.hoveredLinkForTesting?.target == "https://example.test")
         #expect(view.hoveredLinkForTesting?.range.start == TextPosition(line: 0, column: 0))
+    }
+
+    @Test("清历史通知丢弃旧链接悬停")
+    func clearScrollbackResetsHover() throws {
+        let terminal = linkedTerminal(mouseReporting: false)
+        let (window, view) = makeWindowView(terminal: { terminal })
+        view.mouseMoved(with: try event(.mouseMoved, in: window, modifiers: []))
+        #expect(view.hoveredLinkForTesting != nil)
+
+        view.scrollbackDidClear()
+
+        #expect(view.hoveredLinkForTesting == nil)
+    }
+
+    @Test("清历史通知丢弃旧选区")
+    func clearScrollbackResetsSelection() throws {
+        var terminal = Terminal(size: TerminalSize(columns: 40, rows: 3))
+        var parser = Parser()
+        parser.feed(Array("select this text".utf8), handler: &terminal)
+        let (window, view) = makeWindowView(terminal: { terminal })
+        let copyItem = NSMenuItem(
+            title: "拷贝",
+            action: #selector(TerminalMetalView.copy(_:)),
+            keyEquivalent: ""
+        )
+        view.mouseDown(with: try event(.leftMouseDown, in: window, modifiers: [], x: 12))
+        view.mouseDragged(with: try event(
+            .leftMouseDragged,
+            in: window,
+            modifiers: [],
+            x: 80
+        ))
+        #expect(view.validateMenuItem(copyItem))
+
+        view.scrollbackDidClear()
+
+        #expect(!view.validateMenuItem(copyItem))
     }
 
     @Test("终端内容 inset 不会夹到边缘链接 cell")
@@ -116,6 +260,20 @@ struct TerminalLinkInteractionTests {
 
         #expect(view.hoveredLinkForTesting == nil)
         #expect(opened == nil)
+    }
+}
+
+private func menuTitles(_ menu: NSMenu?) -> [String] {
+    menu?.items.map { $0.isSeparatorItem ? "—" : $0.title } ?? []
+}
+
+@MainActor
+private final class ContextMenuSafePastePresenter: SafePastePresenting {
+    var assessments: [SafePasteAssessment] = []
+
+    func choose(for assessment: SafePasteAssessment) -> SafePasteChoice {
+        assessments.append(assessment)
+        return .cancel
     }
 }
 

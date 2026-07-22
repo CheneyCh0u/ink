@@ -20,6 +20,10 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     public var onFocus: (() -> Void)?
     /// 由外壳注入系统 URL 打开动作，视图层不依赖具体系统服务。
     public var onOpenLink: ((URL) -> Void)?
+    /// 由外壳按 pane 注入的冷路径菜单动作，保持视图层不依赖 Workspace。
+    public var onFind: (() -> Void)?
+    public var onSplit: ((TerminalContextSplitDirection) -> Void)?
+    public var onClearScrollback: (() -> Void)?
     /// 搜索控制器按需提供结果，避免视图长期共享数组导致增量更新触发全量 CoW。
     public var searchResultsProvider: (() -> ([TerminalSearchMatch], Int?))?
     /// 危险粘贴确认可替换，测试不弹真实窗口。
@@ -29,6 +33,9 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         return pasteboard.setString(text, forType: .string)
+    }
+    var pasteboardReader: () -> String? = {
+        NSPasteboard.general.string(forType: .string)
     }
     var contextMenuPresenter: (NSMenu, NSEvent, NSView) -> Void = {
         NSMenu.popUpContextMenu($0, with: $1, for: $2)
@@ -237,6 +244,23 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         currentSearchIndex = nil
         commandNavigationAnchor = nil
         searchResultsProvider = nil
+        markDirty()
+    }
+
+    /// Core 删除历史后，所有基于旧绝对行坐标的视图瞬态必须一起失效。
+    /// 搜索 provider 由 Shell 保留并以新 generation 重启，输入法预编辑不受影响。
+    public func scrollbackDidClear() {
+        scrollOffset = 0
+        scrollAccumulator = 0
+        selection = nil
+        selectionAnchor = nil
+        searchResults.removeAll(keepingCapacity: false)
+        currentSearchIndex = nil
+        commandNavigationAnchor = nil
+        hoveredLink = nil
+        hoveredCell = nil
+        rightMouseReportsToTUI = false
+        window?.invalidateCursorRects(for: self)
         markDirty()
     }
 
@@ -795,27 +819,65 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
             _ = reportMouse(event, action: .press, button: 2)
             return
         }
-        guard let link = link(at: event) else { return }
-        let payload = TerminalLinkMenuPayload(target: link.target)
+        window?.makeFirstResponder(self)
+        let menu = makeContextMenu(link: link(at: event))
+        contextMenuPresenter(menu, event, self)
+    }
+
+    private func makeContextMenu(link: TerminalLink?) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
-        let openItem = NSMenuItem(
-            title: "打开链接",
-            action: #selector(openLink(_:)),
-            keyEquivalent: ""
-        )
-        openItem.target = self
-        openItem.representedObject = payload.target
-        openItem.isEnabled = payload.url != nil && onOpenLink != nil
-        let copyItem = NSMenuItem(
-            title: "复制链接",
-            action: #selector(copyLink(_:)),
-            keyEquivalent: ""
-        )
-        copyItem.target = self
-        copyItem.representedObject = payload.target
-        menu.items = [openItem, copyItem]
-        contextMenuPresenter(menu, event, self)
+        if let link {
+            menu.addItem(contextMenuItem(
+                title: "打开链接",
+                action: #selector(openLink(_:)),
+                representedObject: link.target
+            ))
+            menu.addItem(contextMenuItem(
+                title: "复制链接",
+                action: #selector(copyLink(_:)),
+                representedObject: link.target
+            ))
+            menu.addItem(.separator())
+        }
+        menu.addItem(contextMenuItem(title: "拷贝", action: #selector(copy(_:))))
+        menu.addItem(contextMenuItem(title: "粘贴", action: #selector(paste(_:))))
+        menu.addItem(.separator())
+        menu.addItem(contextMenuItem(
+            title: "查找…",
+            action: #selector(findFromContextMenu(_:))
+        ))
+        menu.addItem(.separator())
+        for (title, direction) in [
+            ("向左分屏", TerminalContextSplitDirection.left),
+            ("向右分屏", .right),
+            ("向上分屏", .up),
+            ("向下分屏", .down),
+        ] {
+            menu.addItem(contextMenuItem(
+                title: title,
+                action: #selector(splitFromContextMenu(_:)),
+                representedObject: direction
+            ))
+        }
+        menu.addItem(.separator())
+        menu.addItem(contextMenuItem(
+            title: "清除滚动缓冲区",
+            action: #selector(clearScrollbackFromContextMenu(_:))
+        ))
+        return menu
+    }
+
+    private func contextMenuItem(
+        title: String,
+        action: Selector,
+        representedObject: Any? = nil
+    ) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        item.representedObject = representedObject
+        item.isEnabled = validateMenuItem(item)
+        return item
     }
 
     public override func rightMouseUp(with event: NSEvent) {
@@ -839,6 +901,21 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     @objc func copyLink(_ sender: NSMenuItem) {
         guard let target = sender.representedObject as? String else { return }
         _ = writeToPasteboard(target)
+    }
+
+    @objc private func findFromContextMenu(_ sender: Any?) {
+        onFind?()
+    }
+
+    @objc private func splitFromContextMenu(_ sender: NSMenuItem) {
+        guard let direction = sender.representedObject as? TerminalContextSplitDirection else {
+            return
+        }
+        onSplit?(direction)
+    }
+
+    @objc private func clearScrollbackFromContextMenu(_ sender: Any?) {
+        onClearScrollback?()
     }
 
     @objc public func copy(_ sender: Any?) {
@@ -906,7 +983,7 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     }
 
     @objc public func paste(_ sender: Any?) {
-        guard let text = NSPasteboard.general.string(forType: .string) else { return }
+        guard let text = pasteboardReader() else { return }
         paste(text: text)
     }
 
@@ -942,6 +1019,29 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
 
     public func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(copy(_:)) { return selection != nil }
+        if menuItem.action == #selector(paste(_:)) {
+            return pasteboardReader().map { !$0.isEmpty } ?? false
+        }
+        if menuItem.action == #selector(openLink(_:)) {
+            guard let target = menuItem.representedObject as? String else { return false }
+            return TerminalLinkMenuPayload(target: target).url != nil && onOpenLink != nil
+        }
+        if menuItem.action == #selector(copyLink(_:)) {
+            return menuItem.representedObject is String
+        }
+        if menuItem.action == #selector(findFromContextMenu(_:)) { return onFind != nil }
+        if menuItem.action == #selector(clearScrollbackFromContextMenu(_:)) {
+            return onClearScrollback != nil
+        }
+        if menuItem.action == #selector(splitFromContextMenu(_:)) {
+            guard onSplit != nil,
+                  let direction = menuItem.representedObject as? TerminalContextSplitDirection,
+                  let size = terminalProvider?().grid.size else { return false }
+            return switch direction {
+            case .left, .right: size.columns >= 20
+            case .up, .down: size.rows >= 6
+            }
+        }
         return true
     }
 

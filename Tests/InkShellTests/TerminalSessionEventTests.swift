@@ -47,4 +47,23 @@ struct TerminalSessionEventTests {
         session.consumeOutput(Data("\u{1B}]52;c;Ynll\u{07}".utf8))
         #expect(effects == [.clipboardWrite("hi")])
     }
+
+    @Test("会话本地清历史保留屏幕并只触发刷新")
+    func clearsScrollbackWithoutPTYRoundTrip() {
+        let session = TerminalSession(size: .init(columns: 12, rows: 2), scrollbackLines: 20)
+        session.consumeOutput(Data("old\r\nvisible\r\nscreen".utf8))
+        let screen = (0..<session.terminal.grid.size.rows).map {
+            Array(session.terminal.grid.row($0))
+        }
+        var updates = 0
+        session.onUpdate = { updates += 1 }
+
+        session.clearScrollback()
+
+        #expect(session.terminal.scrollback.count == 0)
+        #expect((0..<session.terminal.grid.size.rows).map {
+            Array(session.terminal.grid.row($0))
+        } == screen)
+        #expect(updates == 1)
+    }
 }

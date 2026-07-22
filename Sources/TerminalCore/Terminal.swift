@@ -137,6 +137,13 @@ public struct Terminal: Sendable {
         searchLayoutRevision &+= 1
     }
 
+    /// 删除历史但保留当前屏幕。供本地 UI 冷路径使用，与 CSI ED 3 共用主体，
+    /// 不产生任何需要写回 PTY 的字节。
+    public mutating func clearScrollback() {
+        clearScrollbackPreservingScreen()
+        pendingWrap = false
+    }
+
     private mutating func resizeCurrentGridAndHyperlinks(to newSize: TerminalSize) {
         let fragments = hyperlinkFragments(in: 0...(grid.size.rows - 1))
         for row in 0..<grid.size.rows {
@@ -1335,37 +1342,67 @@ public struct Terminal: Sendable {
             )
             commandCompletionStart = 0
         case 3:
-            let screenFragments = hyperlinkFragments(in: 0...(grid.size.rows - 1))
-            removeCurrentHyperlinks()
-            let gridBase = scrollback.totalAppendedLines
-            semanticOverflowTransitions = semanticOverflowTransitions[semanticOverflowStart...]
-                .compactMap { transition in
-                guard transition.lineID >= gridBase else { return nil }
-                return SemanticOverflowTransition(
-                    lineID: transition.lineID - gridBase,
-                    column: Int(transition.column),
-                    mark: transition.mark
-                )
-            }
-            semanticOverflowStart = 0
-            commandCompletionRecords = ContiguousArray(
-                liveCommandCompletionRecords.compactMap { record in
-                    guard record.lineID >= gridBase else { return nil }
-                    return CommandCompletionRecord(
-                        lineID: record.lineID - gridBase,
-                        column: Int(record.column),
-                        completion: record.completion
-                    )
-                }
-            )
-            commandCompletionStart = 0
-            scrollback.removeAll() // xterm 扩展：连历史一起清
-            for fragment in screenFragments { insertHyperlinkFragment(fragment) }
-            searchLayoutRevision &+= 1
+            clearScrollback()
         default:
             break
         }
         pendingWrap = false
+    }
+
+    private mutating func clearScrollbackPreservingScreen() {
+        let screenFragments = hyperlinkFragments(in: 0...(grid.size.rows - 1))
+        let savedPrimaryFragments: [PhysicalHyperlinkFragment]?
+        if let primaryGrid = savedPrimaryGrid {
+            let alternateGrid = grid
+            let alternateHyperlinks = hyperlinks
+            grid = primaryGrid
+            hyperlinks = savedPrimaryHyperlinks
+            savedPrimaryFragments = hyperlinkFragments(in: 0...(grid.size.rows - 1))
+            removeCurrentHyperlinks()
+            savedPrimaryGrid = grid
+            savedPrimaryHyperlinks = nil
+            grid = alternateGrid
+            hyperlinks = alternateHyperlinks
+        } else {
+            savedPrimaryFragments = nil
+        }
+        removeCurrentHyperlinks()
+        let gridBase = scrollback.totalAppendedLines
+        semanticOverflowTransitions = semanticOverflowTransitions[semanticOverflowStart...]
+            .compactMap { transition in
+            guard transition.lineID >= gridBase else { return nil }
+            return SemanticOverflowTransition(
+                lineID: transition.lineID - gridBase,
+                column: Int(transition.column),
+                mark: transition.mark
+            )
+        }
+        semanticOverflowStart = 0
+        commandCompletionRecords = ContiguousArray(
+            liveCommandCompletionRecords.compactMap { record in
+                guard record.lineID >= gridBase else { return nil }
+                return CommandCompletionRecord(
+                    lineID: record.lineID - gridBase,
+                    column: Int(record.column),
+                    completion: record.completion
+                )
+            }
+        )
+        commandCompletionStart = 0
+        scrollback.removeAll() // xterm 扩展：连历史一起清
+        for fragment in screenFragments { insertHyperlinkFragment(fragment) }
+        if let savedPrimaryFragments, let primaryGrid = savedPrimaryGrid {
+            let alternateGrid = grid
+            let alternateHyperlinks = hyperlinks
+            grid = primaryGrid
+            hyperlinks = nil
+            for fragment in savedPrimaryFragments { insertHyperlinkFragment(fragment) }
+            savedPrimaryGrid = grid
+            savedPrimaryHyperlinks = hyperlinks
+            grid = alternateGrid
+            hyperlinks = alternateHyperlinks
+        }
+        searchLayoutRevision &+= 1
     }
 
     private mutating func eraseLine(mode: Int) {

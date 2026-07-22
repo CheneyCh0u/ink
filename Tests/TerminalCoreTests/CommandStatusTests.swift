@@ -131,6 +131,29 @@ struct CommandStatusTests {
         #expect(terminal.commandCompletionRecordCount == 0)
     }
 
+    @Test("公共清历史丢弃历史命令状态并重编号屏上完成记录")
+    func directClearRebasesVisibleCommandState() throws {
+        var (parser, terminal) = makeTerminal(columns: 20, rows: 2, scrollback: 20)
+        feed("old\r\nolder\r\n", &parser, &terminal)
+        feed(
+            "\u{1B}]133;B\u{07}cmd\u{1B}]133;C\u{07}out\u{1B}]133;D;7\u{07}",
+            &parser,
+            &terminal
+        )
+        #expect(terminal.scrollback.count > 0)
+        #expect(terminal.commandCompletionRecordCount == 1)
+
+        terminal.clearScrollback()
+
+        let block = try #require(terminal.commandBlocks().first)
+        #expect(terminal.scrollback.count == 0)
+        #expect(terminal.commandCompletionRecordCount == 1)
+        #expect(block.commandRange.start.line < terminal.grid.size.rows)
+        #expect(block.completion?.exitStatus == 7)
+        #expect(terminal.extractText(in: block.commandRange) == "cmd")
+        #expect(block.outputRange.map { terminal.extractText(in: $0) } == "out")
+    }
+
     @Test("十万条密集命令记录受历史容量约束")
     func denseCommandRecordsStayBounded() {
         let commandCount = 100_000

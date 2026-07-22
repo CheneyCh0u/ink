@@ -138,6 +138,29 @@ struct TerminalSplitCommandTests {
         window.close()
     }
 
+    @Test("非活动 pane 的上下文分屏先聚焦点击目标")
+    func contextSplitTargetsClickedPane() throws {
+        let fixture = makeController(presenter: SplitClosePresenter(result: true))
+        defer { fixture.cleanUp() }
+        let controller = fixture.controller
+        let window = try #require(controller.window)
+        window.setFrame(NSRect(x: 300, y: 200, width: 1000, height: 700), display: true)
+        window.orderFront(nil)
+        controller.newSession(nil)
+        spinRunLoop()
+        controller.splitRight(nil)
+        spinRunLoop()
+        let containers = try #require(window.contentView).subviewsRecursive
+            .compactMap { $0 as? TerminalPaneContainerView }
+        #expect(containers.count == 2)
+        let inactive = try #require(containers.first { !$0.isActive })
+
+        inactive.terminalView.onSplit?(.down)
+        spinRunLoop()
+
+        #expect(terminalViews(in: window).count == 3)
+    }
+
     @Test("活跃前台程序取消后保留分屏，确认后才关闭")
     func activeProgramRequiresConfirmationBeforeClosingPane() throws {
         let presenter = SplitClosePresenter(result: false)
@@ -255,6 +278,12 @@ struct TerminalSplitCommandTests {
             RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
         } while Date() < deadline
         return condition()
+    }
+}
+
+private extension NSView {
+    var subviewsRecursive: [NSView] {
+        subviews.flatMap { [$0] + $0.subviewsRecursive }
     }
 }
 

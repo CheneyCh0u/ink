@@ -54,6 +54,7 @@ final class TerminalPaneContainerView: NSView, WorkspaceSplitMinimumSizing {
 final class TerminalWorkspaceViewController: NSViewController {
     var onActivatePane: ((PaneID) -> Void)?
     var onWeightsChange: ((SplitID, [Double]) -> Void)?
+    var onSplitPane: ((PaneID, PaneSplitDirection) -> Void)?
 
     private weak var currentTab: TerminalTab?
     private var paneContainers: [PaneID: TerminalPaneContainerView] = [:]
@@ -215,6 +216,38 @@ final class TerminalWorkspaceViewController: NSViewController {
         }
     }
 
+    private func find(in paneID: PaneID) {
+        guard currentTab?.panes[paneID] != nil else { return }
+        activate(paneID)
+        _ = openSearchInActivePane()
+    }
+
+    private func requestSplit(
+        _ paneID: PaneID,
+        direction: TerminalContextSplitDirection
+    ) {
+        guard currentTab?.panes[paneID] != nil else { return }
+        activate(paneID)
+        let shellDirection: PaneSplitDirection = switch direction {
+        case .left: .left
+        case .right: .right
+        case .up: .up
+        case .down: .down
+        }
+        onSplitPane?(paneID, shellDirection)
+    }
+
+    private func clearScrollback(in paneID: PaneID) {
+        guard let pane = currentTab?.panes[paneID],
+              let terminalView = terminalView(for: paneID) else { return }
+        activate(paneID)
+        pane.session.clearScrollback()
+        terminalView.scrollbackDidClear()
+        if activeSearchPaneID == paneID {
+            searchController?.terminalHistoryDidClear()
+        }
+    }
+
     func activate(_ paneID: PaneID) {
         guard currentTab?.activePaneID != paneID,
               currentTab?.activate(paneID) == true else { return }
@@ -288,6 +321,15 @@ final class TerminalWorkspaceViewController: NSViewController {
             terminalView.onOpenLink = { url in
                 NSWorkspace.shared.open(url)
             }
+            terminalView.onFind = { [weak self] in
+                self?.find(in: paneID)
+            }
+            terminalView.onSplit = { [weak self] direction in
+                self?.requestSplit(paneID, direction: direction)
+            }
+            terminalView.onClearScrollback = { [weak self] in
+                self?.clearScrollback(in: paneID)
+            }
             let container = TerminalPaneContainerView(paneID: paneID, terminalView: terminalView)
             paneContainers[paneID] = container
             return container
@@ -316,6 +358,9 @@ final class TerminalWorkspaceViewController: NSViewController {
             terminalView.terminalProvider = nil
             terminalView.onFocus = nil
             terminalView.onOpenLink = nil
+            terminalView.onFind = nil
+            terminalView.onSplit = nil
+            terminalView.onClearScrollback = nil
         }
         paneContainers.removeAll()
         NSLayoutConstraint.deactivate(rootConstraints)

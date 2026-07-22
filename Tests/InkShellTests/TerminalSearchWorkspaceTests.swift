@@ -512,6 +512,33 @@ struct TerminalSearchWorkspaceTests {
         #expect(try #require(controller.currentMatch).range.start.line >= 0)
     }
 
+    @Test("清历史取消旧代次并按当前查询重扫屏幕")
+    func historyClearRestartsCurrentQuery() async throws {
+        var parser = Parser()
+        var terminal = Terminal(
+            size: TerminalSize(columns: 12, rows: 2),
+            scrollbackCapacity: 20
+        )
+        parser.feed(Array("hit old\r\nplain\r\nhit visible".utf8), handler: &terminal)
+        let terminalView = TerminalMetalView(frame: .zero)
+        terminalView.terminalProvider = { terminal }
+        let controller = TerminalSearchController(
+            terminalProvider: { terminal }, terminalView: terminalView
+        )
+        controller.updateQuery("hit")
+        await controller.waitForPendingUpdate()
+        #expect(controller.matches.count == 2)
+
+        controller.updateQuery("hit")
+        terminal.clearScrollback()
+        controller.terminalHistoryDidClear()
+
+        #expect(controller.matches.isEmpty)
+        await controller.waitForPendingUpdate()
+        #expect(controller.matches.count == 1)
+        #expect(try #require(controller.currentMatch).range.start.line == 1)
+    }
+
     @Test("同一标签始终只在一个 pane 显示搜索栏")
     func oneOverlayPerTab() throws {
         let first = makeSearchPane()
