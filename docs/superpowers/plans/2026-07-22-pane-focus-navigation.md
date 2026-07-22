@@ -460,7 +460,19 @@ Expected: 编译失败，缺少工作区方向聚焦接口。
 
 - [ ] **Step 3: 实现工作区成功与失败路径**
 
-在现有 `activate(_:)` 与 `focusActivePane()` 附近加入：
+先把现有 `activate(_:)` 调整为幂等：`TerminalMetalView.becomeFirstResponder()` 会调用
+`onFocus`，目标已是活动 pane 时必须静默，避免程序化聚焦产生第二次工作区回调。
+
+```swift
+func activate(_ paneID: PaneID) {
+    guard currentTab?.activePaneID != paneID,
+          currentTab?.activate(paneID) == true else { return }
+    updateActiveBorders()
+    onActivatePane?(paneID)
+}
+```
+
+随后在 `activate(_:)` 与 `focusActivePane()` 附近加入：
 
 ```swift
 func canFocusNeighbor(direction: PaneSplitDirection) -> Bool {

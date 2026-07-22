@@ -166,6 +166,60 @@ struct TerminalWorkspaceTests {
         #expect(!secondView.isActive)
     }
 
+    @Test("方向聚焦同步边框回调和第一响应者")
+    func focusNeighborCoordinatesWorkspaceState() throws {
+        let left = makePane()
+        let right = makePane()
+        let tab = TerminalTab(initialPane: left)
+        _ = tab.insertPane(right, splitting: left.id, direction: .right)
+        _ = tab.activate(left.id)
+        let workspace = TerminalWorkspaceViewController()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentViewController = workspace
+        defer { window.close() }
+        workspace.show(tab: tab, config: InkConfig())
+        var activations: [PaneID] = []
+        workspace.onActivatePane = { activations.append($0) }
+
+        #expect(workspace.canFocusNeighbor(direction: .right))
+        #expect(workspace.focusNeighbor(direction: .right))
+
+        let leftContainer = try #require(workspace.paneContainer(for: left.id))
+        let rightContainer = try #require(workspace.paneContainer(for: right.id))
+        let rightTerminal = try #require(workspace.terminalView(for: right.id))
+        #expect(!leftContainer.isActive)
+        #expect(rightContainer.isActive)
+        #expect(activations == [right.id])
+        #expect(window.firstResponder === rightTerminal)
+    }
+
+    @Test("工作区方向边界不触发回调或改变响应者")
+    func focusNeighborAtBoundaryDoesNotNotify() throws {
+        let pane = makePane()
+        let tab = TerminalTab(initialPane: pane)
+        let workspace = TerminalWorkspaceViewController()
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentViewController = workspace
+        defer { window.close() }
+        workspace.show(tab: tab, config: InkConfig())
+        let terminal = try #require(workspace.terminalView(for: pane.id))
+        _ = window.makeFirstResponder(terminal)
+        var activationCount = 0
+        workspace.onActivatePane = { _ in activationCount += 1 }
+
+        #expect(!workspace.focusNeighbor(direction: .left))
+        #expect(activationCount == 0)
+        #expect(window.firstResponder === terminal)
+    }
+
     @Test("切换标签后旧 pane 视图不再由工作区持有")
     func switchingTabsReleasesOldPaneViews() {
         let firstPane = makePane()
