@@ -58,6 +58,11 @@ public struct Terminal: Sendable {
     /// 放进稀疏旁路表；常规每行单转换仍完全落在 2 字节 RowInfo 内。
     var semanticOverflowTransitions: [SemanticOverflowTransition] = []
     var semanticOverflowStart = 0
+    /// OSC 8 只为实际目标与范围分配旁路状态；普通终端保持三个 nil。
+    var hyperlinkTargets: HyperlinkTargetTable?
+    var hyperlinks: HyperlinkRangeStore?
+    var activeHyperlinkTargetID: UInt32?
+    var savedPrimaryHyperlinks: HyperlinkRangeStore?
     /// 待写回 PTY 的应答（DSR / DA 等查询的回复）。TUI 启动时会探测终端
     /// 并**等待回音**，没有应答通道它们会直接卡死。会话层每次 feed 后取走。
     private var responseBuffer: [UInt8] = []
@@ -339,6 +344,14 @@ public struct Terminal: Sendable {
             grid[row, col + 1] = Cell(scalar: 0x20, attr: currentAttr | Cell.Attr.wideTrailing)
         }
 
+        if activeHyperlinkTargetID != nil || hyperlinks != nil {
+            replaceHyperlinkCells(
+                row: row,
+                columns: col..<(col + width),
+                targetID: activeHyperlinkTargetID
+            )
+        }
+
         if col + width < cols {
             grid.cursorCol = col + width
         } else {
@@ -536,6 +549,16 @@ public struct Terminal: Sendable {
         switch code {
         case 0, 2:
             title = String(decoding: payload, as: UTF8.self)
+        case 8:
+            guard let uriSeparator = payload.firstIndex(of: UInt8(ascii: ";")) else { return }
+            let uriBytes = payload[payload.index(after: uriSeparator)...]
+            let uri = String(decoding: uriBytes, as: UTF8.self)
+            guard uri.utf8.elementsEqual(uriBytes),
+                  !uri.unicodeScalars.contains(where: {
+                      $0.value < 0x20 || $0.value == 0x7F
+                  })
+            else { return }
+            setActiveHyperlink(uri.isEmpty ? nil : uri)
         case 133:
             // 语义标记（任务 #8 细化）：A 提示符 / B 命令 / C 输出 / D 结束。
             let mark: SemanticMark
@@ -557,6 +580,58 @@ public struct Terminal: Sendable {
     }
 
     // MARK: - 行为
+
+    private mutating func setActiveHyperlink(_ uri: String?) {
+        if let oldID = activeHyperlinkTargetID, var targets = hyperlinkTargets {
+            targets.release(id: oldID, count: 1)
+            hyperlinkTargets = targets.isEmpty ? nil : targets
+        }
+        activeHyperlinkTargetID = nil
+
+        guard let uri else { return }
+        var targets = hyperlinkTargets ?? HyperlinkTargetTable()
+        activeHyperlinkTargetID = targets.retain(uri: uri)
+        hyperlinkTargets = targets
+    }
+
+    private mutating func replaceHyperlinkCells(
+        row: Int,
+        columns: Range<Int>,
+        targetID: UInt32?
+    ) {
+        let stableLineID = scrollback.totalAppendedLines + UInt64(row)
+        if targetID == nil, hyperlinks?.anchor(for: stableLineID) == nil { return }
+
+        let absoluteLine = scrollback.count + row
+        guard let line = logicalLine(containing: TextPosition(line: absoluteLine, column: 0)),
+              let segment = line.segments.first(where: { $0.lineID == stableLineID })
+        else { return }
+
+        let lower = UInt32(clamping: segment.startOffset + columns.lowerBound)
+        let upper = UInt32(clamping: segment.startOffset + columns.upperBound)
+        guard lower < upper else { return }
+
+        var store = hyperlinks ?? HyperlinkRangeStore()
+        let delta = store.replace(
+            headLineID: line.headLineID,
+            offsets: lower..<upper,
+            with: targetID
+        )
+        store.rebuildRowIndex(for: line)
+        applyHyperlinkReferenceDelta(delta)
+        hyperlinks = store.isEmpty ? nil : store
+    }
+
+    private mutating func applyHyperlinkReferenceDelta(_ delta: HyperlinkReferenceDelta) {
+        guard !delta.counts.isEmpty, var targets = hyperlinkTargets else { return }
+        for (id, count) in delta.counts where count > 0 {
+            targets.retain(id: id, count: count)
+        }
+        for (id, count) in delta.counts where count < 0 {
+            targets.release(id: id, count: -count)
+        }
+        hyperlinkTargets = targets.isEmpty ? nil : targets
+    }
 
     private mutating func lineFeed(markWrapped: Bool = false) {
         if grid.cursorRow == scrollBottom {

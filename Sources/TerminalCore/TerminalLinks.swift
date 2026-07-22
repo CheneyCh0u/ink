@@ -210,6 +210,7 @@ enum TerminalURLDetector {
 
 extension Terminal {
     public func link(at position: TextPosition) -> TerminalLink? {
+        if let explicit = explicitLink(at: position) { return explicit }
         guard let line = logicalLine(containing: position),
               let offset = line.logicalOffset(at: position),
               let match = TerminalURLDetector.match(in: line, containing: offset),
@@ -220,6 +221,30 @@ extension Terminal {
             target: match.target,
             range: SemanticTextRange(start: start, end: end),
             source: .detectedURL
+        )
+    }
+
+    var hyperlinkMetadataAllocated: Bool { hyperlinks != nil }
+
+    var explicitHyperlinkRecordCount: Int { hyperlinks?.lines.count ?? 0 }
+
+    private func explicitLink(at position: TextPosition) -> TerminalLink? {
+        guard let hyperlinks,
+              let targets = hyperlinkTargets,
+              let line = logicalLine(containing: position),
+              let offset = line.logicalOffset(at: position),
+              let record = hyperlinks.record(headLineID: line.headLineID),
+              let span = record.spans.first(where: {
+                  $0.offsets.contains(UInt32(clamping: offset))
+              }),
+              let target = targets.uri(for: span.targetID),
+              let start = line.position(at: Int(span.offsets.lowerBound)),
+              let end = line.position(at: Int(span.offsets.upperBound))
+        else { return nil }
+        return TerminalLink(
+            target: target,
+            range: SemanticTextRange(start: start, end: end),
+            source: .osc8
         )
     }
 
