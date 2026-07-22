@@ -60,6 +60,55 @@ struct OSCNotificationTests {
         ])
         #expect(events(for: [Array("\u{1B}]9;\(rejectedBody)\u{7}".utf8)]).isEmpty)
     }
+
+    @Test("UTF-8 与 ST 可跨任意输出 chunk")
+    func chunkedFeed() {
+        let bytes = Array("\u{1B}]777;notify;构建;完成\u{1B}\\".utf8)
+        let chunks = bytes.map { [$0] }
+        #expect(events(for: chunks) == [
+            .notification(.init(title: "构建", body: "完成")),
+        ])
+    }
+
+    @Test("同一 chunk 的多条通知各产生一次")
+    func multipleNotifications() {
+        let input = "\u{1B}]9;一\u{7}\u{1B}]777;notify;二;三\u{1B}\\"
+        #expect(events(for: [Array(input.utf8)]) == [
+            .notification(.init(title: nil, body: "一")),
+            .notification(.init(title: "二", body: "三")),
+        ])
+    }
+
+    @Test("OSC 内嵌 C0 使整段失效", arguments: [UInt8(0x00), 0x09, 0x0A])
+    func embeddedC0(_ control: UInt8) {
+        let prefix = Array("\u{1B}]9;前".utf8)
+        let suffix = Array("后\u{7}".utf8)
+        #expect(events(for: [prefix + [control] + suffix]).isEmpty)
+    }
+
+    @Test("超长 OSC 不执行截断前缀且终止后恢复")
+    func oversizedSequence() {
+        var parser = Parser()
+        var terminal = Terminal(size: .init(columns: 80, rows: 24))
+        let oversized = Array("\u{1B}]0;".utf8)
+            + Array(repeating: UInt8(ascii: "a"), count: 4095)
+            + [0x07]
+        parser.feed(oversized, handler: &terminal)
+        #expect(terminal.title.isEmpty)
+
+        parser.feed(Array("\u{1B}]9;恢复\u{7}".utf8), handler: &terminal)
+        #expect(terminal.takeEvents() == [
+            .notification(.init(title: nil, body: "恢复")),
+        ])
+    }
+
+    @Test("取消、非法 ST 与未终止序列不产生事件")
+    func cancelledOrUnterminated() {
+        #expect(events(for: [Array("\u{1B}]9;取消\u{18}".utf8)]).isEmpty)
+        #expect(events(for: [Array("\u{1B}]9;取消\u{1A}".utf8)]).isEmpty)
+        #expect(events(for: [Array("\u{1B}]9;坏 ST\u{1B}x".utf8)]).isEmpty)
+        #expect(events(for: [Array("\u{1B}]9;未结束".utf8)]).isEmpty)
+    }
 }
 
 private func events(for chunks: [[UInt8]]) -> [TerminalEvent] {
