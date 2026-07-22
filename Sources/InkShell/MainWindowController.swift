@@ -48,6 +48,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
     private let workspaceStore: WorkspaceStore
     private let workspaceSaveScheduler: WorkspaceSaveScheduler
     private let startPaneOverride: ((TerminalSize, String) -> TerminalPane?)?
+    private let notificationCoordinator: CommandNotificationCoordinating
+    private let isApplicationActive: @MainActor () -> Bool
     private var configWatcher: ConfigWatcher?
     private var sidebarMode: SidebarDisplayMode = .expanded
     private var isShowingSettings = false
@@ -77,7 +79,9 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         sessionCloseCoordinator: SessionCloseCoordinator = SessionCloseCoordinator(),
         projectDefaults: UserDefaults = .standard,
         workspaceStore: WorkspaceStore = WorkspaceStore(),
-        startPaneOverride: ((TerminalSize, String) -> TerminalPane?)? = nil
+        startPaneOverride: ((TerminalSize, String) -> TerminalPane?)? = nil,
+        notificationCoordinator: CommandNotificationCoordinating = CommandNotificationCoordinator(),
+        isApplicationActive: @escaping @MainActor () -> Bool = { NSApp.isActive }
     ) {
         let window = NSWindow(
             contentRect: NSRect(
@@ -106,6 +110,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         self.workspaceStore = workspaceStore
         workspaceSaveScheduler = WorkspaceSaveScheduler(store: workspaceStore)
         self.startPaneOverride = startPaneOverride
+        self.notificationCoordinator = notificationCoordinator
+        self.isApplicationActive = isApplicationActive
         self.config = initialConfig
         super.init(window: window)
         window.delegate = self
@@ -657,6 +663,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         } else {
             attachActiveTab()
         }
+        activeProject?.activeTab?.clearAttention()
         refreshChrome()
     }
 
@@ -966,6 +973,36 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
             guard let self, let pane else { return }
             self.handlePaneExit(pane.id)
         }
+        session.onEvent = { [weak self, weak pane] event in
+            guard let self, let pane else { return }
+            self.handleTerminalEvent(event, paneID: pane.id)
+        }
+    }
+
+    private func handleTerminalEvent(_ event: TerminalEvent, paneID: PaneID) {
+        for (projectIndex, project) in projects.enumerated() {
+            for (tabIndex, tab) in project.tabs.enumerated()
+            where tab.panes[paneID] != nil {
+                let applicationActive = isApplicationActive()
+                let visible = !isShowingSettings
+                    && projectIndex == activeProjectIndex
+                    && tabIndex == project.activeTabIndex
+                tab.receive(event, markUnread: !(visible && applicationActive))
+
+                if case let .commandCompleted(completion) = event,
+                   CommandNotificationPolicy.shouldNotify(
+                       isApplicationActive: applicationActive,
+                       completion: completion
+                   ) {
+                    notificationCoordinator.submit(CommandNotificationRequest(
+                        tabTitle: notificationTabTitle(tab),
+                        completion: completion
+                    ))
+                }
+                refreshChromeIfNeeded()
+                return
+            }
+        }
     }
 
     private func handlePaneExit(_ paneID: PaneID) {
@@ -1062,6 +1099,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         guard let project = activeProject, project.tabs.indices.contains(index) else { return }
         hideSettings()
         project.activeTabIndex = index
+        project.tabs[index].clearAttention()
         workspaceDidChange()
         attachActiveTab()
         refreshChrome()
@@ -1100,12 +1138,35 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         return project.displayName
     }
 
+    private func notificationTabTitle(_ tab: TerminalTab) -> String {
+        guard let customName = tab.customName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !customName.isEmpty else { return "终端任务" }
+        return customName
+    }
+
+    private func attentionSignature(_ attention: TabAttention?) -> String {
+        guard let attention else { return "-" }
+        switch attention {
+        case .bell:
+            return "b"
+        case let .completed(completion):
+            let value = completion.duration.components
+            return "c:\(completion.exitStatus.map(String.init) ?? "-"):\(value.seconds):\(value.attoseconds)"
+        case let .failed(completion):
+            let value = completion.duration.components
+            return "f:\(completion.exitStatus.map(String.init) ?? "-"):\(value.seconds):\(value.attoseconds)"
+        }
+    }
+
     private func chromeSignature() -> String {
         let tabs = activeProject.map { project in
-            project.tabs.map { tabTitle($0, project: project) }.joined(separator: "\u{1}")
+            project.tabs.map {
+                "\(tabTitle($0, project: project)):\(attentionSignature($0.attention))"
+            }.joined(separator: "\u{1}")
         } ?? ""
         let sidebar = projects.map {
-            "\($0.displayName):\($0.tabs.count):\($0.label.rawValue)"
+            "\($0.displayName):\($0.tabs.count):\($0.label.rawValue):"
+                + attentionSignature($0.attention)
         }.joined(separator: "\u{1}")
         let pane = activeProject?.activeTab?.activePaneID.rawValue.uuidString ?? ""
         return "\(activeProjectIndex)|\(activeProject?.activeTabIndex ?? -1)|\(pane)|\(tabs)|\(sidebar)"
@@ -1127,7 +1188,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
                 TabBarView.Tab(
                     title: tabTitle(tab, project: project),
                     shortcut: index < 9 ? "⌘\(index + 1)" : "",
-                    active: index == activeTab
+                    active: index == activeTab,
+                    attention: tab.attention
                 )
             }
         } ?? []
@@ -1141,7 +1203,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
                 fullPath: project.displayName,
                 active: !isShowingSettings && index == activeProjectIndex,
                 pinned: project.pinned,
-                label: project.label
+                label: project.label,
+                attention: project.attention
             )
         })
     }
@@ -1178,6 +1241,12 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
 
     public func windowDidResignKey(_ notification: Notification) {
         cancelSplitShortcut()
+    }
+
+    func applicationDidBecomeActive() {
+        guard !isShowingSettings, let tab = activeProject?.activeTab else { return }
+        tab.clearAttention()
+        refreshChromeIfNeeded()
     }
 
     public func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {

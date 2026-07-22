@@ -5,6 +5,12 @@ import Testing
 @Suite("命令系统通知")
 @MainActor
 struct CommandNotificationCoordinatorTests {
+    @Test("默认协调器初始化不访问系统通知中心")
+    func defaultInitializationIsLazy() {
+        let coordinator = CommandNotificationCoordinator()
+        withExtendedLifetime(coordinator) {}
+    }
+
     @Test("只允许失焦后的十秒完整命令")
     func policyThreshold() {
         let short = CommandCompletion(exitStatus: 1, duration: .milliseconds(9_999))

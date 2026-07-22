@@ -23,6 +23,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
+    public func applicationDidBecomeActive(_ notification: Notification) {
+        mainWindowController?.applicationDidBecomeActive()
+    }
+
     public func applicationShouldTerminate(
         _ sender: NSApplication
     ) -> NSApplication.TerminateReply {

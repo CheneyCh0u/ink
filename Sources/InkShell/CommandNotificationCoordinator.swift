@@ -43,13 +43,21 @@ protocol LocalNotificationClient: AnyObject {
 
 @MainActor
 final class CommandNotificationCoordinator: CommandNotificationCoordinating {
-    private let client: LocalNotificationClient
+    private var client: LocalNotificationClient?
 
-    init(client: LocalNotificationClient = UserNotificationClient()) {
+    init(client: LocalNotificationClient? = nil) {
         self.client = client
     }
 
     func submit(_ request: CommandNotificationRequest) {
+        let client: LocalNotificationClient
+        if let existing = self.client {
+            client = existing
+        } else {
+            let created = UserNotificationClient()
+            self.client = created
+            client = created
+        }
         Task { @MainActor [client] in
             let state = await client.authorizationState()
             let allowed: Bool
