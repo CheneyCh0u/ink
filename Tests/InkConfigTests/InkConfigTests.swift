@@ -75,6 +75,19 @@ struct MiniTOMLTests {
 
 @Suite("InkConfig")
 struct InkConfigTests {
+    @Test("OSC 52 写入默认开启且可由 TOML 关闭")
+    func osc52WritePolicy() throws {
+        #expect(InkConfig().osc52WriteEnabled)
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ink-osc52-config-\(UUID().uuidString).toml")
+        try "[clipboard]\nosc52_write = false\n".write(to: file, atomically: true, encoding: .utf8)
+        var config = InkConfig.load(from: file)
+        #expect(!config.osc52WriteEnabled)
+        config.osc52WriteEnabled = true
+        try config.save(to: file)
+        #expect(InkConfig.load(from: file).osc52WriteEnabled)
+    }
+
     @Test("字号默认值与有效范围有单一配置契约")
     func fontSizeContract() {
         #expect(InkConfig.defaultFontSize == 15)
@@ -185,6 +198,7 @@ struct InkConfigTests {
         config.cursorBlink = false
         config.optionAsMeta = false
         config.copyOnSelect = true
+        config.osc52WriteEnabled = false
         config.scrollbackLines = 250_000
         try config.save(to: file)
 

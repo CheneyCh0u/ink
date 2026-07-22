@@ -79,6 +79,7 @@ private struct WireConfig: Codable {
     let cursorBlink: Bool
     let optionAsMeta: Bool
     let copyOnSelect: Bool
+    let osc52WriteEnabled: Bool?
     let scrollbackLines: Int
 
     init(config: InkConfig) {
@@ -98,6 +99,7 @@ private struct WireConfig: Codable {
         cursorBlink = config.cursorBlink
         optionAsMeta = config.optionAsMeta
         copyOnSelect = config.copyOnSelect
+        osc52WriteEnabled = config.osc52WriteEnabled
         scrollbackLines = config.scrollbackLines
     }
 
@@ -133,6 +135,7 @@ private struct WireConfig: Codable {
         result.cursorBlink = cursorBlink
         result.optionAsMeta = optionAsMeta
         result.copyOnSelect = copyOnSelect
+        result.osc52WriteEnabled = osc52WriteEnabled ?? true
         result.scrollbackLines = scrollbackLines
         return result
     }
