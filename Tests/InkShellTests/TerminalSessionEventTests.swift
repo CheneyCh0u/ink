@@ -66,4 +66,25 @@ struct TerminalSessionEventTests {
         } == screen)
         #expect(updates == 1)
     }
+
+    @Test("OSC 通知跨 chunk 上送且 detach 后停止回调")
+    func forwardsNotifications() {
+        let session = TerminalSession(size: .init(columns: 80, rows: 24))
+        var events: [TerminalEvent] = []
+        session.onEvent = { events.append($0) }
+
+        for byte in "\u{1B}]9;第一条\u{1B}\\".utf8 {
+            session.consumeOutput(Data([byte]))
+        }
+        session.consumeOutput(Data("\u{1B}]777;notify;标题;第二条\u{07}".utf8))
+
+        #expect(events == [
+            .notification(.init(title: nil, body: "第一条")),
+            .notification(.init(title: "标题", body: "第二条")),
+        ])
+
+        session.detach()
+        session.consumeOutput(Data("\u{1B}]9;不应回调\u{07}".utf8))
+        #expect(events.count == 2)
+    }
 }
