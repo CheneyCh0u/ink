@@ -27,7 +27,9 @@ struct TerminalSplitCommandTests {
     @Test("Command-W 关闭活动 pane 而不是整个标签")
     func closeCommandRemovesOnlyActivePane() throws {
         let presenter = SplitClosePresenter(result: false)
-        let controller = makeController(presenter: presenter)
+        let fixture = makeController(presenter: presenter)
+        defer { fixture.cleanUp() }
+        let controller = fixture.controller
         let window = try #require(controller.window)
         window.setFrame(NSRect(x: 300, y: 200, width: 1000, height: 700), display: true)
         window.orderFront(nil)
@@ -54,7 +56,9 @@ struct TerminalSplitCommandTests {
     @Test("活跃前台程序取消后保留分屏，确认后才关闭")
     func activeProgramRequiresConfirmationBeforeClosingPane() throws {
         let presenter = SplitClosePresenter(result: false)
-        let controller = makeController(presenter: presenter)
+        let fixture = makeController(presenter: presenter)
+        defer { fixture.cleanUp() }
+        let controller = fixture.controller
         let window = try #require(controller.window)
         window.setFrame(NSRect(x: 300, y: 200, width: 1000, height: 700), display: true)
         window.orderFront(nil)
@@ -66,6 +70,10 @@ struct TerminalSplitCommandTests {
         spinRunLoop()
         let views = terminalViews(in: window)
         #expect(views.count == 2)
+        #expect(waitUntil { controller.allPanes.allSatisfy { pane in
+            if case .shell = pane.session.foregroundProcess { return true }
+            return false
+        } })
         for view in views {
             view.onInput?(Data("sleep 10\r".utf8))
         }
@@ -88,7 +96,9 @@ struct TerminalSplitCommandTests {
     @Test("Command-Q 汇总活跃会话且窗口关闭不重复确认")
     func applicationQuitAggregatesPanesWithoutDuplicateWindowPrompt() throws {
         let presenter = SplitClosePresenter(result: false)
-        let controller = makeController(presenter: presenter)
+        let fixture = makeController(presenter: presenter)
+        defer { fixture.cleanUp() }
+        let controller = fixture.controller
         let window = try #require(controller.window)
         window.setFrame(NSRect(x: 300, y: 200, width: 1000, height: 700), display: true)
         window.orderFront(nil)
@@ -98,6 +108,10 @@ struct TerminalSplitCommandTests {
         spinRunLoop()
         controller.splitRight(nil)
         spinRunLoop()
+        #expect(waitUntil { controller.allPanes.allSatisfy { pane in
+            if case .shell = pane.session.foregroundProcess { return true }
+            return false
+        } })
         for view in terminalViews(in: window) {
             view.onInput?(Data("sleep 10\r".utf8))
         }
@@ -115,14 +129,20 @@ struct TerminalSplitCommandTests {
         window.close()
     }
 
-    private func makeController(presenter: SplitClosePresenter) -> MainWindowController {
-        MainWindowController(
+    private func makeController(presenter: SplitClosePresenter) -> SplitWindowFixture {
+        let suite = "ink-split-window-defaults-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        let controller = MainWindowController(
             initialConfig: InkConfig(),
             configURL: FileManager.default.temporaryDirectory
                 .appendingPathComponent("ink-close-test-\(UUID().uuidString).toml"),
-            configSyncService: ConfigSyncService(),
-            sessionCloseCoordinator: SessionCloseCoordinator(presenter: presenter)
+            configSyncService: ConfigSyncService(defaults: defaults),
+            sessionCloseCoordinator: SessionCloseCoordinator(presenter: presenter),
+            projectDefaults: defaults,
+            workspaceStore: WorkspaceStore(defaults: defaults)
         )
+        return SplitWindowFixture(controller: controller, defaults: defaults, suite: suite)
     }
 
     private func terminalViews(in window: NSWindow) -> [TerminalMetalView] {
@@ -150,6 +170,18 @@ struct TerminalSplitCommandTests {
             RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
         } while Date() < deadline
         return condition()
+    }
+}
+
+@MainActor
+private struct SplitWindowFixture {
+    let controller: MainWindowController
+    let defaults: UserDefaults
+    let suite: String
+
+    func cleanUp() {
+        controller.window?.close()
+        defaults.removePersistentDomain(forName: suite)
     }
 }
 

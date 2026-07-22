@@ -17,11 +17,11 @@ public final class TerminalSession {
 
     private let pty = PTYSession()
     private var parser = Parser()
-    private let workingDirectory: String?
+    private let initialWorkingDirectory: String?
 
     public init(size: TerminalSize, workingDirectory: String? = nil, scrollbackLines: Int = 100_000) {
         terminal = Terminal(size: size, scrollbackCapacity: scrollbackLines)
-        self.workingDirectory = workingDirectory
+        initialWorkingDirectory = workingDirectory
     }
 
     public func start() throws {
@@ -43,7 +43,7 @@ public final class TerminalSession {
         try pty.start(
             columns: terminal.grid.size.columns,
             rows: terminal.grid.size.rows,
-            workingDirectory: workingDirectory
+            workingDirectory: initialWorkingDirectory
         )
     }
 
@@ -74,6 +74,11 @@ public final class TerminalSession {
     /// 创建分屏时继承当前前台进程的工作目录，查询失败由外壳回退项目目录。
     public var foregroundWorkingDirectory: String? {
         pty.foregroundWorkingDirectory()
+    }
+
+    /// 只在工作区落盘时查询；查询失败仍保留创建会话时的目录。
+    var snapshotWorkingDirectory: String? {
+        foregroundWorkingDirectory ?? initialWorkingDirectory
     }
 
     /// 移除会话时先解除退出回调，避免 terminate 触发的回调重入列表管理。

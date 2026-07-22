@@ -107,7 +107,9 @@ struct ConfigSyncWindowTests {
         let controller = MainWindowController(
             initialConfig: initial,
             configURL: configURL,
-            configSyncService: service
+            configSyncService: service,
+            projectDefaults: defaults,
+            workspaceStore: WorkspaceStore(defaults: defaults)
         )
         controller.window?.orderFront(nil)
         return WindowFixture(

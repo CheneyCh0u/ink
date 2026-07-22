@@ -75,6 +75,8 @@ struct FontSizeMenuTests {
 private struct FontSizeMenuWindowFixture {
     let controller: MainWindowController
     let directory: URL
+    let defaults: UserDefaults
+    let suite: String
     private let previousMainMenu: NSMenu?
 
     init() throws {
@@ -89,10 +91,15 @@ private struct FontSizeMenuWindowFixture {
         let configURL = directory.appendingPathComponent("config.toml")
         let config = InkConfig()
         try config.save(to: configURL)
+        suite = "ink-font-menu-defaults-\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
         controller = MainWindowController(
             initialConfig: config,
             configURL: configURL,
-            configSyncService: ConfigSyncService()
+            configSyncService: ConfigSyncService(defaults: defaults),
+            projectDefaults: defaults,
+            workspaceStore: WorkspaceStore(defaults: defaults)
         )
     }
 
@@ -105,6 +112,7 @@ private struct FontSizeMenuWindowFixture {
     func cleanUp() {
         controller.window?.close()
         NSApp.mainMenu = previousMainMenu
+        defaults.removePersistentDomain(forName: suite)
         try? FileManager.default.removeItem(at: directory)
     }
 }

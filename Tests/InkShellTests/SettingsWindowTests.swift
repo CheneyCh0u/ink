@@ -1,4 +1,5 @@
 import AppKit
+import InkConfig
 import InkDesign
 import Testing
 @testable import InkShell
@@ -17,7 +18,9 @@ struct SettingsWindowTests {
 
     @Test("显示设置前后窗口 frame 不变")
     func showingSettingsKeepsWindowFrame() throws {
-        let controller = MainWindowController()
+        let fixture = try SettingsWindowFixture()
+        defer { fixture.cleanUp() }
+        let controller = fixture.controller
         let window = try #require(controller.window)
         window.orderFront(nil)
         spinRunLoop()
@@ -45,7 +48,9 @@ struct SettingsWindowTests {
 
     @Test("设置页打开时顶部栏仍可见并显示选中齿轮")
     func showingSettingsKeepsTabBarVisible() throws {
-        let controller = MainWindowController()
+        let fixture = try SettingsWindowFixture()
+        defer { fixture.cleanUp() }
+        let controller = fixture.controller
         let window = try #require(controller.window)
         window.setFrame(NSRect(x: 640, y: 300, width: 1100, height: 700), display: true)
         window.orderFront(nil)
@@ -70,7 +75,9 @@ struct SettingsWindowTests {
 
     @Test("设置页中点击当前标签返回终端")
     func selectingTabLeavesSettings() throws {
-        let controller = MainWindowController()
+        let fixture = try SettingsWindowFixture()
+        defer { fixture.cleanUp() }
+        let controller = fixture.controller
         let window = try #require(controller.window)
         window.orderFront(nil)
         controller.newSession(nil)
@@ -103,7 +110,9 @@ struct SettingsWindowTests {
 
     @Test("设置页中创建标签返回终端")
     func creatingTabLeavesSettings() throws {
-        let controller = MainWindowController()
+        let fixture = try SettingsWindowFixture()
+        defer { fixture.cleanUp() }
+        let controller = fixture.controller
         let window = try #require(controller.window)
         window.orderFront(nil)
         controller.showSettings(nil)
@@ -124,7 +133,9 @@ struct SettingsWindowTests {
 
     @Test("设置页不显示完成按钮")
     func settingsDoesNotShowDoneButton() throws {
-        let controller = MainWindowController()
+        let fixture = try SettingsWindowFixture()
+        defer { fixture.cleanUp() }
+        let controller = fixture.controller
         let window = try #require(controller.window)
         window.orderFront(nil)
         controller.showSettings(nil)
@@ -140,7 +151,9 @@ struct SettingsWindowTests {
 
     @Test("再次点击选中齿轮返回终端")
     func selectingSettingsAgainLeavesSettings() throws {
-        let controller = MainWindowController()
+        let fixture = try SettingsWindowFixture()
+        defer { fixture.cleanUp() }
+        let controller = fixture.controller
         let window = try #require(controller.window)
         window.orderFront(nil)
         controller.newSession(nil)
@@ -170,10 +183,11 @@ struct SettingsWindowTests {
 
     @Test("设置页中关闭标签不把焦点移到隐藏终端")
     func closingTabWhileShowingSettingsKeepsSettingsFocus() throws {
-        let controller = MainWindowController()
+        let fixture = try SettingsWindowFixture()
+        defer { fixture.cleanUp() }
+        let controller = fixture.controller
         let window = try #require(controller.window)
         window.orderFront(nil)
-        controller.newSession(nil)
         controller.newSession(nil)
         spinRunLoop()
         controller.showSettings(nil)
@@ -201,7 +215,9 @@ struct SettingsWindowTests {
 
     @Test("所有设置分组共享同一内容列")
     func settingsSectionsShareOneContentColumn() throws {
-        let controller = MainWindowController()
+        let fixture = try SettingsWindowFixture()
+        defer { fixture.cleanUp() }
+        let controller = fixture.controller
         let window = try #require(controller.window)
         window.setFrame(NSRect(x: 640, y: 200, width: 1100, height: 800), display: true)
         window.orderFront(nil)
@@ -262,5 +278,67 @@ struct SettingsWindowTests {
         for _ in 0..<cycles {
             RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
         }
+    }
+}
+
+@MainActor
+private final class SettingsWindowFixture {
+    let controller: MainWindowController
+    private let defaults: UserDefaults
+    private let suiteName: String
+    private let directory: URL
+
+    init() throws {
+        directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ink-settings-window-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        suiteName = "ink.settings-window-tests.\(UUID().uuidString)"
+        defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+
+        let project = Project(directory: FileManager.default.homeDirectoryForCurrentUser)
+        ProjectStore.save([project], defaults: defaults)
+        let workspaceStore = WorkspaceStore(defaults: defaults)
+        _ = workspaceStore.save(WorkspaceSnapshot(
+            activeProjectPath: "~",
+            projects: [
+                .init(
+                    path: "~",
+                    activeTabIndex: 0,
+                    tabs: [
+                        .init(
+                            customName: "初始",
+                            activePaneID: "initial",
+                            layout: .leaf(
+                                paneID: "initial",
+                                workingDirectory: "~"
+                            )
+                        ),
+                    ]
+                ),
+            ]
+        ))
+        controller = MainWindowController(
+            initialConfig: InkConfig(),
+            configURL: directory.appendingPathComponent("config.toml"),
+            configSyncService: ConfigSyncService(defaults: defaults),
+            projectDefaults: defaults,
+            workspaceStore: workspaceStore,
+            startPaneOverride: { size, workingDirectory in
+                TerminalPane(session: TerminalSession(
+                    size: size,
+                    workingDirectory: workingDirectory
+                ))
+            }
+        )
+    }
+
+    func cleanUp() {
+        controller.window?.close()
+        defaults.removePersistentDomain(forName: suiteName)
+        try? FileManager.default.removeItem(at: directory)
     }
 }

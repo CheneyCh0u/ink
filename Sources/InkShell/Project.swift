@@ -85,12 +85,12 @@ enum ProjectStore {
     }
 
     @MainActor
-    static func load() -> [Project] {
+    static func load(defaults: UserDefaults = .standard) -> [Project] {
         var stored: [Stored] = []
-        if let data = UserDefaults.standard.data(forKey: key),
+        if let data = defaults.data(forKey: key),
            let decoded = try? JSONDecoder().decode([Stored].self, from: data) {
             stored = decoded
-        } else if let legacy = UserDefaults.standard.stringArray(forKey: legacyKey) {
+        } else if let legacy = defaults.stringArray(forKey: legacyKey) {
             stored = legacy.map { Stored(path: $0, pinned: false, note: nil, label: nil) }
         }
 
@@ -110,7 +110,7 @@ enum ProjectStore {
     }
 
     @MainActor
-    static func save(_ projects: [Project]) {
+    static func save(_ projects: [Project], defaults: UserDefaults = .standard) {
         let stored = projects.map {
             Stored(
                 path: $0.displayName,
@@ -120,12 +120,23 @@ enum ProjectStore {
             )
         }
         if let data = try? JSONEncoder().encode(stored) {
-            UserDefaults.standard.set(data, forKey: key)
+            defaults.set(data, forKey: key)
         }
     }
 
+    static func activeProjectPath(in defaults: UserDefaults = .standard) -> String? {
+        defaults.string(forKey: activeKey)
+    }
+
+    static func setActiveProjectPath(
+        _ path: String?,
+        defaults: UserDefaults = .standard
+    ) {
+        defaults.set(path, forKey: activeKey)
+    }
+
     static var activeProjectPath: String? {
-        get { UserDefaults.standard.string(forKey: activeKey) }
-        set { UserDefaults.standard.set(newValue, forKey: activeKey) }
+        get { activeProjectPath() }
+        set { setActiveProjectPath(newValue) }
     }
 }
