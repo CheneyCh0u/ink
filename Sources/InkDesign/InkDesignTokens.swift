@@ -172,6 +172,15 @@ public enum InkDesignTokens {
         public static let stateDuration: TimeInterval = 0.18
     }
 
+    public enum TabBar {
+        public static let minimumTabWidth: CGFloat = 112
+        public static let idealTabWidth: CGFloat = 168
+        public static let maximumTabWidth: CGFloat = 240
+        public static let itemSpacing: CGFloat = 6
+        public static let overflowButtonWidth: CGFloat = 28
+        public static let closeButtonWidth: CGFloat = 18
+    }
+
     public enum Sidebar {
         public static let width: CGFloat = 258
         /// 必须覆盖 macOS 红绿灯的完整横向占位，避免绿灯跨过分隔线。

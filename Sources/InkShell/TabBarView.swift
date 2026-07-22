@@ -1,8 +1,8 @@
 import AppKit
 import InkDesign
 
-/// 顶部标签栏，Ghostty 式：标签等宽铺满整条带，活动标签白色 pill，
-/// 悬停显示关闭按钮，双击改名，右侧 ⌘n 提示，最右是 +。
+/// 顶部标签栏：标签按内容宽度压缩或进入溢出菜单，活动标签显示 pill，
+/// 悬停显示关闭按钮，双击改名，右侧保留快捷键提示与新建入口。
 /// 系统没有对应控件，这是设计系统里明确允许自绘的地方。
 @MainActor
 final class TabBarView: NSView {
@@ -24,7 +24,16 @@ final class TabBarView: NSView {
     private let toggleButton = NSButton()
     private let plusButton = NSButton()
     private let settingsButton = TabBarSettingsButton()
+    private let overflowButton = TabBarOverflowButton()
     private var toggleLeading: NSLayoutConstraint?
+    private var tabs: [Tab] = []
+    private var tabItems: [TabItemView] = []
+    private var widthConstraints: [NSLayoutConstraint] = []
+    private var previousVisibleRange: Range<Int>?
+    private var appliedLayout: TabBarLayout?
+    private(set) var visibleTabIndices: [Int] = []
+
+    var overflowMenu: NSMenu? { overflowButton.menu }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -57,12 +66,24 @@ final class TabBarView: NSView {
         settingsButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(settingsButton)
 
-        // 标签等宽平分 toggle 与 + 之间的整条空间（Ghostty 风格）。
+        overflowButton.isBordered = false
+        overflowButton.image = NSImage(
+            systemSymbolName: "chevron.down",
+            accessibilityDescription: nil
+        )
+        overflowButton.contentTintColor = InkDesignTokens.Color.textSecondary
+        overflowButton.toolTip = "更多标签"
+        overflowButton.setAccessibilityLabel("更多标签")
+        overflowButton.target = self
+        overflowButton.action = #selector(showOverflowMenu)
+        overflowButton.isHidden = true
+        addSubview(overflowButton)
+
+        // 标签由连续可见区间控制，宽度及位置在 layout 中统一计算。
         stack.orientation = .horizontal
-        stack.distribution = .fillEqually
-        stack.spacing = 6
+        stack.distribution = .fill
+        stack.spacing = InkDesignTokens.TabBar.itemSpacing
         stack.alignment = .centerY
-        stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
 
         let leading = toggleButton.leadingAnchor.constraint(
@@ -72,10 +93,6 @@ final class TabBarView: NSView {
         NSLayoutConstraint.activate([
             leading,
             toggleButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            stack.leadingAnchor.constraint(equalTo: toggleButton.trailingAnchor, constant: 10),
-            stack.trailingAnchor.constraint(equalTo: plusButton.leadingAnchor, constant: -8),
-            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
-            stack.heightAnchor.constraint(equalToConstant: 28),
             plusButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             settingsButton.leadingAnchor.constraint(equalTo: plusButton.trailingAnchor, constant: 6),
             settingsButton.trailingAnchor.constraint(
@@ -115,19 +132,166 @@ final class TabBarView: NSView {
     }
 
     func reload(tabs: [Tab]) {
-        stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        for (index, tab) in tabs.enumerated() {
+        overflowButton.menu?.cancelTracking()
+        overflowButton.menu = nil
+        stack.arrangedSubviews.forEach {
+            stack.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+        tabItems.forEach { $0.removeFromSuperview() }
+        widthConstraints.forEach { $0.isActive = false }
+        widthConstraints.removeAll(keepingCapacity: true)
+
+        self.tabs = tabs
+        tabItems = tabs.enumerated().map { index, tab in
             let item = TabItemView(tab: tab)
+            item.translatesAutoresizingMaskIntoConstraints = false
             item.onSelect = { [weak self] in self?.onSelect?(index) }
             item.onClose = { [weak self] in self?.onClose?(index) }
             item.onRename = { [weak self] name in self?.onRename?(index, name) }
-            stack.addArrangedSubview(item)
+            return item
         }
+        visibleTabIndices = []
+        appliedLayout = nil
+        invalidateIntrinsicContentSize()
+        needsLayout = true
+    }
+
+    override var intrinsicContentSize: NSSize {
+        let tabWidth = tabItems.map(\.preferredWidth).max() ?? 0
+        let controlWidth = InkDesignTokens.Spacing.sm * 2
+            + toggleButton.fittingSize.width
+            + 10
+            + 8
+            + plusButton.fittingSize.width
+            + 6
+            + settingsButton.fittingSize.width
+        return NSSize(width: tabWidth + controlWidth, height: NSView.noIntrinsicMetric)
+    }
+
+    override func layout() {
+        super.layout()
+        let leading = toggleButton.frame.maxX + 10
+        let trailing = plusButton.frame.minX - 8
+        let availableWidth = max(0, trailing - leading)
+        let activeIndex = tabs.firstIndex(where: \.active) ?? 0
+        let result = TabBarLayout.resolve(
+            preferredWidths: tabItems.map(\.preferredWidth),
+            activeIndex: activeIndex,
+            availableWidth: availableWidth,
+            previousVisibleRange: previousVisibleRange
+        )
+
+        let structureUnchanged = appliedLayout?.visibleRange == result.visibleRange
+            && appliedLayout?.hiddenIndices == result.hiddenIndices
+            && widthConstraints.count == result.widths.count
+        if structureUnchanged {
+            updateWidths(result.widths)
+        } else {
+            applyStructure(result)
+        }
+        appliedLayout = result
+        positionTabRegion(result, leading: leading, trailing: trailing)
+    }
+
+    private func applyStructure(_ result: TabBarLayout) {
+        stack.arrangedSubviews.forEach {
+            stack.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+        widthConstraints.forEach { $0.isActive = false }
+        widthConstraints.removeAll(keepingCapacity: true)
+
+        visibleTabIndices = Array(result.visibleRange)
+        for (offset, index) in visibleTabIndices.enumerated() {
+            let item = tabItems[index]
+            stack.addArrangedSubview(item)
+            let constraint = item.widthAnchor.constraint(equalToConstant: result.widths[offset])
+            constraint.isActive = true
+            widthConstraints.append(constraint)
+        }
+        previousVisibleRange = result.visibleRange
+        rebuildOverflowMenu(hiddenIndices: result.hiddenIndices)
+    }
+
+    private func updateWidths(_ widths: [CGFloat]) {
+        for (constraint, width) in zip(widthConstraints, widths) {
+            constraint.constant = width
+        }
+    }
+
+    private func positionTabRegion(
+        _ result: TabBarLayout,
+        leading: CGFloat,
+        trailing: CGFloat
+    ) {
+        let token = InkDesignTokens.TabBar.self
+        let height: CGFloat = 28
+        let y = (bounds.height - height) / 2
+        let stackWidth = result.widths.reduce(0, +)
+            + CGFloat(max(0, result.widths.count - 1)) * token.itemSpacing
+        stack.frame = NSRect(x: leading, y: y, width: stackWidth, height: height)
+
+        overflowButton.isHidden = !result.showsOverflow
+        if result.showsOverflow {
+            overflowButton.frame = NSRect(
+                x: trailing - token.overflowButtonWidth,
+                y: y,
+                width: token.overflowButtonWidth,
+                height: height
+            )
+        } else {
+            overflowButton.frame = .zero
+        }
+    }
+
+    private func rebuildOverflowMenu(hiddenIndices: [Int]) {
+        overflowButton.menu?.cancelTracking()
+        guard !hiddenIndices.isEmpty else {
+            overflowButton.menu = nil
+            return
+        }
+
+        let menu = NSMenu(title: "更多标签")
+        menu.autoenablesItems = false
+        for index in hiddenIndices where tabs.indices.contains(index) {
+            let tab = tabs[index]
+            let item = NSMenuItem(
+                title: tab.title,
+                action: #selector(selectOverflowTab(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.tag = index
+            item.isEnabled = true
+            if index < 9 {
+                item.keyEquivalent = String(index + 1)
+                item.keyEquivalentModifierMask = .command
+            }
+            menu.addItem(item)
+        }
+        overflowButton.menu = menu
     }
 
     @objc private func newTab() { onNewTab?() }
     @objc private func toggleSidebar() { onToggleSidebar?() }
     @objc private func openSettings() { onSettings?() }
+
+    @objc private func showOverflowMenu() {
+        guard let menu = overflowButton.menu else { return }
+        menu.popUp(
+            positioning: nil,
+            at: NSPoint(x: 0, y: overflowButton.bounds.minY),
+            in: overflowButton
+        )
+    }
+
+    @objc private func selectOverflowTab(_ sender: NSMenuItem) {
+        guard let currentMenu = overflowButton.menu,
+              sender.menu === currentMenu,
+              tabs.indices.contains(sender.tag) else { return }
+        onSelect?(sender.tag)
+    }
 }
 
 /// 顶部栏低频操作：默认安静，悬停或设置页打开时显示 pill 背景。
@@ -180,6 +344,50 @@ private final class TabBarSettingsButton: NSButton {
     }
 }
 
+/// 溢出入口沿用设置按钮的悬停视觉，但不保留选中态。
+@MainActor
+private final class TabBarOverflowButton: NSButton {
+    private var isHovered = false
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = InkDesignTokens.Radius.item
+        layer?.cornerCurve = .continuous
+        addTrackingArea(NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self
+        ))
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("代码构建") }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateLayerColors()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        updateLayerColors()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        updateLayerColors()
+    }
+
+    private func updateLayerColors() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = isHovered
+                ? InkDesignTokens.Color.pill.cgColor
+                : nil
+        }
+    }
+}
+
 /// 单个标签：标题居中（路径头部截断）、⌘n 靠右、悬停出关闭钮、双击改名。
 @MainActor
 private final class TabItemView: NSView, NSTextFieldDelegate {
@@ -193,6 +401,16 @@ private final class TabItemView: NSView, NSTextFieldDelegate {
     private let closeButton = NSButton()
     private var editor: NSTextField?
     private let active: Bool
+
+    var preferredWidth: CGFloat {
+        let token = InkDesignTokens.TabBar.self
+        let fixedWidth = InkDesignTokens.Spacing.xs * 2
+            + token.closeButtonWidth
+            + 8
+            + shortcutLabel.intrinsicContentSize.width
+        let measured = titleLabel.intrinsicContentSize.width + fixedWidth
+        return min(max(measured, token.idealTabWidth), token.maximumTabWidth)
+    }
 
     init(tab: TabBarView.Tab) {
         self.active = tab.active
@@ -231,6 +449,7 @@ private final class TabItemView: NSView, NSTextFieldDelegate {
         let sp = InkDesignTokens.Spacing.self
         NSLayoutConstraint.activate([
             closeButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: sp.xs),
+            closeButton.widthAnchor.constraint(equalToConstant: InkDesignTokens.TabBar.closeButtonWidth),
             closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             titleLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
