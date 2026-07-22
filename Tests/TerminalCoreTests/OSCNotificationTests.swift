@@ -36,6 +36,16 @@ struct OSCNotificationTests {
         #expect(events(for: [Array(sequence.utf8)]).isEmpty)
     }
 
+    @Test("通知 code 只接受精确 ASCII", arguments: [
+        "\u{1B}]+9;消息\u{7}",
+        "\u{1B}]09;消息\u{7}",
+        "\u{1B}]+777;notify;标题;正文\u{7}",
+        "\u{1B}]0777;notify;标题;正文\u{7}",
+    ])
+    func exactNotificationCode(_ sequence: String) {
+        #expect(events(for: [Array(sequence.utf8)]).isEmpty)
+    }
+
     @Test("非法 UTF-8 和显示控制字符静默忽略")
     func invalidText() {
         let prefix = Array("\u{1B}]9;".utf8)

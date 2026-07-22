@@ -13,6 +13,19 @@ struct OSC8HyperlinkTests {
         #expect(try #require(terminal.link(at: .init(line: 0, column: 5))).target == "https://two.test")
     }
 
+    @Test("OSC 8 忽略嵌入 C0", arguments: [UInt8(0x00), 0x09, 0x0A])
+    func ignoresEmbeddedC0(_ control: UInt8) throws {
+        var (parser, terminal) = makeTerminal(columns: 40, rows: 3)
+        let sequence = Array("\u{1B}]8;;https://one".utf8)
+            + [control]
+            + Array(".test\u{07}x".utf8)
+
+        feed(sequence, &parser, &terminal)
+
+        #expect(try #require(terminal.link(at: .init(line: 0, column: 0))).target
+            == "https://one.test")
+    }
+
     @Test("结束和替换目标会形成两个合并范围")
     func closesAndReplacesTarget() throws {
         var (parser, terminal) = makeTerminal(columns: 40, rows: 2)

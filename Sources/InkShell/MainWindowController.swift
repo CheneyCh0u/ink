@@ -1033,11 +1033,17 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
             for (tabIndex, tab) in project.tabs.enumerated()
             where tab.panes[paneID] != nil {
                 let applicationActive = isApplicationActive()
-                let paneIsActive = !isShowingSettings
+                let tabIsVisible = !isShowingSettings
                     && projectIndex == activeProjectIndex
                     && tabIndex == project.activeTabIndex
-                    && tab.activePaneID == paneID
-                tab.receive(event, markUnread: !(paneIsActive && applicationActive))
+                let paneIsActive = tabIsVisible && tab.activePaneID == paneID
+                let markUnread = switch event {
+                case .commandCompleted, .bell:
+                    !(tabIsVisible && applicationActive)
+                case .notification:
+                    !(paneIsActive && applicationActive)
+                }
+                tab.receive(event, markUnread: markUnread)
 
                 switch event {
                 case let .commandCompleted(completion):

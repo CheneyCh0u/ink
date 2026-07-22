@@ -77,6 +77,7 @@ public struct Terminal: Sendable {
     private var commandCompletionStart = 0
     private var pendingEvents: ContiguousArray<TerminalEvent> = []
     var oscAccumulator = OSCAccumulator()
+    private var oscContainsIgnoredControl = false
     private var pendingEffect: TerminalEffect?
 
     private static let maxNotificationTitleBytes = 128
@@ -114,6 +115,7 @@ public struct Terminal: Sendable {
         snapshot.commandCompletionStart = 0
         snapshot.pendingEvents = []
         snapshot.oscAccumulator = OSCAccumulator()
+        snapshot.oscContainsIgnoredControl = false
         snapshot.pendingEffect = nil
         return snapshot
     }
@@ -752,16 +754,33 @@ public struct Terminal: Sendable {
     // MARK: - TerminalActionHandler：OSC
 
     public mutating func oscDispatch(_ bytes: ArraySlice<UInt8>) {
+        oscDispatch(bytes, containsIgnoredControl: false)
+    }
+
+    private mutating func oscDispatch(
+        _ bytes: ArraySlice<UInt8>,
+        containsIgnoredControl: Bool
+    ) {
         // 形如 "Ps;Pt"。载荷可能是 UTF-8（窗口标题带中文）。
         guard let sep = bytes.firstIndex(of: UInt8(ascii: ";")) else { return }
-        guard let code = Int(String(decoding: bytes[..<sep], as: UTF8.self)) else { return }
+        let codeBytes = bytes[..<sep]
         let payload = bytes[(sep + 1)...]
 
+        if codeBytes.elementsEqual("9".utf8) {
+            guard !containsIgnoredControl else { return }
+            handleOSC9(payload)
+            return
+        }
+        if codeBytes.elementsEqual("777".utf8) {
+            guard !containsIgnoredControl else { return }
+            handleOSC777(payload)
+            return
+        }
+
+        guard let code = Int(String(decoding: codeBytes, as: UTF8.self)) else { return }
         switch code {
         case 0, 2:
             title = String(decoding: payload, as: UTF8.self)
-        case 9:
-            handleOSC9(payload)
         case 8:
             guard let uriSeparator = payload.firstIndex(of: UInt8(ascii: ";")) else { return }
             let uriBytes = payload[payload.index(after: uriSeparator)...]
@@ -774,19 +793,27 @@ public struct Terminal: Sendable {
             setActiveHyperlink(uri.isEmpty ? nil : uri)
         case 133:
             handleOSC133(payload)
-        case 777:
-            handleOSC777(payload)
         default:
             break // 未支持的 OSC 静默忽略
         }
     }
 
-    public mutating func oscStart() { oscAccumulator.start() }
+    public mutating func oscStart() {
+        oscContainsIgnoredControl = false
+        oscAccumulator.start()
+    }
     public mutating func oscPut(_ byte: UInt8) { oscAccumulator.put(byte) }
-    public mutating func oscCancel() { oscAccumulator.cancel() }
+    public mutating func oscIgnoreControl() { oscContainsIgnoredControl = true }
+    public mutating func oscCancel() {
+        oscContainsIgnoredControl = false
+        oscAccumulator.cancel()
+    }
     public mutating func oscEnd() {
+        let containsIgnoredControl = oscContainsIgnoredControl
+        oscContainsIgnoredControl = false
         switch oscAccumulator.finish() {
-        case .regular(let bytes): oscDispatch(bytes[...])
+        case .regular(let bytes):
+            oscDispatch(bytes[...], containsIgnoredControl: containsIgnoredControl)
         case .clipboardWrite(let text): pendingEffect = .clipboardWrite(text)
         case nil: break
         }

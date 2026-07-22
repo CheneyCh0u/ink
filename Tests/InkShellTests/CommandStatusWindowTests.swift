@@ -131,6 +131,22 @@ struct CommandStatusWindowTests {
         #expect(try attentionLabels(in: fixture.controller).contains("终端响铃"))
     }
 
+    @Test("同标签非活动 pane 的命令完成与 Bell 不制造未读")
+    func visibleTabBackgroundPaneDoesNotMarkCommandOrBellUnread() throws {
+        let fixture = try Fixture(applicationActive: true, splitFirstTab: true)
+        defer { fixture.cleanUp() }
+        let inactivePane = try #require(fixture.panes[safe: 0])
+
+        inactivePane.session.onEvent?(.commandCompleted(.init(
+            exitStatus: 0,
+            duration: .seconds(3)
+        )))
+        #expect(try !attentionLabels(in: fixture.controller).contains("命令已完成，3 秒"))
+
+        inactivePane.session.onEvent?(.bell)
+        #expect(try !attentionLabels(in: fixture.controller).contains("终端响铃"))
+    }
+
     private func attentionLabels(in controller: MainWindowController) throws -> [String] {
         let content = try #require(controller.window?.contentView)
         let tabBar = try #require(descendants(of: TabBarView.self, in: content).first)

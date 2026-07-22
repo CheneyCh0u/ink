@@ -31,7 +31,6 @@ public struct Parser: Sendable {
     private var paramHasDigit = false
     private var prefix: UInt8 = 0            // '?'、'>'、'<'、'=' 私有前缀
     private var intermediates: ContiguousArray<UInt8> = []
-    private var oscIsDiscarded = false
 
     private static let maxParams = 16
 
@@ -86,7 +85,6 @@ public struct Parser: Sendable {
                 state = .csiEntry
             case UInt8(ascii: "]"):
                 handler.oscStart()
-                oscIsDiscarded = false
                 state = .osc
             case UInt8(ascii: "P"), UInt8(ascii: "X"), UInt8(ascii: "^"), UInt8(ascii: "_"):
                 state = .dcsIgnore
@@ -159,24 +157,19 @@ public struct Parser: Sendable {
         case .osc:
             switch byte {
             case 0x07:
-                if !oscIsDiscarded {
-                    handler.oscEnd()
-                } else {
-                    handler.oscCancel()
-                }
+                handler.oscEnd()
                 state = .ground
             case 0x1B:
                 state = .oscEscape
             case 0x00..<0x07, 0x08..<0x20:
-                // 删除后继续会改变通知等协议内容；整段作废更可预测。
-                oscIsDiscarded = true
-                handler.oscCancel()
+                // 传统 OSC 忽略 C0；语义层只让通知协议整段失效。
+                handler.oscIgnoreControl()
             default:
-                if !oscIsDiscarded { handler.oscPut(byte) }
+                handler.oscPut(byte)
             }
 
         case .oscEscape:
-            if byte == UInt8(ascii: "\\"), !oscIsDiscarded {
+            if byte == UInt8(ascii: "\\") {
                 handler.oscEnd()
                 state = .ground
             } else if byte == UInt8(ascii: "]") {
