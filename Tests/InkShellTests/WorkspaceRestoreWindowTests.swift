@@ -33,7 +33,9 @@ struct WorkspaceRestoreWindowTests {
             descendants(of: WorkspaceSplitContainerView.self, in: contentView).first
         )
         split.onWeightsChange?(split.splitID, [0.3, 0.7])
-        try await Task.sleep(for: .milliseconds(400))
+        #expect(try await waitUntil {
+            fixture.workspaceStore.load()?.projects[0].tabs.count == 2
+        })
 
         let saved = try #require(fixture.workspaceStore.load())
         #expect(saved.projects[0].tabs.map(\.customName) == ["重命名", nil])
@@ -59,7 +61,9 @@ struct WorkspaceRestoreWindowTests {
         #expect(controller.currentWorkspaceSnapshot.projects[0].tabs[1].layout.paneCount == 1)
 
         controller.allPanes.last?.session.onExit?(0)
-        try await Task.sleep(for: .milliseconds(400))
+        #expect(try await waitUntil {
+            fixture.workspaceStore.load()?.projects[0].tabs.count == 1
+        })
 
         let saved = try #require(fixture.workspaceStore.load())
         #expect(saved.projects[0].tabs.map(\.customName) == ["保留"])
@@ -101,7 +105,9 @@ struct WorkspaceRestoreWindowTests {
         fixture.controller = controller
 
         controller.selectProject(at: 1)
-        try await Task.sleep(for: .milliseconds(400))
+        #expect(try await waitUntil {
+            fixture.workspaceStore.load()?.activeProjectPath == secondPath
+        })
 
         #expect(fixture.workspaceStore.load()?.activeProjectPath == secondPath)
     }
@@ -312,6 +318,19 @@ struct WorkspaceRestoreWindowTests {
             ((subview as? T).map { [$0] } ?? [])
                 + descendants(of: type, in: subview)
         }
+    }
+
+    private func waitUntil(
+        timeout: Duration = .seconds(10),
+        condition: @escaping @MainActor () -> Bool
+    ) async throws -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        repeat {
+            if condition() { return true }
+            try await Task.sleep(for: .milliseconds(50))
+        } while clock.now < deadline
+        return condition()
     }
 
 }

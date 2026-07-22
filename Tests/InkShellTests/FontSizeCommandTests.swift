@@ -114,7 +114,9 @@ private struct FontSizeWindowFixture {
         controller = MainWindowController(
             initialConfig: config,
             configURL: configURL,
-            configSyncService: ConfigSyncService(store: store, defaults: defaults)
+            configSyncService: ConfigSyncService(store: store, defaults: defaults),
+            projectDefaults: defaults,
+            workspaceStore: WorkspaceStore(defaults: defaults)
         )
         controller.window?.orderFront(nil)
     }

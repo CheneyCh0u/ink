@@ -220,6 +220,61 @@ struct WorkspaceSnapshotTests {
         #expect(store.load() == nil)
     }
 
+    @Test("128 pane 上限快照保持小体积且可重复往返")
+    func maximumSnapshotRoundtripCost() throws {
+        let projects = (0..<4).map { projectIndex in
+            WorkspaceSnapshot.Project(
+                path: "~/project-\(projectIndex)",
+                activeTabIndex: 31,
+                tabs: (0..<32).map { tabIndex in
+                    let paneID = "p-\(projectIndex)-\(tabIndex)"
+                    return WorkspaceSnapshot.Tab(
+                        customName: "标签 \(tabIndex)",
+                        activePaneID: paneID,
+                        layout: .leaf(
+                            paneID: paneID,
+                            workingDirectory: "~/project-\(projectIndex)"
+                        )
+                    )
+                }
+            )
+        }
+        let snapshot = WorkspaceSnapshot(
+            activeProjectPath: "~/project-0",
+            projects: projects
+        )
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+        let encoded = try encoder.encode(snapshot)
+        let clock = ContinuousClock()
+        let start = clock.now
+        var final: WorkspaceSnapshot?
+        for _ in 0..<100 {
+            let data = try encoder.encode(snapshot)
+            final = try decoder.decode(WorkspaceSnapshot.self, from: data).validated()
+        }
+        let duration = start.duration(to: clock.now)
+        let suiteName = "ink.workspace-cost-tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = WorkspaceStore(defaults: defaults)
+        let storeStart = clock.now
+        for _ in 0..<100 {
+            #expect(store.save(snapshot))
+            final = store.load()
+        }
+        let storeDuration = storeStart.duration(to: clock.now)
+
+        #expect(encoded.count < 1_048_576)
+        #expect(final?.projects.count == 4)
+        #expect(final?.projects.flatMap(\.tabs).count == 128)
+        #expect(final?.projects.flatMap(\.tabs).reduce(0) {
+            $0 + $1.layout.paneCount
+        } == 128)
+        print("workspace snapshot: \(encoded.count) bytes, 100 roundtrips: \(duration)")
+        print("workspace store: 100 save+load: \(storeDuration)")
+    }
+
     private func makeSnapshot(
         layout: WorkspaceLayoutNode,
         activePaneID: String = "same"
