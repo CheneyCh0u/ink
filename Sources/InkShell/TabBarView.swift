@@ -11,6 +11,19 @@ final class TabBarView: NSView {
         let title: String
         let shortcut: String
         let active: Bool
+        let attention: TabAttention?
+
+        init(
+            title: String,
+            shortcut: String,
+            active: Bool,
+            attention: TabAttention? = nil
+        ) {
+            self.title = title
+            self.shortcut = shortcut
+            self.active = active
+            self.attention = attention
+        }
     }
 
     var onSelect: ((Int) -> Void)?
@@ -264,6 +277,13 @@ final class TabBarView: NSView {
             item.target = self
             item.tag = index
             item.isEnabled = true
+            if let presentation = tab.attention?.presentation {
+                item.image = NSImage(
+                    systemSymbolName: presentation.symbolName,
+                    accessibilityDescription: presentation.accessibilityLabel
+                )
+                item.toolTip = presentation.toolTip
+            }
             if index < 9 {
                 item.keyEquivalent = String(index + 1)
                 item.keyEquivalentModifierMask = .command
@@ -399,8 +419,10 @@ private final class TabItemView: NSView, NSTextFieldDelegate {
     private let titleLabel = NSTextField(labelWithString: "")
     private let shortcutLabel = NSTextField(labelWithString: "")
     private let closeButton = NSButton()
+    private let attentionImage = NSImageView()
     private var editor: NSTextField?
     private let active: Bool
+    private let hasAttention: Bool
 
     var preferredWidth: CGFloat {
         let token = InkDesignTokens.TabBar.self
@@ -414,6 +436,7 @@ private final class TabItemView: NSView, NSTextFieldDelegate {
 
     init(tab: TabBarView.Tab) {
         self.active = tab.active
+        self.hasAttention = tab.attention != nil
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = InkDesignTokens.Radius.item
@@ -446,11 +469,28 @@ private final class TabItemView: NSView, NSTextFieldDelegate {
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(closeButton)
 
+        if let presentation = tab.attention?.presentation {
+            attentionImage.image = NSImage(
+                systemSymbolName: presentation.symbolName,
+                accessibilityDescription: presentation.accessibilityLabel
+            )
+            attentionImage.contentTintColor = presentation.tintColor
+            attentionImage.toolTip = presentation.toolTip
+            attentionImage.setAccessibilityLabel(presentation.accessibilityLabel)
+        }
+        attentionImage.isHidden = !hasAttention
+        attentionImage.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(attentionImage)
+
         let sp = InkDesignTokens.Spacing.self
         NSLayoutConstraint.activate([
             closeButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: sp.xs),
             closeButton.widthAnchor.constraint(equalToConstant: InkDesignTokens.TabBar.closeButtonWidth),
             closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            attentionImage.leadingAnchor.constraint(equalTo: closeButton.leadingAnchor),
+            attentionImage.widthAnchor.constraint(equalTo: closeButton.widthAnchor),
+            attentionImage.heightAnchor.constraint(equalToConstant: 14),
+            attentionImage.centerYAnchor.constraint(equalTo: closeButton.centerYAnchor),
             titleLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: closeButton.trailingAnchor, constant: 4),
@@ -485,10 +525,12 @@ private final class TabItemView: NSView, NSTextFieldDelegate {
 
     override func mouseEntered(with event: NSEvent) {
         closeButton.isHidden = false
+        attentionImage.isHidden = true
     }
 
     override func mouseExited(with event: NSEvent) {
         closeButton.isHidden = true
+        attentionImage.isHidden = !hasAttention
     }
 
     override func mouseDown(with event: NSEvent) {

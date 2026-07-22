@@ -44,6 +44,11 @@ struct TabAttentionTests {
         #expect(TabAttention(event: .commandCompleted(completion)) == .completed(completion))
         #expect(CommandStatusFormatter.duration(.milliseconds(999)) == "<1 秒")
         #expect(CommandStatusFormatter.duration(.seconds(61)) == "1 分 01 秒")
+        #expect(
+            TabAttention.failed(.init(exitStatus: 2, duration: .seconds(12)))
+                .presentation.symbolName == "exclamationmark.circle.fill"
+        )
+        #expect(TabAttention.bell.presentation.symbolName == "bell.fill")
     }
 
     private func makePane() -> TerminalPane {
