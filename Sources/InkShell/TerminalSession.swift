@@ -16,6 +16,8 @@ public final class TerminalSession {
     public var onExit: ((Int32) -> Void)?
     /// Core 产生的命令完成与 BEL 事件。
     public var onEvent: ((TerminalEvent) -> Void)?
+    /// Core 产生的外部副作用请求；与未读/通知事件分离。
+    public var onEffect: ((TerminalEffect) -> Void)?
 
     private let pty = PTYSession()
     private var parser = Parser()
@@ -47,6 +49,9 @@ public final class TerminalSession {
     func consumeOutput(_ data: Data) {
         data.withUnsafeBytes { raw in
             parser.feed(raw, handler: &terminal)
+        }
+        for effect in terminal.takeEffects() {
+            onEffect?(effect)
         }
         for event in terminal.takeEvents() {
             onEvent?(event)
@@ -94,5 +99,6 @@ public final class TerminalSession {
         onExit = nil
         onUpdate = nil
         onEvent = nil
+        onEffect = nil
     }
 }
