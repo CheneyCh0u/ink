@@ -620,7 +620,7 @@ func paneFocusActionsAndValidationFollowWorkspace() throws {
     func activeContainer() throws -> TerminalPaneContainerView {
         try #require(allSubviews(in: window.contentView!).compactMap {
             $0 as? TerminalPaneContainerView
-        }.first(where: \.isActive))
+        }.first(where: { $0.isActive }))
     }
 
     #expect(controller.validateMenuItem(leftItem))

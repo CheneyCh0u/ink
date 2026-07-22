@@ -24,6 +24,91 @@ struct TerminalSplitCommandTests {
         }
     }
 
+    @Test("窗口菜单提供 Command-Option 四方向 pane 聚焦")
+    func windowMenuOffersPaneFocusShortcuts() throws {
+        let menu = AppDelegate.makeMainMenu()
+        let windowMenu = try #require(
+            menu.items.first { $0.submenu?.title == "窗口" }?.submenu
+        )
+        let expected: [(Selector, String, String)] = [
+            (#selector(MainWindowController.focusPaneLeft(_:)), "聚焦左侧 pane", "\u{F702}"),
+            (#selector(MainWindowController.focusPaneRight(_:)), "聚焦右侧 pane", "\u{F703}"),
+            (#selector(MainWindowController.focusPaneUp(_:)), "聚焦上方 pane", "\u{F700}"),
+            (#selector(MainWindowController.focusPaneDown(_:)), "聚焦下方 pane", "\u{F701}"),
+        ]
+
+        for (action, title, key) in expected {
+            let item = try #require(windowMenu.items.first { $0.action == action })
+            #expect(item.title == title)
+            #expect(item.keyEquivalent == key)
+            #expect(item.keyEquivalentModifierMask == [.command, .option])
+        }
+    }
+
+    @Test("窗口 pane 聚焦动作路由方向并按边界与设置页校验")
+    func paneFocusActionsAndValidationFollowWorkspace() throws {
+        let fixture = makeController(presenter: SplitClosePresenter(result: true))
+        defer { fixture.cleanUp() }
+        let controller = fixture.controller
+        let window = try #require(controller.window)
+        window.setFrame(
+            NSRect(x: 300, y: 200, width: 1000, height: 700),
+            display: true
+        )
+        window.orderFront(nil)
+        controller.newSession(nil)
+        spinRunLoop()
+        controller.splitRight(nil)
+        spinRunLoop()
+
+        let menu = AppDelegate.makeMainMenu()
+        let windowMenu = try #require(
+            menu.items.first { $0.submenu?.title == "窗口" }?.submenu
+        )
+        func item(_ action: Selector) throws -> NSMenuItem {
+            try #require(windowMenu.items.first { $0.action == action })
+        }
+        let leftItem = try item(#selector(MainWindowController.focusPaneLeft(_:)))
+        let rightItem = try item(#selector(MainWindowController.focusPaneRight(_:)))
+        let upItem = try item(#selector(MainWindowController.focusPaneUp(_:)))
+        let downItem = try item(#selector(MainWindowController.focusPaneDown(_:)))
+        func activeContainer() throws -> TerminalPaneContainerView {
+            let contentView = try #require(window.contentView)
+            return try #require(
+                allSubviews(in: contentView)
+                    .compactMap { $0 as? TerminalPaneContainerView }
+                    .first(where: { $0.isActive })
+            )
+        }
+
+        #expect(controller.validateMenuItem(leftItem))
+        #expect(!controller.validateMenuItem(rightItem))
+        let rightX = try activeContainer().frame.midX
+        controller.focusPaneLeft(nil)
+        #expect(try activeContainer().frame.midX < rightX)
+        #expect(!controller.validateMenuItem(leftItem))
+        #expect(controller.validateMenuItem(rightItem))
+
+        controller.focusPaneRight(nil)
+        #expect(try activeContainer().frame.midX == rightX)
+        controller.splitDown(nil)
+        spinRunLoop()
+        let bottomY = try activeContainer().frame.midY
+        #expect(controller.validateMenuItem(upItem))
+        #expect(!controller.validateMenuItem(downItem))
+
+        controller.focusPaneUp(nil)
+        #expect(try activeContainer().frame.midY < bottomY)
+        #expect(controller.validateMenuItem(downItem))
+        controller.focusPaneDown(nil)
+        #expect(try activeContainer().frame.midY == bottomY)
+
+        controller.showSettings(nil)
+        for item in [leftItem, rightItem, upItem, downItem] {
+            #expect(!controller.validateMenuItem(item))
+        }
+    }
+
     @Test("Command-W 关闭活动 pane 而不是整个标签")
     func closeCommandRemovesOnlyActivePane() throws {
         let presenter = SplitClosePresenter(result: false)
