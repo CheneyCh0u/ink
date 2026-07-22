@@ -48,4 +48,56 @@ struct OSC8HyperlinkTests {
         #expect(link.target == "https://target.test")
         #expect(link.source == .osc8)
     }
+
+    @Test("无链接覆写会分裂旧范围")
+    func overwriteSplitsOldRange() {
+        var (parser, terminal) = makeTerminal(columns: 12, rows: 2)
+        feed("\u{1B}]8;;https://a.test\u{07}abcdef\u{1B}]8;;\u{07}", &parser, &terminal)
+        feed("\u{1B}[1;3HX", &parser, &terminal)
+
+        #expect(terminal.link(at: .init(line: 0, column: 2)) == nil)
+        #expect(terminal.link(at: .init(line: 0, column: 0))?.target == "https://a.test")
+        #expect(terminal.link(at: .init(line: 0, column: 4))?.target == "https://a.test")
+    }
+
+    @Test("ECH 与 EL 删除相交链接")
+    func eraseRemovesRanges() {
+        var (parser, terminal) = makeTerminal(columns: 12, rows: 2)
+        feed("\u{1B}]8;;https://a.test\u{07}abcdef\u{1B}]8;;\u{07}", &parser, &terminal)
+        feed("\u{1B}[1;3H\u{1B}[2X", &parser, &terminal)
+        #expect(terminal.link(at: .init(line: 0, column: 2)) == nil)
+        #expect(terminal.link(at: .init(line: 0, column: 4))?.target == "https://a.test")
+        feed("\u{1B}[1;5H\u{1B}[K", &parser, &terminal)
+        #expect(terminal.link(at: .init(line: 0, column: 4)) == nil)
+    }
+
+    @Test("ICH 与 DCH 只移动当前物理行链接片段")
+    func insertDeleteCharactersMoveRanges() {
+        var (parser, terminal) = makeTerminal(columns: 8, rows: 2)
+        feed("x\u{1B}]8;;https://a.test\u{07}abc\u{1B}]8;;\u{07}yz", &parser, &terminal)
+        feed("\u{1B}[1;2H\u{1B}[@", &parser, &terminal)
+        #expect(terminal.link(at: .init(line: 0, column: 1)) == nil)
+        #expect(terminal.link(at: .init(line: 0, column: 2))?.target == "https://a.test")
+        feed("\u{1B}[P", &parser, &terminal)
+        #expect(terminal.link(at: .init(line: 0, column: 1))?.target == "https://a.test")
+        #expect(terminal.link(at: .init(line: 0, column: 4)) == nil)
+    }
+
+    @Test("宽字符两格命中，组合字符不扩张 cell 范围")
+    func wideAndCombiningCells() throws {
+        var (parser, terminal) = makeTerminal(columns: 12, rows: 2)
+        feed("\u{1B}]8;;https://a.test\u{07}终e\u{301}\u{1B}]8;;\u{07}", &parser, &terminal)
+        #expect(terminal.link(at: .init(line: 0, column: 0))?.target == "https://a.test")
+        #expect(terminal.link(at: .init(line: 0, column: 1))?.target == "https://a.test")
+        #expect(try #require(terminal.link(at: .init(line: 0, column: 2))).range.end.column == 3)
+    }
+
+    @Test("ED 清理可见范围，RIS 清理目标与所有旁路状态")
+    func displayEraseAndResetClearMetadata() {
+        var (parser, terminal) = makeTerminal(columns: 12, rows: 2)
+        feed("\u{1B}]8;;https://a.test\u{07}abcdef\u{1B}]8;;\u{07}\u{1B}[2J", &parser, &terminal)
+        #expect(terminal.explicitHyperlinkRecordCount == 0)
+        feed("\u{1B}]8;;https://b.test\u{07}x\u{1B}c", &parser, &terminal)
+        #expect(!terminal.hyperlinkMetadataAllocated)
+    }
 }

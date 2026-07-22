@@ -389,8 +389,10 @@ public struct Terminal: Sendable {
     private mutating func clearWideOrphan(row: Int, col: Int) {
         let attr = grid[row, col].attr
         if attr & Cell.Attr.wideTrailing != 0, col > 0 {
+            clearHyperlinkCells(row: row, columns: (col - 1)..<col)
             grid[row, col - 1] = .blank
         } else if attr & Cell.Attr.wideLeading != 0, col + 1 < grid.size.columns {
+            clearHyperlinkCells(row: row, columns: (col + 1)..<(col + 2))
             grid[row, col + 1] = .blank
         }
     }
@@ -601,25 +603,98 @@ public struct Terminal: Sendable {
     ) {
         let stableLineID = scrollback.totalAppendedLines + UInt64(row)
         if targetID == nil, hyperlinks?.anchor(for: stableLineID) == nil { return }
-
-        let absoluteLine = scrollback.count + row
-        guard let line = logicalLine(containing: TextPosition(line: absoluteLine, column: 0)),
-              let segment = line.segments.first(where: { $0.lineID == stableLineID })
-        else { return }
-
-        let lower = UInt32(clamping: segment.startOffset + columns.lowerBound)
-        let upper = UInt32(clamping: segment.startOffset + columns.upperBound)
+        guard let coordinate = hyperlinkCoordinate(row: row, column: columns.lowerBound) else { return }
+        let lower = coordinate.offset
+        let upper = lower + UInt32(clamping: columns.count)
         guard lower < upper else { return }
 
         var store = hyperlinks ?? HyperlinkRangeStore()
         let delta = store.replace(
-            headLineID: line.headLineID,
+            headLineID: coordinate.headLineID,
             offsets: lower..<upper,
             with: targetID
         )
-        store.rebuildRowIndex(for: line)
+        rebuildHyperlinkRowIndex(&store, row: row)
         applyHyperlinkReferenceDelta(delta)
         hyperlinks = store.isEmpty ? nil : store
+    }
+
+    private mutating func clearHyperlinkCells(row: Int, columns: Range<Int>) {
+        let stableLineID = scrollback.totalAppendedLines + UInt64(row)
+        guard !columns.isEmpty,
+              hyperlinks?.anchor(for: stableLineID) != nil,
+              let coordinate = hyperlinkCoordinate(row: row, column: columns.lowerBound),
+              var store = hyperlinks
+        else { return }
+        let upper = coordinate.offset + UInt32(clamping: columns.count)
+        let delta = store.clear(
+            headLineID: coordinate.headLineID,
+            offsets: coordinate.offset..<upper
+        )
+        rebuildHyperlinkRowIndex(&store, row: row)
+        applyHyperlinkReferenceDelta(delta)
+        hyperlinks = store.isEmpty ? nil : store
+    }
+
+    private mutating func insertHyperlinkCells(row: Int, column: Int, count: Int) {
+        let stableLineID = scrollback.totalAppendedLines + UInt64(row)
+        guard hyperlinks?.anchor(for: stableLineID) != nil,
+              let coordinate = hyperlinkCoordinate(row: row, column: column),
+              var store = hyperlinks
+        else { return }
+        let delta = store.insert(
+            headLineID: coordinate.headLineID,
+            at: coordinate.offset,
+            count: UInt32(clamping: count),
+            segmentEnd: coordinate.segmentEnd
+        )
+        rebuildHyperlinkRowIndex(&store, row: row)
+        applyHyperlinkReferenceDelta(delta)
+        hyperlinks = store.isEmpty ? nil : store
+    }
+
+    private mutating func deleteHyperlinkCells(row: Int, column: Int, count: Int) {
+        let stableLineID = scrollback.totalAppendedLines + UInt64(row)
+        guard hyperlinks?.anchor(for: stableLineID) != nil,
+              let coordinate = hyperlinkCoordinate(row: row, column: column),
+              var store = hyperlinks
+        else { return }
+        let delta = store.delete(
+            headLineID: coordinate.headLineID,
+            at: coordinate.offset,
+            count: UInt32(clamping: count),
+            segmentEnd: coordinate.segmentEnd
+        )
+        rebuildHyperlinkRowIndex(&store, row: row)
+        applyHyperlinkReferenceDelta(delta)
+        hyperlinks = store.isEmpty ? nil : store
+    }
+
+    private func hyperlinkCoordinate(row: Int, column: Int) -> (
+        headLineID: UInt64,
+        offset: UInt32,
+        segmentEnd: UInt32
+    )? {
+        let stableLineID = scrollback.totalAppendedLines + UInt64(row)
+        let absoluteLine = scrollback.count + row
+        guard let line = logicalLine(containing: TextPosition(line: absoluteLine, column: 0)),
+              let segment = line.segments.first(where: { $0.lineID == stableLineID })
+        else { return nil }
+        let start = UInt32(clamping: segment.startOffset)
+        return (
+            headLineID: line.headLineID,
+            offset: start + UInt32(clamping: column),
+            segmentEnd: start + UInt32(clamping: grid.size.columns)
+        )
+    }
+
+    private func rebuildHyperlinkRowIndex(
+        _ store: inout HyperlinkRangeStore,
+        row: Int
+    ) {
+        let absoluteLine = scrollback.count + row
+        guard let line = logicalLine(containing: TextPosition(line: absoluteLine, column: 0)) else { return }
+        store.rebuildRowIndex(for: line)
     }
 
     private mutating func applyHyperlinkReferenceDelta(_ delta: HyperlinkReferenceDelta) {
@@ -760,11 +835,20 @@ public struct Terminal: Sendable {
         switch mode {
         case 0:
             eraseLine(mode: 0)
-            for r in (grid.cursorRow + 1)..<grid.size.rows { grid.clearRow(r) }
+            for r in (grid.cursorRow + 1)..<grid.size.rows {
+                clearHyperlinkCells(row: r, columns: 0..<grid.size.columns)
+                grid.clearRow(r)
+            }
         case 1:
             eraseLine(mode: 1)
-            for r in 0..<grid.cursorRow { grid.clearRow(r) }
+            for r in 0..<grid.cursorRow {
+                clearHyperlinkCells(row: r, columns: 0..<grid.size.columns)
+                grid.clearRow(r)
+            }
         case 2:
+            for r in 0..<grid.size.rows {
+                clearHyperlinkCells(row: r, columns: 0..<grid.size.columns)
+            }
             grid.clearAll()
             let gridBase = scrollback.totalAppendedLines
             semanticOverflowTransitions = semanticOverflowTransitions[semanticOverflowStart...]
@@ -799,6 +883,7 @@ public struct Terminal: Sendable {
         case 2: range = 0..<grid.size.columns
         default: return
         }
+        clearHyperlinkCells(row: row, columns: range)
         for c in range { grid[row, c] = .blank }
         pendingWrap = false
     }
@@ -823,6 +908,7 @@ public struct Terminal: Sendable {
         let row = grid.cursorRow
         let cols = grid.size.columns
         let n = min(n, cols - grid.cursorCol)
+        insertHyperlinkCells(row: row, column: grid.cursorCol, count: n)
         var c = cols - 1
         while c >= grid.cursorCol + n {
             grid[row, c] = grid[row, c - n]
@@ -835,6 +921,7 @@ public struct Terminal: Sendable {
         let row = grid.cursorRow
         let cols = grid.size.columns
         let n = min(n, cols - grid.cursorCol)
+        deleteHyperlinkCells(row: row, column: grid.cursorCol, count: n)
         for c in grid.cursorCol..<(cols - n) {
             grid[row, c] = grid[row, c + n]
         }
@@ -844,6 +931,7 @@ public struct Terminal: Sendable {
     private mutating func eraseChars(_ n: Int) {
         let row = grid.cursorRow
         let end = min(grid.cursorCol + n, grid.size.columns)
+        clearHyperlinkCells(row: row, columns: grid.cursorCol..<end)
         for c in grid.cursorCol..<end { grid[row, c] = .blank }
     }
 

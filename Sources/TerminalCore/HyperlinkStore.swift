@@ -37,6 +37,7 @@ struct HyperlinkRangeStore: Sendable {
 
     func record(headLineID: UInt64) -> HyperlinkLineRecord? {
         guard let index = lineIndex(for: headLineID),
+              index < lines.endIndex,
               lines[index].headLineID == headLineID else { return nil }
         return lines[index]
     }
@@ -104,6 +105,77 @@ struct HyperlinkRangeStore: Sendable {
         return delta
     }
 
+    mutating func clear(
+        headLineID: UInt64,
+        offsets: Range<UInt32>
+    ) -> HyperlinkReferenceDelta {
+        replace(headLineID: headLineID, offsets: offsets, with: nil)
+    }
+
+    mutating func insert(
+        headLineID: UInt64,
+        at offset: UInt32,
+        count: UInt32,
+        segmentEnd: UInt32
+    ) -> HyperlinkReferenceDelta {
+        guard count > 0, offset < segmentEnd else { return HyperlinkReferenceDelta() }
+        let shiftedEnd = segmentEnd > count ? max(offset, segmentEnd - count) : offset
+        return transform(headLineID: headLineID) { span in
+            var pieces = ContiguousArray<HyperlinkSpan>()
+            Self.appendIntersection(
+                of: span,
+                with: 0..<offset,
+                shiftedBy: 0,
+                to: &pieces
+            )
+            Self.appendIntersection(
+                of: span,
+                with: offset..<shiftedEnd,
+                shiftedBy: Int64(count),
+                to: &pieces
+            )
+            Self.appendIntersection(
+                of: span,
+                with: segmentEnd..<UInt32.max,
+                shiftedBy: 0,
+                to: &pieces
+            )
+            return pieces
+        }
+    }
+
+    mutating func delete(
+        headLineID: UInt64,
+        at offset: UInt32,
+        count: UInt32,
+        segmentEnd: UInt32
+    ) -> HyperlinkReferenceDelta {
+        guard count > 0, offset < segmentEnd else { return HyperlinkReferenceDelta() }
+        let removedEnd = offset + min(count, segmentEnd - offset)
+        return transform(headLineID: headLineID) { span in
+            var pieces = ContiguousArray<HyperlinkSpan>()
+            Self.appendIntersection(
+                of: span,
+                with: 0..<offset,
+                shiftedBy: 0,
+                to: &pieces
+            )
+            Self.appendIntersection(
+                of: span,
+                with: removedEnd..<segmentEnd,
+                shiftedBy: -Int64(removedEnd - offset),
+                to: &pieces
+            )
+            Self.appendIntersection(
+                of: span,
+                with: segmentEnd..<UInt32.max,
+                shiftedBy: 0,
+                to: &pieces
+            )
+            return pieces
+        }
+    }
+
     mutating func rebuildRowIndex(for line: TerminalLogicalLine) {
         let record = record(headLineID: line.headLineID)
         for segment in line.segments {
@@ -135,6 +207,47 @@ struct HyperlinkRangeStore: Sendable {
             }
         }
         return lower
+    }
+
+    private mutating func transform(
+        headLineID: UInt64,
+        _ body: (HyperlinkSpan) -> ContiguousArray<HyperlinkSpan>
+    ) -> HyperlinkReferenceDelta {
+        guard let index = lineIndex(for: headLineID),
+              index < lines.endIndex,
+              lines[index].headLineID == headLineID
+        else { return HyperlinkReferenceDelta() }
+
+        let oldSpans = lines[index].spans
+        var next = ContiguousArray<HyperlinkSpan>()
+        for span in oldSpans { next.append(contentsOf: body(span)) }
+        next.sort { $0.offsets.lowerBound < $1.offsets.lowerBound }
+        next = Self.coalesced(next)
+
+        var delta = HyperlinkReferenceDelta()
+        for span in oldSpans { delta.remove(span.targetID) }
+        for span in next { delta.add(span.targetID) }
+        if next.isEmpty {
+            lines.remove(at: index)
+        } else {
+            lines[index].spans = next
+        }
+        return delta
+    }
+
+    private static func appendIntersection(
+        of span: HyperlinkSpan,
+        with range: Range<UInt32>,
+        shiftedBy shift: Int64,
+        to pieces: inout ContiguousArray<HyperlinkSpan>
+    ) {
+        let lower = max(span.offsets.lowerBound, range.lowerBound)
+        let upper = min(span.offsets.upperBound, range.upperBound)
+        guard lower < upper else { return }
+        pieces.append(HyperlinkSpan(
+            offsets: UInt32(Int64(lower) + shift)..<UInt32(Int64(upper) + shift),
+            targetID: span.targetID
+        ))
     }
 
     private static func coalesced(
