@@ -1033,20 +1033,35 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
             for (tabIndex, tab) in project.tabs.enumerated()
             where tab.panes[paneID] != nil {
                 let applicationActive = isApplicationActive()
-                let visible = !isShowingSettings
+                let paneIsActive = !isShowingSettings
                     && projectIndex == activeProjectIndex
                     && tabIndex == project.activeTabIndex
-                tab.receive(event, markUnread: !(visible && applicationActive))
+                    && tab.activePaneID == paneID
+                tab.receive(event, markUnread: !(paneIsActive && applicationActive))
 
-                if case let .commandCompleted(completion) = event,
-                   CommandNotificationPolicy.shouldNotify(
-                       isApplicationActive: applicationActive,
-                       completion: completion
-                   ) {
-                    notificationCoordinator.submit(.command(
-                        tabTitle: notificationTabTitle(tab),
+                switch event {
+                case let .commandCompleted(completion):
+                    if CommandNotificationPolicy.shouldNotify(
+                        isApplicationActive: applicationActive,
                         completion: completion
-                    ))
+                    ) {
+                        notificationCoordinator.submit(.command(
+                            tabTitle: notificationTabTitle(tab),
+                            completion: completion
+                        ))
+                    }
+                case let .notification(notification):
+                    if ExplicitNotificationPolicy.shouldNotify(
+                        isApplicationActive: applicationActive,
+                        isPaneActive: paneIsActive
+                    ) {
+                        notificationCoordinator.submit(.terminal(
+                            notification,
+                            fallbackTitle: notificationTabTitle(tab)
+                        ))
+                    }
+                case .bell:
+                    break
                 }
                 refreshChromeIfNeeded()
                 return
