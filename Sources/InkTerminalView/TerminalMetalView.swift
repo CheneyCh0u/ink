@@ -184,6 +184,11 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     private var scrollOffset = 0
     private var scrollAccumulator: CGFloat = 0
     private var selectionAnchor: TextPosition?
+    private var selectionDragPoint: NSPoint?
+    private var selectionDragIsBlock = false
+    private var selectionAutoscrollState = SelectionAutoscrollState()
+    private var selectionAutoscrollTimer: Timer?
+    private var selectionAutoscrollLastTime: CFTimeInterval?
     private var selection: SelectionRange?
     private var selectionCoordinateSpace: TerminalSearchCoordinateSpace?
     private var searchResults: [TerminalSearchMatch] = []
@@ -260,6 +265,7 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     /// 这些状态属于"这块玻璃"而不是会话，切走就没有意义了。
     public func resetTransientState() {
         hideCommandHover()
+        stopSelectionAutoscroll(clearDragState: true)
         scrollOffset = 0
         scrollAccumulator = 0
         clearSelection()
@@ -275,6 +281,7 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     /// Core 删除历史后，所有基于旧绝对行坐标的视图瞬态必须一起失效。
     /// 搜索 provider 由 Shell 保留并以新 generation 重启，输入法预编辑不受影响。
     public func scrollbackDidClear() {
+        stopSelectionAutoscroll(clearDragState: true)
         scrollOffset = 0
         scrollAccumulator = 0
         selection = nil
@@ -315,6 +322,74 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     private func clearSelection() {
         selection = nil
         selectionCoordinateSpace = nil
+    }
+
+    private func startSelectionAutoscroll() {
+        guard selectionAutoscrollTimer == nil else { return }
+        selectionAutoscrollState.reset()
+        selectionAutoscrollLastTime = CACurrentMediaTime()
+        let timer = Timer(
+            timeInterval: 1.0 / 60.0,
+            target: self,
+            selector: #selector(selectionAutoscrollTimerFired(_:)),
+            userInfo: nil,
+            repeats: true
+        )
+        RunLoop.main.add(timer, forMode: .common)
+        selectionAutoscrollTimer = timer
+    }
+
+    private func stopSelectionAutoscroll(clearDragState: Bool) {
+        selectionAutoscrollTimer?.invalidate()
+        selectionAutoscrollTimer = nil
+        selectionAutoscrollLastTime = nil
+        selectionAutoscrollState.reset()
+        if clearDragState {
+            selectionDragPoint = nil
+            selectionDragIsBlock = false
+        }
+    }
+
+    @objc private func selectionAutoscrollTimerFired(_ timer: Timer) {
+        let now = CACurrentMediaTime()
+        let elapsed = now - (selectionAutoscrollLastTime ?? now)
+        selectionAutoscrollLastTime = now
+        advanceSelectionAutoscroll(by: elapsed)
+    }
+
+    private func advanceSelectionAutoscroll(by elapsed: TimeInterval) {
+        guard let anchor = selectionAnchor,
+              let point = selectionDragPoint,
+              let renderer,
+              let terminal = terminalProvider?()
+        else {
+            stopSelectionAutoscroll(clearDragState: true)
+            return
+        }
+        let top = InkDesignTokens.Spacing.sm
+        let bottom = min(
+            bounds.maxY,
+            top + CGFloat(terminal.grid.size.rows) * renderer.cellSizePoints.height
+        )
+        let delta = selectionAutoscrollState.rowsToScroll(
+            pointerY: point.y, gridTop: top, gridBottom: max(top, bottom),
+            cellHeight: renderer.cellSizePoints.height, elapsed: elapsed
+        )
+        guard delta != 0 else { return }
+        let oldOffset = scrollOffset
+        scrollOffset = max(0, min(oldOffset + delta, terminal.scrollback.count))
+        guard scrollOffset != oldOffset else {
+            stopSelectionAutoscroll(clearDragState: false)
+            return
+        }
+        guard let position = hitPosition(
+            at: point, terminal: terminal, renderer: renderer
+        ) else { return }
+        updateSelection(SelectionRange(
+            start: anchor, end: position, block: selectionDragIsBlock
+        ), in: terminal)
+        commandNavigationAnchor = nil
+        markDirty()
     }
 
     /// 把指定结果滚到视口中部；靠近历史首尾时自然贴边。
@@ -479,6 +554,8 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         super.viewDidMoveToWindow()
         guard window != nil else {
             hideCommandHover()
+            stopSelectionAutoscroll(clearDragState: true)
+            selectionAnchor = nil
             displayLink?.invalidate()
             displayLink = nil
             return
@@ -940,6 +1017,8 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
 
     public override func mouseDown(with event: NSEvent) {
         hideCommandHover()
+        stopSelectionAutoscroll(clearDragState: true)
+        selectionAnchor = nil
         window?.makeFirstResponder(self)
         if event.modifierFlags.contains(.command),
            let link = link(at: event),
@@ -975,23 +1054,51 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
 
     public override func mouseDragged(with event: NSEvent) {
         hideCommandHover()
-        if reportMouse(event, action: .drag, button: 0) { return }
+        if reportMouse(event, action: .drag, button: 0) {
+            stopSelectionAutoscroll(clearDragState: true)
+            return
+        }
         guard let anchor = selectionAnchor,
-              let pos = hitPosition(event),
-              let terminal = terminalProvider?() else { return }
+              let renderer,
+              let terminal = terminalProvider?()
+        else {
+            stopSelectionAutoscroll(clearDragState: true)
+            return
+        }
+        let point = convert(event.locationInWindow, from: nil)
+        let isBlock = event.modifierFlags.contains(.option)
+        selectionDragPoint = point
+        selectionDragIsBlock = isBlock
+        guard let position = hitPosition(
+            at: point, terminal: terminal, renderer: renderer
+        ) else { return }
         updateSelection(SelectionRange(
-            start: anchor, end: pos,
-            block: event.modifierFlags.contains(.option)
+            start: anchor, end: position, block: isBlock
         ), in: terminal)
+
+        let top = InkDesignTokens.Spacing.sm
+        let bottom = min(
+            bounds.maxY,
+            top + CGFloat(terminal.grid.size.rows) * renderer.cellSizePoints.height
+        )
+        if SelectionAutoscrollState.direction(
+            pointerY: point.y,
+            gridTop: top,
+            gridBottom: max(top, bottom)
+        ) == nil {
+            stopSelectionAutoscroll(clearDragState: false)
+        } else {
+            startSelectionAutoscroll()
+        }
         markDirty()
     }
 
     public override func mouseUp(with event: NSEvent) {
-        if reportMouse(event, action: .release, button: 0) { return }
+        stopSelectionAutoscroll(clearDragState: true)
+        let reported = reportMouse(event, action: .release, button: 0)
         selectionAnchor = nil
-        if copyOnSelect, selection != nil {
-            copy(nil)
-        }
+        if reported { return }
+        if copyOnSelect, selection != nil { copy(nil) }
     }
 
     public override func rightMouseDown(with event: NSEvent) {
