@@ -83,16 +83,25 @@ struct SelectionAutoscrollTests {
     func acceleratesAndCaps() {
         var near = SelectionAutoscrollState()
         var far = SelectionAutoscrollState()
+        var stalled = SelectionAutoscrollState()
         let nearRows = near.rowsToScroll(
             pointerY: -1, gridTop: 0, gridBottom: 100,
             cellHeight: 20, elapsed: 0.2
         )
-        let farRows = far.rowsToScroll(
+        var farRows = 0
+        for _ in 0..<4 {
+            farRows += far.rowsToScroll(
+                pointerY: -1_000, gridTop: 0, gridBottom: 100,
+                cellHeight: 20, elapsed: 0.1
+            )
+        }
+        let stalledRows = stalled.rowsToScroll(
             pointerY: -1_000, gridTop: 0, gridBottom: 100,
             cellHeight: 20, elapsed: 1
         )
         #expect(nearRows == 1)
-        #expect(farRows == 4)
+        #expect(farRows == 16)
+        #expect(stalledRows == 4)
     }
 
     @Test("小数行跨 tick 累积且换向时清除")
@@ -221,7 +230,7 @@ Refs #89"
 
 **Interfaces:**
 - Consumes: Task 1 的 `SelectionAutoscrollState`，以及现有 `hitPosition`、`updateSelection` 和 `scrollOffset`。
-- Produces: `advanceSelectionAutoscroll(by:)`、`selectionAutoscrollActiveForTesting`、`selectionRangeForTesting` 和真实 Timer 驱动。
+- Produces: 私有 `advanceSelectionAutoscroll(by:)` 和真实 Timer 驱动；测试只通过现有 `searchScrollOffset` 与 `searchSelection(in:)` 观察行为。
 
 - [ ] **Step 1: 写窗口级失败测试**
 
@@ -248,10 +257,10 @@ func scrollsTowardLatest() throws {
     view.mouseDragged(with: try mouseEvent(
         .leftMouseDragged, in: window, y: view.bounds.maxY + 40
     ))
-    #expect(view.selectionAutoscrollActiveForTesting)
-    view.advanceSelectionAutoscroll(by: 0.25)
+    runLoop(for: 0.25)
     #expect(view.searchScrollOffset < before)
-    #expect(view.selectionRangeForTesting?.normalized.end.line > 2)
+    let range = try #require(view.searchSelection(in: terminal))
+    #expect(range.normalized.end.line > range.normalized.start.line)
 }
 
 @Test("上边缘外持续选择历史内容")
@@ -260,7 +269,7 @@ func scrollsTowardHistory() throws {
     let (window, view) = makeSelectionWindow(terminal: { terminal })
     view.mouseDown(with: try mouseEvent(.leftMouseDown, in: window, y: 80))
     view.mouseDragged(with: try mouseEvent(.leftMouseDragged, in: window, y: -40))
-    view.advanceSelectionAutoscroll(by: 0.25)
+    runLoop(for: 0.25)
     #expect(view.searchScrollOffset > 0)
 }
 
@@ -274,31 +283,74 @@ func preservesBlockSelection() throws {
     view.mouseDragged(with: try mouseEvent(
         .leftMouseDragged, in: window, y: -40, modifiers: [.option]
     ))
-    view.advanceSelectionAutoscroll(by: 0.25)
-    #expect(view.selectionRangeForTesting?.block == true)
+    runLoop(for: 0.25)
+    #expect(view.searchSelection(in: terminal)?.block == true)
 }
 
-@Test("结束和失效路径销毁计时器")
-func lifecycleStops() throws {
+@Test("指针回到网格后停止")
+func returningInsideStops() throws {
+    let terminal = makeScrollableTerminal()
+    let (window, view) = makeSelectionWindow(terminal: { terminal })
+    view.mouseDown(with: try mouseEvent(.leftMouseDown, in: window, y: 80))
+    view.mouseDragged(with: try mouseEvent(.leftMouseDragged, in: window, y: -40))
+    runLoop(for: 0.2)
+    view.mouseDragged(with: try mouseEvent(.leftMouseDragged, in: window, y: 80))
+    let stoppedOffset = view.searchScrollOffset
+    runLoop(for: 0.2)
+    #expect(view.searchScrollOffset == stoppedOffset)
+}
+
+@Test("松开鼠标后停止")
+func mouseUpStops() throws {
+    let terminal = makeScrollableTerminal()
+    let (window, view) = makeSelectionWindow(terminal: { terminal })
+    view.mouseDown(with: try mouseEvent(.leftMouseDown, in: window, y: 80))
+    view.mouseDragged(with: try mouseEvent(.leftMouseDragged, in: window, y: -40))
+    runLoop(for: 0.2)
+    view.mouseUp(with: try mouseEvent(.leftMouseUp, in: window, y: -40))
+    let stoppedOffset = view.searchScrollOffset
+    runLoop(for: 0.2)
+    #expect(view.searchScrollOffset == stoppedOffset)
+}
+
+@Test("重置、清历史和窗口解绑后停止")
+func invalidationStops() throws {
     let terminal = makeScrollableTerminal()
     let (window, view) = makeSelectionWindow(terminal: { terminal })
     func start() throws {
         view.mouseDown(with: try mouseEvent(.leftMouseDown, in: window, y: 80))
         view.mouseDragged(with: try mouseEvent(.leftMouseDragged, in: window, y: -40))
-        #expect(view.selectionAutoscrollActiveForTesting)
     }
     try start()
     view.resetTransientState()
-    #expect(!view.selectionAutoscrollActiveForTesting)
+    runLoop(for: 0.2)
+    #expect(view.searchScrollOffset == 0)
     try start()
     view.scrollbackDidClear()
-    #expect(!view.selectionAutoscrollActiveForTesting)
-    try start()
-    view.mouseUp(with: try mouseEvent(.leftMouseUp, in: window, y: -40))
-    #expect(!view.selectionAutoscrollActiveForTesting)
+    runLoop(for: 0.2)
+    #expect(view.searchScrollOffset == 0)
     try start()
     window.contentView = NSView()
-    #expect(!view.selectionAutoscrollActiveForTesting)
+    runLoop(for: 0.2)
+    #expect(view.searchScrollOffset == 0)
+}
+
+@Test("上下方向都钳在 scrollback 边界")
+func clampsAtBothBoundaries() throws {
+    let terminal = makeScrollableTerminal()
+    let (window, view) = makeSelectionWindow(terminal: { terminal })
+    view.mouseDown(with: try mouseEvent(.leftMouseDown, in: window, y: 80))
+    view.mouseDragged(with: try mouseEvent(.leftMouseDragged, in: window, y: -1_000))
+    runLoop(for: 0.5)
+    #expect(view.searchScrollOffset == terminal.scrollback.count)
+
+    view.mouseUp(with: try mouseEvent(.leftMouseUp, in: window, y: -1_000))
+    view.mouseDown(with: try mouseEvent(.leftMouseDown, in: window, y: 80))
+    view.mouseDragged(with: try mouseEvent(
+        .leftMouseDragged, in: window, y: view.bounds.maxY + 1_000
+    ))
+    runLoop(for: 0.5)
+    #expect(view.searchScrollOffset == 0)
 }
 
 @Test("TUI 普通拖拽优先而 Option 允许本地选择")
@@ -309,8 +361,9 @@ func mouseReportingPriority() throws {
     view.onInput = { input.append($0) }
     view.mouseDown(with: try mouseEvent(.leftMouseDown, in: window, y: 80))
     view.mouseDragged(with: try mouseEvent(.leftMouseDragged, in: window, y: -40))
+    runLoop(for: 0.2)
     #expect(!input.isEmpty)
-    #expect(!view.selectionAutoscrollActiveForTesting)
+    #expect(view.searchScrollOffset == 0)
     input.removeAll()
     view.mouseDown(with: try mouseEvent(
         .leftMouseDown, in: window, y: 80, modifiers: [.option]
@@ -318,20 +371,10 @@ func mouseReportingPriority() throws {
     view.mouseDragged(with: try mouseEvent(
         .leftMouseDragged, in: window, y: -40, modifiers: [.option]
     ))
+    runLoop(for: 0.2)
     #expect(input.isEmpty)
-    #expect(view.selectionAutoscrollActiveForTesting)
-}
-
-@Test("真实计时器在指针不动时继续推进")
-func timerContinuesWhileStationary() throws {
-    let terminal = makeScrollableTerminal()
-    let (window, view) = makeSelectionWindow(terminal: { terminal })
-    view.mouseDown(with: try mouseEvent(.leftMouseDown, in: window, y: 80))
-    view.mouseDragged(with: try mouseEvent(.leftMouseDragged, in: window, y: -40))
-    let before = view.searchScrollOffset
-    RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
-    #expect(view.searchScrollOffset > before)
-    view.mouseUp(with: try mouseEvent(.leftMouseUp, in: window, y: -40))
+    #expect(view.searchScrollOffset > 0)
+    #expect(view.searchSelection(in: terminal)?.block == true)
 }
 }
 ```
@@ -397,13 +440,18 @@ private func mouseEvent(
         pressure: 0
     ))
 }
+
+@MainActor
+private func runLoop(for interval: TimeInterval) {
+    RunLoop.main.run(until: Date(timeIntervalSinceNow: interval))
+}
 ```
 
 - [ ] **Step 2: 运行测试并确认 RED**
 
 Run: `swift test --filter TerminalSelectionAutoscrollTests`
 
-Expected: 编译失败，提示三个测试接口不存在。
+Expected: 测试编译成功，但首个上下越界用例因 `scrollOffset` 不变而失败。
 
 - [ ] **Step 3: 实现视图状态与计时器**
 
@@ -415,11 +463,6 @@ private var selectionDragIsBlock = false
 private var selectionAutoscrollState = SelectionAutoscrollState()
 private var selectionAutoscrollTimer: Timer?
 private var selectionAutoscrollLastTime: CFTimeInterval?
-
-var selectionAutoscrollActiveForTesting: Bool {
-    selectionAutoscrollTimer?.isValid == true
-}
-var selectionRangeForTesting: SelectionRange? { selection }
 ```
 
 新增以下驱动。网格边界为 `Spacing.sm...min(bounds.maxY, Spacing.sm + rows * cellHeight)`：
@@ -458,7 +501,7 @@ private func stopSelectionAutoscroll(clearDragState: Bool) {
     advanceSelectionAutoscroll(by: elapsed)
 }
 
-func advanceSelectionAutoscroll(by elapsed: TimeInterval) {
+private func advanceSelectionAutoscroll(by elapsed: TimeInterval) {
     guard let anchor = selectionAnchor,
           let point = selectionDragPoint,
           let renderer,
@@ -502,6 +545,7 @@ func advanceSelectionAutoscroll(by elapsed: TimeInterval) {
 public override func mouseDown(with event: NSEvent) {
     hideCommandHover()
     stopSelectionAutoscroll(clearDragState: true)
+    selectionAnchor = nil
     window?.makeFirstResponder(self)
     if event.modifierFlags.contains(.command),
        let link = link(at: event),
@@ -513,7 +557,6 @@ public override func mouseDown(with event: NSEvent) {
     if reportMouse(event, action: .press, button: 0) { return }
     guard let pos = hitPosition(event), let terminal = terminalProvider?() else { return }
 
-    selectionAnchor = nil
     switch event.clickCount {
     case 2:
         if let cols = terminal.wordColumns(at: pos) {
@@ -599,7 +642,7 @@ swift test --filter TerminalSelectionAutoscrollTests
 swift test --filter InkTerminalViewTests
 ```
 
-Expected: 6 个新增窗口测试和 InkTerminalView 全部测试通过，真实 Timer 用例不超时。
+Expected: 8 个新增窗口测试和 InkTerminalView 全部测试通过，真实 Timer 用例不超时。
 
 - [ ] **Step 6: 提交**
 
