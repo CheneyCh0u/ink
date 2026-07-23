@@ -7,17 +7,17 @@ struct SelectionAutoscrollTests {
     @Test("网格内不滚动且清除旧余量")
     func insideGridStops() {
         var state = SelectionAutoscrollState()
-        _ = state.rowsToScroll(
-            pointerY: -10, gridTop: 0, gridBottom: 100,
+        #expect(state.rowsToScroll(
+            pointerY: -1, gridTop: 0, gridBottom: 100,
             cellHeight: 20, elapsed: 0.1
-        )
+        ) == 0)
         #expect(state.rowsToScroll(
             pointerY: 50, gridTop: 0, gridBottom: 100,
             cellHeight: 20, elapsed: 1
         ) == 0)
         #expect(state.rowsToScroll(
             pointerY: -1, gridTop: 0, gridBottom: 100,
-            cellHeight: 20, elapsed: 0.01
+            cellHeight: 20, elapsed: 0.03
         ) == 0)
     }
 
@@ -35,11 +35,10 @@ struct SelectionAutoscrollTests {
         ) < 0)
     }
 
-    @Test("越界越远越快且长间隔单次最多四行")
-    func acceleratesAndCaps() {
+    @Test("越界越远越快")
+    func accelerates() {
         var near = SelectionAutoscrollState()
         var far = SelectionAutoscrollState()
-        var stalled = SelectionAutoscrollState()
         let nearRows = near.rowsToScroll(
             pointerY: -1, gridTop: 0, gridBottom: 100,
             cellHeight: 20, elapsed: 0.2
@@ -51,17 +50,35 @@ struct SelectionAutoscrollTests {
                 cellHeight: 20, elapsed: 0.1
             )
         }
+        #expect(nearRows == 1)
+        #expect(farRows == 16)
+    }
+
+    @Test("最远越界速度严格封顶每秒四十行")
+    func maximumSpeedIsFortyRowsPerSecond() {
+        var state = SelectionAutoscrollState()
+        var rows = 0
+        for _ in 0..<1_000 {
+            rows += state.rowsToScroll(
+                pointerY: -1_000, gridTop: 0, gridBottom: 100,
+                cellHeight: 20, elapsed: 0.001
+            )
+        }
+        #expect(rows == 40)
+    }
+
+    @Test("长间隔单次最多推进四行")
+    func maximumRowsPerTickIsFour() {
+        var stalled = SelectionAutoscrollState()
         let stalledRows = stalled.rowsToScroll(
             pointerY: -1_000, gridTop: 0, gridBottom: 100,
             cellHeight: 20, elapsed: 1
         )
-        #expect(nearRows == 1)
-        #expect(farRows == 16)
         #expect(stalledRows == 4)
     }
 
-    @Test("小数行跨 tick 累积且换向时清除")
-    func accumulatesAndResetsDirection() {
+    @Test("小数行跨 tick 累积")
+    func accumulatesAcrossTicks() {
         var state = SelectionAutoscrollState()
         #expect(state.rowsToScroll(
             pointerY: -1, gridTop: 0, gridBottom: 100,
@@ -71,9 +88,22 @@ struct SelectionAutoscrollTests {
             pointerY: -1, gridTop: 0, gridBottom: 100,
             cellHeight: 20, elapsed: 0.08
         ) == 1)
+    }
+
+    @Test("换向时清除会干扰反向结果的旧余量")
+    func directionChangeClearsRemainder() {
+        var state = SelectionAutoscrollState()
+        #expect(state.rowsToScroll(
+            pointerY: -1, gridTop: 0, gridBottom: 100,
+            cellHeight: 20, elapsed: 0.1
+        ) == 0)
+        #expect(state.rowsToScroll(
+            pointerY: 101, gridTop: 0, gridBottom: 100,
+            cellHeight: 20, elapsed: 0.1
+        ) == 0)
         #expect(state.rowsToScroll(
             pointerY: 101, gridTop: 0, gridBottom: 100,
             cellHeight: 20, elapsed: 0.03
-        ) == 0)
+        ) == -1)
     }
 }

@@ -184,6 +184,7 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     private var scrollOffset = 0
     private var scrollAccumulator: CGFloat = 0
     private var selectionAnchor: TextPosition?
+    private var selectionAnchorCoordinateSpace: TerminalSearchCoordinateSpace?
     private var selectionDragPoint: NSPoint?
     private var selectionDragIsBlock = false
     private var selectionAutoscrollState = SelectionAutoscrollState()
@@ -265,11 +266,9 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     /// 这些状态属于"这块玻璃"而不是会话，切走就没有意义了。
     public func resetTransientState() {
         hideCommandHover()
-        stopSelectionAutoscroll(clearDragState: true)
         scrollOffset = 0
         scrollAccumulator = 0
         clearSelection()
-        selectionAnchor = nil
         markedText = ""
         searchResults.removeAll(keepingCapacity: false)
         currentSearchIndex = nil
@@ -281,11 +280,9 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     /// Core 删除历史后，所有基于旧绝对行坐标的视图瞬态必须一起失效。
     /// 搜索 provider 由 Shell 保留并以新 generation 重启，输入法预编辑不受影响。
     public func scrollbackDidClear() {
-        stopSelectionAutoscroll(clearDragState: true)
         scrollOffset = 0
         scrollAccumulator = 0
-        selection = nil
-        selectionAnchor = nil
+        clearSelection()
         searchResults.removeAll(keepingCapacity: false)
         currentSearchIndex = nil
         commandNavigationAnchor = nil
@@ -320,6 +317,7 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     }
 
     private func clearSelection() {
+        stopSelectionAutoscroll(clearDragState: true)
         selection = nil
         selectionCoordinateSpace = nil
     }
@@ -345,6 +343,8 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         selectionAutoscrollLastTime = nil
         selectionAutoscrollState.reset()
         if clearDragState {
+            selectionAnchor = nil
+            selectionAnchorCoordinateSpace = nil
             selectionDragPoint = nil
             selectionDragIsBlock = false
         }
@@ -358,12 +358,23 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     }
 
     private func advanceSelectionAutoscroll(by elapsed: TimeInterval) {
-        guard let anchor = selectionAnchor,
-              let point = selectionDragPoint,
+        guard let point = selectionDragPoint,
               let renderer,
               let terminal = terminalProvider?()
         else {
             stopSelectionAutoscroll(clearDragState: true)
+            return
+        }
+        guard let selectionAnchor, let selectionAnchorCoordinateSpace else {
+            stopSelectionAutoscroll(clearDragState: true)
+            return
+        }
+        guard let anchor = selectionAnchorCoordinateSpace.resolve(
+            SelectionRange(start: selectionAnchor, end: selectionAnchor),
+            in: terminal
+        )?.start else {
+            clearSelection()
+            markDirty()
             return
         }
         let top = InkDesignTokens.Spacing.sm
@@ -371,6 +382,14 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
             bounds.maxY,
             top + CGFloat(terminal.grid.size.rows) * renderer.cellSizePoints.height
         )
+        guard SelectionAutoscrollState.direction(
+            pointerY: point.y,
+            gridTop: top,
+            gridBottom: max(top, bottom)
+        ) != nil else {
+            stopSelectionAutoscroll(clearDragState: false)
+            return
+        }
         let delta = selectionAutoscrollState.rowsToScroll(
             pointerY: point.y, gridTop: top, gridBottom: max(top, bottom),
             cellHeight: renderer.cellSizePoints.height, elapsed: elapsed
@@ -555,7 +574,6 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
         guard window != nil else {
             hideCommandHover()
             stopSelectionAutoscroll(clearDragState: true)
-            selectionAnchor = nil
             displayLink?.invalidate()
             displayLink = nil
             return
@@ -1018,7 +1036,6 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     public override func mouseDown(with event: NSEvent) {
         hideCommandHover()
         stopSelectionAutoscroll(clearDragState: true)
-        selectionAnchor = nil
         window?.makeFirstResponder(self)
         if event.modifierFlags.contains(.command),
            let link = link(at: event),
@@ -1044,10 +1061,11 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
                 end: TextPosition(line: pos.line, column: terminal.grid.size.columns - 1)
             ), in: terminal)
         default:
-            selectionAnchor = pos
             if selection != nil {
                 clearSelection() // 单击清掉旧选区
             }
+            selectionAnchor = pos
+            selectionAnchorCoordinateSpace = TerminalSearchCoordinateSpace(in: terminal)
         }
         markDirty()
     }
@@ -1058,11 +1076,22 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
             stopSelectionAutoscroll(clearDragState: true)
             return
         }
-        guard let anchor = selectionAnchor,
-              let renderer,
+        guard let renderer,
               let terminal = terminalProvider?()
         else {
             stopSelectionAutoscroll(clearDragState: true)
+            return
+        }
+        guard let selectionAnchor, let selectionAnchorCoordinateSpace else {
+            stopSelectionAutoscroll(clearDragState: true)
+            return
+        }
+        guard let anchor = selectionAnchorCoordinateSpace.resolve(
+            SelectionRange(start: selectionAnchor, end: selectionAnchor),
+            in: terminal
+        )?.start else {
+            clearSelection()
+            markDirty()
             return
         }
         let point = convert(event.locationInWindow, from: nil)
@@ -1096,7 +1125,6 @@ public final class TerminalMetalView: NSView, NSMenuItemValidation, @preconcurre
     public override func mouseUp(with event: NSEvent) {
         stopSelectionAutoscroll(clearDragState: true)
         let reported = reportMouse(event, action: .release, button: 0)
-        selectionAnchor = nil
         if reported { return }
         if copyOnSelect, selection != nil { copy(nil) }
     }
