@@ -37,6 +37,25 @@ struct OSC8HyperlinkTests {
         #expect(terminal.explicitHyperlinkRecordCount == 1)
     }
 
+    @Test("emoji 序列扩宽保留基字符链接而不改绑到新目标")
+    func emojiPromotionPreservesSourceLink() throws {
+        var (parser, terminal) = makeTerminal(columns: 20, rows: 2)
+        feed(
+            "\u{1B}]8;;https://a.test\u{07}⏱"
+                + "\u{1B}]8;;https://b.test\u{07}\u{FE0F}x"
+                + "\u{1B}]8;;\u{07}",
+            &parser,
+            &terminal
+        )
+
+        #expect(try #require(terminal.link(at: .init(line: 0, column: 0))).target
+            == "https://a.test")
+        #expect(try #require(terminal.link(at: .init(line: 0, column: 1))).target
+            == "https://a.test")
+        #expect(try #require(terminal.link(at: .init(line: 0, column: 2))).target
+            == "https://b.test")
+    }
+
     @Test("无链接普通输出不分配旁路元数据")
     func plainOutputDoesNotAllocateMetadata() {
         var (parser, terminal) = makeTerminal()
