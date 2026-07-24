@@ -13,6 +13,7 @@ import Foundation
 ///
 /// [terminal]
 /// theme = "neutral"     # warm | graphite | pine | plum | neutral
+/// prompt_theme = "ink"  # ink | user
 ///
 /// [appearance]
 /// mode = "system"       # system | light | dark
@@ -68,6 +69,10 @@ public struct InkConfig: Equatable, Sendable {
         case warm, graphite, pine, plum, neutral
     }
 
+    public enum PromptThemeSource: String, CaseIterable, Sendable {
+        case ink, user
+    }
+
     public var appearanceMode: AppearanceMode = .system
     public var startupSidebarMode: SidebarMode = .expanded
     public var rememberWindowFrame = true
@@ -82,6 +87,7 @@ public struct InkConfig: Equatable, Sendable {
     public var fontThickenStrength = 128
     /// 终端配色家族；浅色或深色变体跟随界面外观。
     public var terminalTheme: TerminalTheme = .neutral
+    public var promptThemeSource: PromptThemeSource = .ink
     public var cursorStyle: CursorStyle = .block
     public var cursorBlink = true
     public var optionAsMeta = true
@@ -148,6 +154,10 @@ public struct InkConfig: Equatable, Sendable {
         if let theme = values.string("terminal.theme"),
            let parsed = TerminalTheme(rawValue: theme) {
             config.terminalTheme = parsed
+        }
+        if let source = values.string("terminal.prompt_theme"),
+           let parsed = PromptThemeSource(rawValue: source) {
+            config.promptThemeSource = parsed
         }
         if let style = values.string("cursor.style"), let parsed = CursorStyle(rawValue: style) {
             config.cursorStyle = parsed
@@ -230,6 +240,7 @@ public struct InkConfig: Equatable, Sendable {
             ("font.thicken", fontThicken ? "true" : "false"),
             ("font.thicken_strength", "\(fontThickenStrength)"),
             ("terminal.theme", quote(terminalTheme.rawValue)),
+            ("terminal.prompt_theme", quote(promptThemeSource.rawValue)),
             ("cursor.style", quote(cursorStyle.rawValue)),
             ("cursor.blink", cursorBlink ? "true" : "false"),
             ("input.option_as_meta", optionAsMeta ? "true" : "false"),
