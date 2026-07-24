@@ -155,6 +155,16 @@
 - 菜单与快捷键支持聚焦相邻 pane
 - 明确区分“关闭当前 pane”和“关闭整个标签”，危险关闭沿用会话关闭确认策略
 
+### P1-B：提示符主题
+
+- 设置页允许在 Ink 管理的 Starship 主题与用户现有配置之间切换，
+  默认使用 Ink 主题
+- Ink 主题保留系统、路径、Git、语言环境、时间与命令耗时分段，
+  只使用 ANSI 语义色槽，让最终颜色跟随 Ink 终端主题与系统明暗外观
+- 只向新建 Ink PTY 注入独立 `STARSHIP_CONFIG`；不修改用户的
+  `~/.config/starship.toml`，不重启现有会话，不影响 Ghostty 等其它终端
+- Ink 不安装、启用或替换 Starship；shell 未启用 Starship 时保持原有提示符
+
 ### 已落地的 P1 基础
 
 - scrollback 搜索：增量、高亮
