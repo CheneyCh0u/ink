@@ -441,51 +441,83 @@ struct ProjectSidebarLayoutTests {
             abs($0.frame.width - InkDesignTokens.Sidebar.labelRailWidth) < 0.5
                 && abs($0.frame.height - InkDesignTokens.Sidebar.labelRailHeight) < 0.5
         })
-        #expect(descendants(of: NSButton.self, in: controller.view).count == 1)
+        #expect(descendants(of: NSButton.self, in: controller.view).count == 2)
     }
 
-    @Test("展开态底部只保留全宽新建项目")
-    func expandedFooterUsesFullWidthNewProject() throws {
-        let (controller, newButton, separator) = try makeController(mode: .expanded)
+    @Test("底部是一行左加号右齿轮的纯图标按钮", arguments: [
+        SidebarViewController.DisplayMode.expanded,
+        SidebarViewController.DisplayMode.compact,
+    ])
+    func footerShowsIconOnlyActions(mode: SidebarViewController.DisplayMode) throws {
+        let fixture = try makeController(mode: mode)
+        let (controller, newButton, settingsButton, separator) = fixture.parts
+        let size = InkDesignTokens.Sidebar.footerButtonSize
+        let inset = mode == .compact ? InkDesignTokens.Spacing.xxs : InkDesignTokens.Spacing.xs
 
-        #expect(newButton.title == "新建项目")
-        #expect(abs(newButton.frame.minX - InkDesignTokens.Spacing.xs) < 0.5)
-        #expect(
-            abs(controller.view.bounds.maxX - newButton.frame.maxX - InkDesignTokens.Spacing.xs) < 0.5
-        )
-        #expect(separator.frame.minY > newButton.frame.maxY)
-        #expect(newButton.imageHugsTitle)
-        #expect(newButton.alignment == .left)
-        let imageRect = try #require(newButton.cell?.imageRect(forBounds: newButton.bounds))
-        let titleRect = try #require(newButton.cell?.titleRect(forBounds: newButton.bounds))
-        #expect(imageRect.minX >= InkDesignTokens.Spacing.xs - 0.5)
-        #expect(titleRect.width >= newButton.attributedTitle.size().width)
-        #expect(controller.view.subviews.compactMap { $0 as? NSButton }.count == 1)
-        #expect(!hasShortcutHints(in: controller.view))
-    }
-
-    @Test("图标态底部只保留居中加号")
-    func compactFooterUsesCenteredNewProject() throws {
-        let (controller, newButton, separator) = try makeController(mode: .compact)
-
-        #expect(abs(newButton.frame.midX - controller.view.bounds.midX) < 0.5)
-        #expect(separator.frame.minY > newButton.frame.maxY)
-        #expect(newButton.alignment == .center)
-        #expect(newButton.title.isEmpty)
+        // 左 +、右齿轮，同一水平线，方形按钮
+        #expect(abs(newButton.frame.minX - inset) < 0.5)
+        #expect(abs(controller.view.bounds.maxX - settingsButton.frame.maxX - inset) < 0.5)
+        #expect(newButton.frame.maxX < settingsButton.frame.minX)
+        #expect(abs(newButton.frame.midY - settingsButton.frame.midY) < 0.5)
+        for button in [newButton, settingsButton] {
+            #expect(abs(button.frame.width - size) < 0.5)
+            #expect(abs(button.frame.height - size) < 0.5)
+            #expect(button.title.isEmpty)
+            #expect(separator.frame.minY > button.frame.maxY)
+        }
+        // 文字进 tooltip 与辅助功能标签
         #expect(newButton.toolTip == "新建项目")
-        #expect(controller.view.subviews.compactMap { $0 as? NSButton }.count == 1)
+        #expect(newButton.accessibilityLabel() == "新建项目")
+        #expect(settingsButton.toolTip == "设置（⌘,）")
+        #expect(settingsButton.accessibilityLabel() == "设置")
+        #expect(controller.view.subviews.compactMap { $0 as? NSButton }.count == 2)
         #expect(!hasShortcutHints(in: controller.view))
+    }
+
+    @Test("底部齿轮触发回调并跟随设置页选中态")
+    func footerSettingsButtonSelection() throws {
+        let fixture = try makeController(mode: .expanded)
+        let (controller, _, settingsButton, _) = fixture.parts
+        var opened = false
+        controller.onSettings = { opened = true }
+
+        settingsButton.performClick(nil)
+        #expect(opened)
+        controller.setSettingsSelected(true)
+        #expect(settingsButton.layer?.backgroundColor != nil)
+        controller.setSettingsSelected(false)
+        #expect(settingsButton.layer?.backgroundColor == nil)
+    }
+
+    /// 窗口引用必须随 fixture 存活：离屏布局下 NSButton 会用 fitting 高度
+    /// 顶掉尺寸约束，挂进窗口才能得到真实 frame。
+    private struct FooterFixture {
+        let controller: SidebarViewController
+        let newButton: NSButton
+        let settingsButton: NSButton
+        let separator: NSBox
+        let window: NSWindow
+
+        var parts: (SidebarViewController, NSButton, NSButton, NSBox) {
+            (controller, newButton, settingsButton, separator)
+        }
     }
 
     private func makeController(
         mode: SidebarViewController.DisplayMode
-    ) throws -> (SidebarViewController, NSButton, NSBox) {
+    ) throws -> FooterFixture {
         let controller = SidebarViewController()
         controller.displayMode = mode
         let width = mode == .compact
             ? InkDesignTokens.Sidebar.compactWidth
             : InkDesignTokens.Sidebar.width
-        controller.view.frame = NSRect(x: 0, y: 0, width: width, height: 700)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: width, height: 700),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: true
+        )
+        window.contentView = controller.view
         controller.view.appearance = NSAppearance(named: .aqua)
         controller.reload(rows: [
             .init(
@@ -501,13 +533,18 @@ struct ProjectSidebarLayoutTests {
         controller.view.layoutSubtreeIfNeeded()
 
         let buttons = controller.view.subviews.compactMap { $0 as? NSButton }
-        let newButton = try #require(buttons.first { button in
-            button.title == "新建项目" || button.toolTip == "新建项目"
-        })
+        let newButton = try #require(buttons.first { $0.toolTip == "新建项目" })
+        let settingsButton = try #require(buttons.first { $0.toolTip == "设置（⌘,）" })
         let separator = try #require(
             controller.view.subviews.compactMap { $0 as? NSBox }.first
         )
-        return (controller, newButton, separator)
+        return FooterFixture(
+            controller: controller,
+            newButton: newButton,
+            settingsButton: settingsButton,
+            separator: separator,
+            window: window
+        )
     }
 
     private func makeLabelController(

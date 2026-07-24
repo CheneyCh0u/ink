@@ -338,7 +338,9 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         }
         tabBar.onNewTab = { [weak self] in self?.newSession(nil) }
         tabBar.onToggleSidebar = { [weak self] in self?.toggleSidebarMode() }
-        tabBar.onSettings = { [weak self] in
+        sidebarVC.onSelect = { [weak self] in self?.selectProject(at: $0) }
+        sidebarVC.onNewProject = { [weak self] in self?.newProject(nil) }
+        sidebarVC.onSettings = { [weak self] in
             guard let self else { return }
             if self.isShowingSettings {
                 self.hideSettings()
@@ -346,8 +348,6 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
                 self.showSettings(nil)
             }
         }
-        sidebarVC.onSelect = { [weak self] in self?.selectProject(at: $0) }
-        sidebarVC.onNewProject = { [weak self] in self?.newProject(nil) }
         sidebarVC.onRemove = { [weak self] in self?.removeProject(at: $0) }
         sidebarVC.onTogglePin = { [weak self] in self?.togglePin(at: $0) }
         sidebarVC.onEditNote = { [weak self] in self?.editNote(at: $0) }
@@ -456,7 +456,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         workspaceVC.closeSearch(returnFocus: false)
         installSettingsViewIfNeeded()
         isShowingSettings = true
-        tabBar.setSettingsSelected(true)
+        sidebarVC.setSettingsSelected(true)
         settingsVC.update(config: config)
         updateConfigSyncControls()
         terminalWorkspace.isHidden = true
@@ -545,7 +545,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
     private func hideSettings() {
         guard isShowingSettings else { return }
         isShowingSettings = false
-        tabBar.setSettingsSelected(false)
+        sidebarVC.setSettingsSelected(false)
         settingsVC.view.isHidden = true
         terminalWorkspace.isHidden = false
         workspaceVC.focusActivePane()

@@ -46,7 +46,7 @@ struct SettingsWindowTests {
         window.close()
     }
 
-    @Test("设置页打开时顶部栏仍可见并显示选中齿轮")
+    @Test("设置页打开时顶部栏仍可见且侧边栏齿轮显示选中态")
     func showingSettingsKeepsTabBarVisible() throws {
         let fixture = try SettingsWindowFixture()
         defer { fixture.cleanUp() }
@@ -64,12 +64,10 @@ struct SettingsWindowTests {
         let tabBar = try #require(
             allSubviews(in: contentView).first { $0 is TabBarView } as? TabBarView
         )
-        let settings = try #require(
-            tabBar.subviews.compactMap { $0 as? NSButton }
-                .first { $0.toolTip == "设置（⌘,）" }
-        )
+        let settings = try #require(settingsButton(in: contentView))
         #expect(!tabBar.isHiddenOrHasHiddenAncestor)
-        #expect(settings.state == .on)
+        #expect(!settings.isHiddenOrHasHiddenAncestor)
+        #expect(settings.layer?.backgroundColor != nil)
         window.close()
     }
 
@@ -96,15 +94,9 @@ struct SettingsWindowTests {
                 .compactMap { $0 as? NSTextField }
                 .first { $0.stringValue == "设置" }
         )
-        let tabBar = try #require(
-            allSubviews(in: contentView).first { $0 is TabBarView } as? TabBarView
-        )
-        let settings = try #require(
-            tabBar.subviews.compactMap { $0 as? NSButton }
-                .first { $0.toolTip == "设置（⌘,）" }
-        )
+        let settings = try #require(settingsButton(in: contentView))
         #expect(settingsTitle.isHiddenOrHasHiddenAncestor)
-        #expect(settings.state == .off)
+        #expect(settings.layer?.backgroundColor == nil)
         window.close()
     }
 
@@ -161,13 +153,7 @@ struct SettingsWindowTests {
         spinRunLoop()
 
         let contentView = try #require(window.contentView)
-        let tabBar = try #require(
-            allSubviews(in: contentView).first { $0 is TabBarView } as? TabBarView
-        )
-        let settings = try #require(
-            tabBar.subviews.compactMap { $0 as? NSButton }
-                .first { $0.toolTip == "设置（⌘,）" }
-        )
+        let settings = try #require(settingsButton(in: contentView))
         settings.performClick(nil)
         spinRunLoop()
 
@@ -177,7 +163,7 @@ struct SettingsWindowTests {
                 .first { $0.stringValue == "设置" }
         )
         #expect(settingsTitle.isHiddenOrHasHiddenAncestor)
-        #expect(settings.state == .off)
+        #expect(settings.layer?.backgroundColor == nil)
         window.close()
     }
 
@@ -262,6 +248,13 @@ struct SettingsWindowTests {
 
     private func allSubviews(in view: NSView) -> [NSView] {
         view.subviews.flatMap { [$0] + allSubviews(in: $0) }
+    }
+
+    /// 设置入口已移到侧边栏底部，按 tooltip 在整个窗口里找。
+    private func settingsButton(in contentView: NSView) -> NSButton? {
+        allSubviews(in: contentView)
+            .compactMap { $0 as? NSButton }
+            .first { $0.toolTip == "设置（⌘,）" }
     }
 
     private func ancestor<T: NSView>(of view: NSView, as type: T.Type) -> T? {

@@ -31,12 +31,10 @@ final class TabBarView: NSView {
     var onRename: ((Int, String) -> Void)?
     var onNewTab: (() -> Void)?
     var onToggleSidebar: (() -> Void)?
-    var onSettings: (() -> Void)?
 
     private let stack = NSStackView()
     private let toggleButton = NSButton()
     private let plusButton = NSButton()
-    private let settingsButton = TabBarSettingsButton()
     private let overflowButton = TabBarOverflowButton()
     private var toggleLeading: NSLayoutConstraint?
     private var tabs: [Tab] = []
@@ -69,16 +67,6 @@ final class TabBarView: NSView {
         plusButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(plusButton)
 
-        settingsButton.isBordered = false
-        settingsButton.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
-        settingsButton.contentTintColor = InkDesignTokens.Color.textSecondary
-        settingsButton.toolTip = "设置（⌘,）"
-        settingsButton.setAccessibilityLabel("设置")
-        settingsButton.target = self
-        settingsButton.action = #selector(openSettings)
-        settingsButton.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(settingsButton)
-
         overflowButton.isBordered = false
         overflowButton.image = NSImage(
             systemSymbolName: "chevron.down",
@@ -107,14 +95,10 @@ final class TabBarView: NSView {
             leading,
             toggleButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             plusButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            settingsButton.leadingAnchor.constraint(equalTo: plusButton.trailingAnchor, constant: 6),
-            settingsButton.trailingAnchor.constraint(
+            plusButton.trailingAnchor.constraint(
                 equalTo: trailingAnchor,
                 constant: -InkDesignTokens.Spacing.sm
             ),
-            settingsButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            settingsButton.widthAnchor.constraint(equalToConstant: 28),
-            settingsButton.heightAnchor.constraint(equalToConstant: 28),
         ])
     }
 
@@ -138,10 +122,6 @@ final class TabBarView: NSView {
             }
         toggleButton.toolTip = action
         toggleButton.setAccessibilityLabel(action)
-    }
-
-    func setSettingsSelected(_ selected: Bool) {
-        settingsButton.setSelected(selected)
     }
 
     func reload(tabs: [Tab]) {
@@ -177,8 +157,6 @@ final class TabBarView: NSView {
             + 10
             + 8
             + plusButton.fittingSize.width
-            + 6
-            + settingsButton.fittingSize.width
         return NSSize(width: tabWidth + controlWidth, height: NSView.noIntrinsicMetric)
     }
 
@@ -295,7 +273,6 @@ final class TabBarView: NSView {
 
     @objc private func newTab() { onNewTab?() }
     @objc private func toggleSidebar() { onToggleSidebar?() }
-    @objc private func openSettings() { onSettings?() }
 
     @objc private func showOverflowMenu() {
         guard let menu = overflowButton.menu else { return }
@@ -314,57 +291,7 @@ final class TabBarView: NSView {
     }
 }
 
-/// 顶部栏低频操作：默认安静，悬停或设置页打开时显示 pill 背景。
-@MainActor
-private final class TabBarSettingsButton: NSButton {
-    private var isHovered = false
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        wantsLayer = true
-        layer?.cornerRadius = InkDesignTokens.Radius.item
-        layer?.cornerCurve = .continuous
-        addTrackingArea(NSTrackingArea(
-            rect: .zero,
-            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
-            owner: self
-        ))
-        updateLayerColors()
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("代码构建") }
-
-    func setSelected(_ selected: Bool) {
-        state = selected ? .on : .off
-        updateLayerColors()
-    }
-
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        updateLayerColors()
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        isHovered = true
-        updateLayerColors()
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        isHovered = false
-        updateLayerColors()
-    }
-
-    private func updateLayerColors() {
-        effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer?.backgroundColor = state == .on || isHovered
-                ? InkDesignTokens.Color.pill.cgColor
-                : nil
-        }
-    }
-}
-
-/// 溢出入口沿用设置按钮的悬停视觉，但不保留选中态。
+/// 溢出入口：默认安静，悬停显示 pill 背景，不保留选中态。
 @MainActor
 private final class TabBarOverflowButton: NSButton {
     private var isHovered = false
