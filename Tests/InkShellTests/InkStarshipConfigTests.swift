@@ -19,12 +19,17 @@ struct InkStarshipConfigTests {
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
         #expect(hex.firstMatch(in: text, range: range) == nil)
         #expect(!text.contains("rgb("))
-        let indexedColor = try NSRegularExpression(
-            pattern: #"(?:fg|bg):(1[6-9]|[2-9][0-9]|1[0-9]{2}|2[0-5][0-9])\b"#
-        )
-        #expect(indexedColor.firstMatch(in: text, range: range) == nil)
+        #expect(try !containsIndexedColor(text))
         #expect(text.contains("bg:bright-purple"))
         #expect(text.contains("bg:bright-black"))
+    }
+
+    @Test("数字颜色检测覆盖独立样式且不误伤普通数字")
+    func indexedColorDetectionUnderstandsStarshipStyles() throws {
+        #expect(try containsIndexedColor("format = '[x](16)'"))
+        #expect(try containsIndexedColor("format = '[x](17)'"))
+        #expect(try containsIndexedColor("format = '[x](255)'"))
+        #expect(try !containsIndexedColor("truncation_length = 255"))
     }
 
     @Test("首次安装原子写入，相同内容不重写")
@@ -92,4 +97,12 @@ struct InkStarshipConfigTests {
         #expect(process.terminationStatus == 0)
         #expect(diagnostic.isEmpty)
     }
+}
+
+private func containsIndexedColor(_ text: String) throws -> Bool {
+    let stylePrefix = #"(?:\b(?:fg|bg):|\]\([^)]*|(?:^|\n)\s*style\s*=\s*["'][^"']*)"#
+    let colorIndex = #"(?<![0-9])(?:1[6-9]|[2-9][0-9]|1[0-9]{2}|2[0-5][0-9])(?![0-9])"#
+    let expression = try NSRegularExpression(pattern: stylePrefix + colorIndex)
+    let range = NSRange(text.startIndex..<text.endIndex, in: text)
+    return expression.firstMatch(in: text, range: range) != nil
 }
