@@ -28,7 +28,7 @@ enum ProjectLabelIndicatorStyle: Equatable {
     case rail
 }
 
-/// 侧边栏：项目列表 + 底部新建项目入口。
+/// 侧边栏：项目列表 + 底部操作行（新建项目、设置）。
 ///
 /// 根视图直接承载系统 sidebar 材质，让背景从标题栏贯穿到底部。
 /// 不使用系统 sidebar split item，避免新系统把侧栏变成浮动圆角面板。
@@ -91,6 +91,7 @@ final class SidebarViewController: NSViewController {
 
     var onSelect: ((Int) -> Void)?
     var onNewProject: (() -> Void)?
+    var onSettings: (() -> Void)?
     var onRemove: ((Int) -> Void)?
     var onTogglePin: ((Int) -> Void)?
     var onEditNote: ((Int) -> Void)?
@@ -103,12 +104,15 @@ final class SidebarViewController: NSViewController {
 
     private let rowStack = NSStackView()
     private let newButton = SidebarActionButton()
+    private let settingsButton = SidebarActionButton()
     private let footerSeparator = NSBox()
     private let sectionTitle = NSTextField(labelWithString: "项目")
     private var rows: [Row] = []
     private var hoveredRowPath: String?
     private var expandedRowsTop: NSLayoutConstraint?
     private var compactRowsTop: NSLayoutConstraint?
+    private var newButtonLeading: NSLayoutConstraint?
+    private var settingsButtonTrailing: NSLayoutConstraint?
 
     override func loadView() {
         let root = ProjectDropView()
@@ -129,19 +133,20 @@ final class SidebarViewController: NSViewController {
         sectionTitle.textColor = InkDesignTokens.Color.textSecondary
         sectionTitle.translatesAutoresizingMaskIntoConstraints = false
 
-        newButton.title = "新建项目"
-        newButton.target = self
-        newButton.action = #selector(newProject)
-        newButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)
-        newButton.imagePosition = .imageLeading
-        newButton.imageHugsTitle = true
-        newButton.isBordered = false
-        newButton.font = InkDesignTokens.Typography.body
-        newButton.contentTintColor = InkDesignTokens.Color.textSecondary
-        newButton.alignment = .left
-        newButton.layer?.cornerRadius = InkDesignTokens.Radius.item
-        newButton.layer?.cornerCurve = .continuous
-        newButton.translatesAutoresizingMaskIntoConstraints = false
+        configureFooterButton(
+            newButton,
+            symbolName: "plus",
+            toolTip: "新建项目",
+            accessibilityLabel: "新建项目",
+            action: #selector(newProject)
+        )
+        configureFooterButton(
+            settingsButton,
+            symbolName: "gearshape",
+            toolTip: "设置（⌘,）",
+            accessibilityLabel: "设置",
+            action: #selector(openSettings)
+        )
 
         footerSeparator.boxType = .separator
         footerSeparator.translatesAutoresizingMaskIntoConstraints = false
@@ -149,6 +154,7 @@ final class SidebarViewController: NSViewController {
         root.addSubview(sectionTitle)
         root.addSubview(rowStack)
         root.addSubview(newButton)
+        root.addSubview(settingsButton)
         root.addSubview(footerSeparator)
 
         let sp = InkDesignTokens.Spacing.self
@@ -162,6 +168,16 @@ final class SidebarViewController: NSViewController {
         )
         self.expandedRowsTop = expandedRowsTop
         self.compactRowsTop = compactRowsTop
+        let newButtonLeading = newButton.leadingAnchor.constraint(
+            equalTo: root.leadingAnchor,
+            constant: sp.xs
+        )
+        let settingsButtonTrailing = settingsButton.trailingAnchor.constraint(
+            equalTo: root.trailingAnchor,
+            constant: -sp.xs
+        )
+        self.newButtonLeading = newButtonLeading
+        self.settingsButtonTrailing = settingsButtonTrailing
         NSLayoutConstraint.activate([
             // 跟随 safe area：系统已为标题栏/红绿灯留位，再叠固定值就是双重让位。
             sectionTitle.topAnchor.constraint(
@@ -175,16 +191,55 @@ final class SidebarViewController: NSViewController {
             rowStack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.xs),
 
             footerSeparator.bottomAnchor.constraint(equalTo: newButton.topAnchor, constant: -sp.xs),
-            newButton.heightAnchor.constraint(equalToConstant: InkDesignTokens.Sidebar.actionHeight),
-            newButton.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.xs),
-            newButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.xs),
+            newButtonLeading,
             newButton.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -sp.sm),
+            newButton.widthAnchor.constraint(
+                equalToConstant: InkDesignTokens.Sidebar.footerButtonSize
+            ),
+            newButton.heightAnchor.constraint(
+                equalToConstant: InkDesignTokens.Sidebar.footerButtonSize
+            ),
+            settingsButtonTrailing,
+            settingsButton.centerYAnchor.constraint(equalTo: newButton.centerYAnchor),
+            settingsButton.widthAnchor.constraint(
+                equalToConstant: InkDesignTokens.Sidebar.footerButtonSize
+            ),
+            settingsButton.heightAnchor.constraint(
+                equalToConstant: InkDesignTokens.Sidebar.footerButtonSize
+            ),
             footerSeparator.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: sp.sm),
             footerSeparator.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -sp.sm),
         ])
 
         view = root
         updateDisplayMode()
+    }
+
+    /// 底部操作按钮统一为纯图标：文字进 tooltip，展开/图标态共用一套布局。
+    private func configureFooterButton(
+        _ button: SidebarActionButton,
+        symbolName: String,
+        toolTip: String,
+        accessibilityLabel: String,
+        action: Selector
+    ) {
+        button.title = ""
+        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 13, weight: .medium))
+        button.imagePosition = .imageOnly
+        button.isBordered = false
+        button.contentTintColor = InkDesignTokens.Color.textSecondary
+        button.toolTip = toolTip
+        button.setAccessibilityLabel(accessibilityLabel)
+        button.target = self
+        button.action = action
+        button.layer?.cornerRadius = InkDesignTokens.Radius.item
+        button.layer?.cornerCurve = .continuous
+        button.translatesAutoresizingMaskIntoConstraints = false
+    }
+
+    func setSettingsSelected(_ selected: Bool) {
+        settingsButton.isSelectedState = selected
     }
 
     func reload(rows: [Row]) {
@@ -231,15 +286,14 @@ final class SidebarViewController: NSViewController {
         sectionTitle.isHidden = compact
         expandedRowsTop?.isActive = !compact
         compactRowsTop?.isActive = compact
-        newButton.title = compact ? "" : "新建项目"
-        newButton.imagePosition = compact ? .imageOnly : .imageLeading
-        newButton.alignment = compact ? .center : .left
-        newButton.contentLeadingInset = compact ? 0 : InkDesignTokens.Spacing.xs
-        newButton.toolTip = compact ? "新建项目" : nil
-        newButton.setAccessibilityLabel("新建项目")
+        // 图标态宽度只有 72pt，两枚 28pt 按钮按 xs 边距会贴死，收紧到 xxs 留出间隙。
+        let footerInset = compact ? InkDesignTokens.Spacing.xxs : InkDesignTokens.Spacing.xs
+        newButtonLeading?.constant = footerInset
+        settingsButtonTrailing?.constant = -footerInset
     }
 
     @objc private func newProject() { onNewProject?() }
+    @objc private func openSettings() { onSettings?() }
 }
 
 /// 承接项目行拖拽的容器：按落点 y 算插入位置。
@@ -676,7 +730,6 @@ private final class SidebarActionButton: NSButton {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        cell = SidebarActionButtonCell()
         wantsLayer = true
         updateLayerColor()
         addTrackingArea(NSTrackingArea(
@@ -689,12 +742,10 @@ private final class SidebarActionButton: NSButton {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("代码构建") }
 
-    var contentLeadingInset: CGFloat {
-        get { (cell as? SidebarActionButtonCell)?.contentLeadingInset ?? 0 }
-        set {
-            (cell as? SidebarActionButtonCell)?.contentLeadingInset = newValue
-            needsDisplay = true
-        }
+    /// SF Symbol 会给按钮带上不对称的 alignment insets，导致约束约出的
+    /// frame 比 28×28 高且不居中；归零后 hover pill 才是正方形。
+    override var alignmentRectInsets: NSEdgeInsets {
+        NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -723,22 +774,5 @@ private final class SidebarActionButton: NSButton {
                     nil
                 }
         }
-    }
-}
-
-@MainActor
-private final class SidebarActionButtonCell: NSButtonCell {
-    var contentLeadingInset: CGFloat = 0
-
-    override func imageRect(forBounds rect: NSRect) -> NSRect {
-        var imageRect = super.imageRect(forBounds: rect)
-        imageRect.origin.x += contentLeadingInset
-        return imageRect
-    }
-
-    override func titleRect(forBounds rect: NSRect) -> NSRect {
-        var titleRect = super.titleRect(forBounds: rect)
-        titleRect.origin.x += contentLeadingInset
-        return titleRect
     }
 }

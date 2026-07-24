@@ -189,7 +189,8 @@ public enum InkDesignTokens {
         public static let maximumExpandedWidth: CGFloat = 320
         public static let collapsedTitlebarInset: CGFloat = 84
         public static let projectRowHeight: CGFloat = 40
-        public static let actionHeight: CGFloat = 36
+        /// 底部操作按钮（新建项目、设置）的方形边长，与顶部栏图标按钮一致。
+        public static let footerButtonSize: CGFloat = 28
         public static let projectCloseButtonWidth: CGFloat = 18
         public static let labelDotDiameter: CGFloat = 8
         public static let labelRailWidth: CGFloat = 4

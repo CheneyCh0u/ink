@@ -52,37 +52,19 @@ struct TabBarViewTests {
         #expect(item.image != nil)
     }
 
-    @Test("设置齿轮固定在最右侧并提供辅助信息")
-    func settingsButtonUsesTrailingSlot() throws {
+    @Test("新建标签按钮贴右缘且不再有设置齿轮")
+    func plusButtonUsesTrailingSlot() throws {
         let tabBar = makeTabBar()
         let buttons = tabBar.subviews.compactMap { $0 as? NSButton }
-        let settings = try #require(buttons.first { $0.toolTip == "设置（⌘,）" })
+        let plus = try #require(buttons.first {
+            $0.image?.accessibilityDescription == "新建标签"
+        })
 
+        // 离屏布局下按钮 fitting 宽度带半像素，容差放宽到 1pt。
         #expect(
-            abs(tabBar.bounds.maxX - settings.frame.maxX - InkDesignTokens.Spacing.sm) < 0.5
+            abs(tabBar.bounds.maxX - plus.frame.maxX - InkDesignTokens.Spacing.sm) < 1
         )
-        #expect(settings.accessibilityLabel() == "设置")
-        #expect(
-            buttons.filter { !$0.isHidden && $0.frame.maxX < settings.frame.minX }.count == 2
-        )
-    }
-
-    @Test("设置齿轮发送回调并同步选中态")
-    func settingsButtonSelection() throws {
-        let tabBar = makeTabBar()
-        var opened = false
-        tabBar.onSettings = { opened = true }
-        let settings = try #require(
-            tabBar.subviews.compactMap { $0 as? NSButton }
-                .first { $0.toolTip == "设置（⌘,）" }
-        )
-
-        settings.performClick(nil)
-        #expect(opened)
-        tabBar.setSettingsSelected(true)
-        #expect(settings.state == .on)
-        tabBar.setSettingsSelected(false)
-        #expect(settings.state == .off)
+        #expect(buttons.allSatisfy { $0.toolTip != "设置（⌘,）" })
     }
 
     @Test("空间不足时活动标签可见且菜单保留原始索引")
