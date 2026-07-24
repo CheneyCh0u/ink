@@ -41,6 +41,7 @@ final class SettingsViewController: NSViewController {
         value: 128, range: 0...255, increment: 1, decimals: 0, suffix: ""
     )
     private let themePopUp = NSPopUpButton()
+    private let promptThemeControl = NSSegmentedControl()
     private let cursorControl = NSSegmentedControl()
     private let cursorBlinkSwitch = NSSwitch()
     private let optionMetaSwitch = NSSwitch()
@@ -180,6 +181,11 @@ final class SettingsViewController: NSViewController {
                     title: "配色",
                     detail: "每套主题会随界面模式自动切换浅色或深色版本。",
                     control: themePopUp
+                ),
+                makeRow(
+                    title: "提示符主题",
+                    detail: "需要 shell 已启用 Starship；更改仅影响新建标签和分屏。",
+                    control: promptThemeControl
                 ),
                 makeRow(title: "字体", detail: "只列出系统中可用的等宽字体。", control: fontCombo),
                 makeRow(title: "字号", detail: nil, control: fontSizeControl),
@@ -434,7 +440,9 @@ final class SettingsViewController: NSViewController {
     private func configureControls() {
         configureSegmented(appearanceControl, labels: ["跟随系统", "浅色", "深色"], action: #selector(controlChanged))
         configureSegmented(sidebarControl, labels: ["展开", "图标", "隐藏"], action: #selector(controlChanged))
+        configureSegmented(promptThemeControl, labels: ["Ink 主题", "用户配置"], action: #selector(controlChanged))
         configureSegmented(cursorControl, labels: ["方块", "竖线", "下划线"], action: #selector(controlChanged))
+        promptThemeControl.setAccessibilityLabel("提示符主题")
 
         for toggle in [
             rememberFrameSwitch,
@@ -568,6 +576,7 @@ final class SettingsViewController: NSViewController {
         fontThickenStrengthControl.isEnabled = config.fontThicken
         let themeIndex = InkConfig.TerminalTheme.allCases.firstIndex(of: config.terminalTheme) ?? 0
         themePopUp.selectItem(at: themeIndex)
+        promptThemeControl.selectedSegment = config.promptThemeSource == .ink ? 0 : 1
         cursorControl.selectedSegment = switch config.cursorStyle {
         case .block: 0
         case .bar: 1
@@ -634,6 +643,7 @@ final class SettingsViewController: NSViewController {
         config.terminalTheme = themes.indices.contains(themePopUp.indexOfSelectedItem)
             ? themes[themePopUp.indexOfSelectedItem]
             : .neutral
+        config.promptThemeSource = promptThemeControl.selectedSegment == 1 ? .user : .ink
         config.cursorStyle = [.block, .bar, .underline][max(0, cursorControl.selectedSegment)]
         config.cursorBlink = cursorBlinkSwitch.state == .on
         config.optionAsMeta = optionMetaSwitch.state == .on
