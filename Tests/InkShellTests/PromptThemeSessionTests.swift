@@ -34,6 +34,36 @@ struct PromptThemeSessionTests {
         #expect(!FileManager.default.fileExists(atPath: fixture.starshipURL.path))
     }
 
+    @Test("临时配置路径派生默认 Starship 路径")
+    func temporaryConfigURLScopesDefaultStarshipConfig() throws {
+        let fixture = try PromptThemeWindowFixture(
+            source: .ink,
+            useDefaultStarshipURL: true
+        )
+        defer { fixture.cleanUp() }
+        let expectedURL = fixture.configURL.deletingLastPathComponent()
+            .appendingPathComponent("starship.toml")
+        #expect(expectedURL != InkStarshipConfig.defaultURL)
+
+        // 旧实现会指向真实用户目录；先检查控制器状态，避免 RED 阶段触碰该文件。
+        guard fixture.configuredStarshipURL == expectedURL else {
+            #expect(
+                fixture.configuredStarshipURL == expectedURL,
+                "默认 STARSHIP_CONFIG 路径未跟随临时 configURL"
+            )
+            return
+        }
+
+        let session = fixture.controller.makeTerminalSession(
+            size: TerminalSize(columns: 80, rows: 24),
+            workingDirectory: fixture.directory.path
+        )
+        #expect(session.environmentOverrides == [
+            "STARSHIP_CONFIG": expectedURL.path,
+        ])
+        #expect(FileManager.default.fileExists(atPath: expectedURL.path))
+    }
+
     @Test("模板写入失败时回退且只警告一次")
     func installFailureFallsBackAndWarnsOnce() throws {
         let fixture = try PromptThemeWindowFixture(source: .ink, blockStarshipDirectory: true)
@@ -55,6 +85,7 @@ struct PromptThemeSessionTests {
 private final class PromptThemeWindowFixture {
     let controller: MainWindowController
     let directory: URL
+    let configURL: URL
     let starshipURL: URL
     private let defaults: UserDefaults
     private let suiteName: String
@@ -62,9 +93,16 @@ private final class PromptThemeWindowFixture {
 
     var warningCount: Int { warningCounter.count }
 
+    var configuredStarshipURL: URL? {
+        Mirror(reflecting: controller).children.first {
+            $0.label == "inkStarshipConfigURL"
+        }?.value as? URL
+    }
+
     init(
         source: InkConfig.PromptThemeSource,
-        blockStarshipDirectory: Bool = false
+        blockStarshipDirectory: Bool = false,
+        useDefaultStarshipURL: Bool = false
     ) throws {
         directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("ink-prompt-session-\(UUID().uuidString)")
@@ -75,7 +113,7 @@ private final class PromptThemeWindowFixture {
 
         var config = InkConfig()
         config.promptThemeSource = source
-        let configURL = directory.appendingPathComponent("config.toml")
+        configURL = directory.appendingPathComponent("config.toml")
         try config.save(to: configURL)
 
         let project = Project(directory: directory)
@@ -113,21 +151,34 @@ private final class PromptThemeWindowFixture {
 
         let warningCounter = PromptWarningCounter()
         self.warningCounter = warningCounter
-        controller = MainWindowController(
-            initialConfig: config,
-            configURL: configURL,
-            configSyncService: ConfigSyncService(defaults: defaults),
-            projectDefaults: defaults,
-            workspaceStore: workspaceStore,
-            startPaneOverride: { size, workingDirectory in
-                TerminalPane(session: TerminalSession(
-                    size: size,
-                    workingDirectory: workingDirectory
-                ))
-            },
-            inkStarshipConfigURL: starshipURL,
-            promptConfigFailureHandler: { _ in warningCounter.count += 1 }
-        )
+        let startPaneOverride: (TerminalSize, String) -> TerminalPane? = { size, directory in
+            TerminalPane(session: TerminalSession(
+                size: size,
+                workingDirectory: directory
+            ))
+        }
+        if useDefaultStarshipURL {
+            controller = MainWindowController(
+                initialConfig: config,
+                configURL: configURL,
+                configSyncService: ConfigSyncService(defaults: defaults),
+                projectDefaults: defaults,
+                workspaceStore: workspaceStore,
+                startPaneOverride: startPaneOverride,
+                promptConfigFailureHandler: { _ in warningCounter.count += 1 }
+            )
+        } else {
+            controller = MainWindowController(
+                initialConfig: config,
+                configURL: configURL,
+                configSyncService: ConfigSyncService(defaults: defaults),
+                projectDefaults: defaults,
+                workspaceStore: workspaceStore,
+                startPaneOverride: startPaneOverride,
+                inkStarshipConfigURL: starshipURL,
+                promptConfigFailureHandler: { _ in warningCounter.count += 1 }
+            )
+        }
     }
 
     func cleanUp() {

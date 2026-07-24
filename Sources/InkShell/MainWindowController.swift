@@ -86,7 +86,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         projectDefaults: UserDefaults = .standard,
         workspaceStore: WorkspaceStore = WorkspaceStore(),
         startPaneOverride: ((TerminalSize, String) -> TerminalPane?)? = nil,
-        inkStarshipConfigURL: URL = InkStarshipConfig.defaultURL,
+        inkStarshipConfigURL: URL? = nil,
         promptConfigFailureHandler: (@MainActor (any Error) -> Void)? = nil,
         notificationCoordinator: CommandNotificationCoordinating = CommandNotificationCoordinator(),
         isApplicationActive: @escaping @MainActor () -> Bool = { NSApp.isActive },
@@ -120,6 +120,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         workspaceSaveScheduler = WorkspaceSaveScheduler(store: workspaceStore)
         self.startPaneOverride = startPaneOverride
         self.inkStarshipConfigURL = inkStarshipConfigURL
+            ?? configURL.deletingLastPathComponent().appendingPathComponent("starship.toml")
         self.promptConfigFailureHandler = promptConfigFailureHandler
         self.notificationCoordinator = notificationCoordinator
         self.osc52PasteboardWriter = osc52PasteboardWriter
