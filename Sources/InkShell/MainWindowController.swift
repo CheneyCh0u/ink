@@ -50,6 +50,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
     private let workspaceStore: WorkspaceStore
     private let workspaceSaveScheduler: WorkspaceSaveScheduler
     private let startPaneOverride: ((TerminalSize, String) -> TerminalPane?)?
+    private let inkStarshipConfigURL: URL
+    private let promptConfigFailureHandler: (@MainActor (any Error) -> Void)?
     private let notificationCoordinator: CommandNotificationCoordinating
     private let osc52PasteboardWriter: any OSC52PasteboardWriting
     private let isApplicationActive: @MainActor () -> Bool
@@ -60,6 +62,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
     private var splitShortcutState = SplitShortcutState()
     private var splitShortcutMonitor: Any?
     private var isClosingWorkspace = false
+    private var didWarnPromptConfigFailure = false
 
     private var activeProject: Project? {
         projects.indices.contains(activeProjectIndex) ? projects[activeProjectIndex] : nil
@@ -83,6 +86,8 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         projectDefaults: UserDefaults = .standard,
         workspaceStore: WorkspaceStore = WorkspaceStore(),
         startPaneOverride: ((TerminalSize, String) -> TerminalPane?)? = nil,
+        inkStarshipConfigURL: URL? = nil,
+        promptConfigFailureHandler: (@MainActor (any Error) -> Void)? = nil,
         notificationCoordinator: CommandNotificationCoordinating = CommandNotificationCoordinator(),
         isApplicationActive: @escaping @MainActor () -> Bool = { NSApp.isActive },
         osc52PasteboardWriter: any OSC52PasteboardWriting = OSC52PasteboardWriter()
@@ -114,6 +119,9 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
         self.workspaceStore = workspaceStore
         workspaceSaveScheduler = WorkspaceSaveScheduler(store: workspaceStore)
         self.startPaneOverride = startPaneOverride
+        self.inkStarshipConfigURL = inkStarshipConfigURL
+            ?? configURL.deletingLastPathComponent().appendingPathComponent("starship.toml")
+        self.promptConfigFailureHandler = promptConfigFailureHandler
         self.notificationCoordinator = notificationCoordinator
         self.osc52PasteboardWriter = osc52PasteboardWriter
         self.isApplicationActive = isApplicationActive
@@ -985,11 +993,7 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
             configureCallbacks(for: pane)
             return pane
         }
-        let session = TerminalSession(
-            size: size,
-            workingDirectory: workingDirectory,
-            scrollbackLines: config.scrollbackLines
-        )
+        let session = makeTerminalSession(size: size, workingDirectory: workingDirectory)
         let pane = TerminalPane(session: session)
         configureCallbacks(for: pane)
         do {
@@ -1000,6 +1004,35 @@ public final class MainWindowController: NSWindowController, NSWindowDelegate, N
             NSAlert(error: error).runModal()
             return nil
         }
+    }
+
+    func makeTerminalSession(
+        size: TerminalSize,
+        workingDirectory: String
+    ) -> TerminalSession {
+        let overrides: [String: String]
+        do {
+            overrides = try InkStarshipConfig.environmentOverrides(
+                for: config.promptThemeSource,
+                configURL: inkStarshipConfigURL
+            )
+        } catch {
+            overrides = [:]
+            if !didWarnPromptConfigFailure {
+                didWarnPromptConfigFailure = true
+                if let promptConfigFailureHandler {
+                    promptConfigFailureHandler(error)
+                } else if let window {
+                    NSAlert(error: error).beginSheetModal(for: window)
+                }
+            }
+        }
+        return TerminalSession(
+            size: size,
+            workingDirectory: workingDirectory,
+            scrollbackLines: config.scrollbackLines,
+            environmentOverrides: overrides
+        )
     }
 
     private func configureCallbacks(for pane: TerminalPane) {

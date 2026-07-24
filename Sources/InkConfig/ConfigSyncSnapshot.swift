@@ -75,6 +75,7 @@ private struct WireConfig: Codable {
     let fontThicken: Bool
     let fontThickenStrength: Int
     let terminalTheme: String
+    let promptThemeSource: String?
     let cursorStyle: String
     let cursorBlink: Bool
     let optionAsMeta: Bool
@@ -96,6 +97,7 @@ private struct WireConfig: Codable {
         fontThicken = config.fontThicken
         fontThickenStrength = config.fontThickenStrength
         terminalTheme = config.terminalTheme.rawValue
+        promptThemeSource = config.promptThemeSource.rawValue
         cursorStyle = config.cursorStyle.rawValue
         cursorBlink = config.cursorBlink
         optionAsMeta = config.optionAsMeta
@@ -106,6 +108,16 @@ private struct WireConfig: Codable {
     }
 
     func validatedConfig() throws -> InkConfig {
+        let resolvedPromptThemeSource: InkConfig.PromptThemeSource
+        if let promptThemeSource {
+            guard let parsed = InkConfig.PromptThemeSource(rawValue: promptThemeSource) else {
+                throw ConfigSyncSnapshotError.invalidPayload
+            }
+            resolvedPromptThemeSource = parsed
+        } else {
+            resolvedPromptThemeSource = .ink
+        }
+
         guard let appearanceMode = InkConfig.AppearanceMode(rawValue: appearanceMode),
               let startupSidebarMode = InkConfig.SidebarMode(rawValue: startupSidebarMode),
               let terminalTheme = InkConfig.TerminalTheme(rawValue: terminalTheme),
@@ -133,6 +145,7 @@ private struct WireConfig: Codable {
         result.fontThicken = fontThicken
         result.fontThickenStrength = fontThickenStrength
         result.terminalTheme = terminalTheme
+        result.promptThemeSource = resolvedPromptThemeSource
         result.cursorStyle = cursorStyle
         result.cursorBlink = cursorBlink
         result.optionAsMeta = optionAsMeta

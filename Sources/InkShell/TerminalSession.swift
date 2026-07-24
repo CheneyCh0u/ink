@@ -22,10 +22,17 @@ public final class TerminalSession {
     private let pty = PTYSession()
     private var parser = Parser()
     private let initialWorkingDirectory: String?
+    let environmentOverrides: [String: String]
 
-    public init(size: TerminalSize, workingDirectory: String? = nil, scrollbackLines: Int = 100_000) {
+    public init(
+        size: TerminalSize,
+        workingDirectory: String? = nil,
+        scrollbackLines: Int = 100_000,
+        environmentOverrides: [String: String] = [:]
+    ) {
         terminal = Terminal(size: size, scrollbackCapacity: scrollbackLines)
         initialWorkingDirectory = workingDirectory
+        self.environmentOverrides = environmentOverrides
     }
 
     public func start() throws {
@@ -38,7 +45,8 @@ public final class TerminalSession {
         try pty.start(
             columns: terminal.grid.size.columns,
             rows: terminal.grid.size.rows,
-            workingDirectory: initialWorkingDirectory
+            workingDirectory: initialWorkingDirectory,
+            environmentOverrides: environmentOverrides
         )
     }
 

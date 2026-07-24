@@ -4,6 +4,28 @@ import Testing
 
 @Suite("配置同步快照")
 struct ConfigSyncSnapshotTests {
+    @Test("旧 schema 1 缺少提示符来源时迁移为 Ink")
+    func oldSchemaDefaultsPromptThemeSourceToInk() throws {
+        let data = try snapshotJSON { root in
+            var config = try #require(root["config"] as? [String: Any])
+            config.removeValue(forKey: "promptThemeSource")
+            root["config"] = config
+        }
+        #expect(try ConfigSyncSnapshot.decode(data).config.promptThemeSource == .ink)
+    }
+
+    @Test("拒绝非法提示符来源快照")
+    func rejectsInvalidPromptThemeSource() throws {
+        let data = try snapshotJSON { root in
+            var config = try #require(root["config"] as? [String: Any])
+            config["promptThemeSource"] = "missing"
+            root["config"] = config
+        }
+        #expect(throws: ConfigSyncSnapshotError.invalidPayload) {
+            try ConfigSyncSnapshot.decode(data)
+        }
+    }
+
     @Test("旧 schema 1 缺少 OSC 52 字段时迁移为开启")
     func oldSchemaDefaultsOSC52ToEnabled() throws {
         let data = try snapshotJSON { root in
@@ -121,6 +143,7 @@ struct ConfigSyncSnapshotTests {
         config.fontThicken = false
         config.fontThickenStrength = 64
         config.terminalTheme = .pine
+        config.promptThemeSource = .user
         config.cursorStyle = .underline
         config.cursorBlink = false
         config.optionAsMeta = false

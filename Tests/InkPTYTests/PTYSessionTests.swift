@@ -23,6 +23,20 @@ struct PTYSessionTests {
         #expect(environment["INK_SENTINEL"] == "preserved")
     }
 
+    @Test("会话覆盖只改指定键且不能破坏终端能力声明")
+    func childEnvironmentMergesSessionOverrides() {
+        let environment = PTYSession.childEnvironment(
+            from: ["TERM": "dumb", "INK_SENTINEL": "preserved"],
+            overrides: ["STARSHIP_CONFIG": "/tmp/ink-starship.toml", "TERM": "bad"]
+        )
+
+        #expect(environment["STARSHIP_CONFIG"] == "/tmp/ink-starship.toml")
+        #expect(environment["INK_SENTINEL"] == "preserved")
+        #expect(environment["TERM"] == "xterm-256color")
+        #expect(environment["COLORTERM"] == "truecolor")
+        #expect(environment["TERM_PROGRAM"] == "ink")
+    }
+
     @Test("前台进程按实际 shell 身份分类")
     func classifiesForegroundProcessBySpawnedShellIdentity() {
         #expect(PTYSession.classifyForegroundProcess(

@@ -45,9 +45,13 @@ public final class PTYSession: @unchecked Sendable {
     // MARK: - 生命周期
 
     static func childEnvironment(
-        from hostEnvironment: [String: String]
+        from hostEnvironment: [String: String],
+        overrides: [String: String] = [:]
     ) -> [String: String] {
         var environment = hostEnvironment
+        for (key, value) in overrides {
+            environment[key] = value
+        }
         environment.removeValue(forKey: "NO_COLOR")
         environment["TERM"] = "xterm-256color"
         environment["COLORTERM"] = "truecolor"
@@ -65,7 +69,12 @@ public final class PTYSession: @unchecked Sendable {
     /// 回家目录（项目会话要留在项目目录）。`-l` 同时会去掉 argv[0] 的
     /// 前导 `-`，登录语义用 shell 自己的 `-l` 参数补回（zsh/bash/fish 通用），
     /// `.zprofile` 照常生效。
-    public func start(columns: Int, rows: Int, workingDirectory: String? = nil) throws {
+    public func start(
+        columns: Int,
+        rows: Int,
+        workingDirectory: String? = nil,
+        environmentOverrides: [String: String] = [:]
+    ) throws {
         precondition(masterFD < 0, "PTYSession 只能 start 一次")
 
         let shellPath = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
@@ -75,7 +84,8 @@ public final class PTYSession: @unchecked Sendable {
         // fork 之后到 exec 之间只能调 async-signal-safe 函数，Swift 运行时的
         // 分配都不行。所以 argv / envp 全部在 fork 之前备成 C 缓冲。
         let environment = Self.childEnvironment(
-            from: ProcessInfo.processInfo.environment
+            from: ProcessInfo.processInfo.environment,
+            overrides: environmentOverrides
         )
 
         let cShell = strdup("/usr/bin/login")

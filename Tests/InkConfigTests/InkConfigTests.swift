@@ -75,6 +75,45 @@ struct MiniTOMLTests {
 
 @Suite("InkConfig")
 struct InkConfigTests {
+    @Test("提示符主题默认由 Ink 管理")
+    func promptThemeSourceDefaultsToInk() {
+        #expect(InkConfig().promptThemeSource == .ink)
+    }
+
+    @Test("提示符主题来源从 TOML 读取并完整往返")
+    func promptThemeSourceRoundTrips() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ink-prompt-source-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("config.toml")
+        try """
+        [terminal]
+        prompt_theme = "user"
+        """.write(to: file, atomically: true, encoding: .utf8)
+
+        var config = InkConfig.load(from: file)
+        #expect(config.promptThemeSource == .user)
+        config.promptThemeSource = .ink
+        try config.save(to: file)
+        #expect(InkConfig.load(from: file).promptThemeSource == .ink)
+    }
+
+    @Test("未知提示符主题来源回退 Ink")
+    func invalidPromptThemeSourceUsesInk() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ink-invalid-prompt-source-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("config.toml")
+        try """
+        [terminal]
+        prompt_theme = "missing"
+        """.write(to: file, atomically: true, encoding: .utf8)
+
+        #expect(InkConfig.load(from: file).promptThemeSource == .ink)
+    }
+
     @Test("OSC 52 写入默认开启且可由 TOML 关闭")
     func osc52WritePolicy() throws {
         #expect(InkConfig().osc52WriteEnabled)
@@ -194,6 +233,7 @@ struct InkConfigTests {
         config.fontThicken = false
         config.fontThickenStrength = 96
         config.terminalTheme = .warm
+        config.promptThemeSource = .user
         config.cursorStyle = .bar
         config.cursorBlink = false
         config.optionAsMeta = false
