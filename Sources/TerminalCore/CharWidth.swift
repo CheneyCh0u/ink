@@ -34,6 +34,41 @@ public enum CharWidth {
         return 1
     }
 
+    /// 完整标量序列的终端列宽。VS16 仅在紧跟可切换为 emoji 的基字符时
+    /// 把序列升级为两列；ZWJ 后续本身为宽字符时也会保留两列宽度。
+    static func width<S: Sequence>(of scalars: S) -> Int where S.Element == UInt32 {
+        var widest = 0
+        var previous: UInt32?
+        for value in scalars {
+            if value == 0xFE0F,
+               let previous,
+               supportsEmojiPresentation(previous) {
+                widest = max(widest, 2)
+            } else {
+                widest = max(widest, width(of: value))
+            }
+            previous = value
+        }
+        return widest
+    }
+
+    /// 完整 grapheme cluster 的终端列宽，供输入法预编辑等已分簇路径使用。
+    public static func width(of character: Character) -> Int {
+        width(of: character.unicodeScalars.lazy.map { $0.value })
+    }
+
+    /// VS16 只会把默认文本表现的 emoji 基字符切换为双列 emoji 表现。
+    ///
+    /// UTS #51 的 emoji variation sequence 基字符中，只有默认文本表现的
+    /// 标量需要从一列升级；默认 emoji 表现的合法基字符本来就是两列。
+    /// 同时检查 `isEmojiPresentation` 可排除 Regional Indicator 等虽有 Emoji
+    /// 属性、却没有注册 VS16 变体的标量。查询只发生在低频序列路径。
+    @inline(__always)
+    static func supportsEmojiPresentation(_ scalar: UInt32) -> Bool {
+        guard let properties = Unicode.Scalar(scalar)?.properties else { return false }
+        return properties.isEmoji && !properties.isEmojiPresentation
+    }
+
     /// 东亚宽 / 全角 / emoji 表示。区间已排序，二分查找。
     @inline(__always)
     static func isWide(_ scalar: UInt32) -> Bool {
@@ -53,8 +88,8 @@ public enum CharWidth {
         return false
     }
 
-    /// UAX #11 W/F 段 + 常用 emoji 表示段。VS16 把窄字符转宽的语义暂不处理
-    /// （与 wcwidth 保持一致，应用侧也是按 wcwidth 排版的，宽度不一致才会漂移）。
+    /// UAX #11 W/F 段 + 常用 emoji 表示段。这里只判断单个标量；
+    /// VS16 等序列语义由上面的完整序列入口处理。
     static let wideRanges: [ClosedRange<UInt32>] = [
         0x1100...0x115F,   // 韩文初声
         0x231A...0x231B,   // ⌚⌛

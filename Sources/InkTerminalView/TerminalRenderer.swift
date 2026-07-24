@@ -543,7 +543,7 @@ final class TerminalRenderer {
 
         for character in text {
             guard col < cols, count < bufferCapacity - 1 else { break }
-            let width = CharWidth.width(of: character.unicodeScalars.first?.value ?? 0x20)
+            let width = CharWidth.width(of: character)
             var flags = CellInstance.underline
             if width == 2 { flags |= CellInstance.wide }
             var uv = SIMD4<Float>.zero
@@ -573,7 +573,7 @@ final class TerminalRenderer {
 
     /// 预编辑占用的显示宽度（列数），候选窗定位用。
     func preeditColumns(_ text: String) -> Int {
-        text.reduce(0) { $0 + max(1, CharWidth.width(of: $1.unicodeScalars.first?.value ?? 0x20)) }
+        text.reduce(0) { $0 + max(1, CharWidth.width(of: $1)) }
     }
 
     private func glyphText(for cell: Cell, clusterTable: ClusterTable) -> String {

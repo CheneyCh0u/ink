@@ -90,6 +90,9 @@ public struct Terminal: Sendable {
     private var pendingWrap = false
     /// 刚收到 ZWJ：下一个可打印码点并入前一个簇而不是开新格。
     private var pendingJoin = false
+    /// 最近一次实际写入的 leading cell。DECAWM 关闭且光标停在末列时，
+    /// 仅凭光标位置无法区分“刚写末格”和“刚写倒数第二格”。
+    private var lastPrintedPosition: (row: Int, col: Int)?
     private var scrollTop = 0
     private var scrollBottom: Int
     private var savedCursor: (row: Int, col: Int, attr: UInt32)?
@@ -133,6 +136,7 @@ public struct Terminal: Sendable {
             scrollTop = 0
             scrollBottom = newSize.rows - 1
             pendingWrap = false
+            cancelClusterContinuation()
         }
         if modes.alternateScreen {
             resizeSavedPrimaryGridAndHyperlinks(to: newSize)
@@ -148,6 +152,7 @@ public struct Terminal: Sendable {
     public mutating func clearScrollback() {
         clearScrollbackPreservingScreen()
         pendingWrap = false
+        cancelClusterContinuation()
     }
 
     private mutating func resizeCurrentGridAndHyperlinks(to newSize: TerminalSize) {
@@ -494,6 +499,7 @@ public struct Terminal: Sendable {
             return
         }
 
+        lastPrintedPosition = nil
         if pendingWrap {
             pendingWrap = false
             carriageReturn()
@@ -516,48 +522,21 @@ public struct Terminal: Sendable {
             }
         }
 
-        let row = grid.cursorRow
-        let col = grid.cursorCol
-        // 覆写别人的半个宽字符时，把孤儿半格清掉，不留残影。
-        clearWideOrphan(row: row, col: col)
-        if width == 2 { clearWideOrphan(row: row, col: col + 1) }
-
-        grid[row, col] = Cell(
+        placePrintedCell(
             scalar: scalar,
-            attr: currentAttr | (width == 2 ? Cell.Attr.wideLeading : 0)
+            attr: currentAttr,
+            width: width,
+            row: grid.cursorRow,
+            col: grid.cursorCol,
+            hyperlinkTargetID: activeHyperlinkTargetID
         )
-        if width == 2 {
-            grid[row, col + 1] = Cell(scalar: 0x20, attr: currentAttr | Cell.Attr.wideTrailing)
-        }
-
-        if let activeHyperlinkTargetID {
-            replaceHyperlinkCells(
-                row: row,
-                columns: col..<(col + width),
-                targetID: activeHyperlinkTargetID
-            )
-        } else if let hyperlinks {
-            let stableLineID = scrollback.totalAppendedLines + UInt64(row)
-            if hyperlinks.mayContainRow(lineID: stableLineID) {
-                replaceHyperlinkCells(
-                    row: row,
-                    columns: col..<(col + width),
-                    targetID: nil
-                )
-            }
-        }
-
-        if col + width < cols {
-            grid.cursorCol = col + width
-        } else {
-            grid.cursorCol = cols - 1
-            if modes.autowrap { pendingWrap = true }
-        }
     }
 
     /// 组合标记 / 变体选择符 / ZWJ 后续码点并进光标前一个格的簇。
     private mutating func appendToPreviousCell(_ scalar: UInt32) {
-        guard let (row, c) = previousCellPosition() else { return } // 行首孤立组合符：丢
+        guard let (row, c) = previousCellPosition(appending: scalar) else {
+            return // 行首孤立组合符：丢
+        }
         var col = c
         if grid[row, col].attr & Cell.Attr.wideTrailing != 0 {
             col -= 1 // 落在宽字符尾格上，退回首格
@@ -570,15 +549,113 @@ public struct Terminal: Sendable {
         } else {
             scalars = [cell.scalar, scalar]
         }
-        grid[row, col] = Cell(scalar: clusterTable.encode(scalars), attr: cell.attr)
+        let encoded = clusterTable.encode(scalars)
+        let sourceHyperlinkTargetID = hyperlinkTargetID(row: row, column: col)
+        let wasWide = cell.attr & Cell.Attr.wideLeading != 0
+        let becomesWide = !wasWide && CharWidth.width(of: scalars) == 2
+
+        guard becomesWide, grid.size.columns >= 2 else {
+            grid[row, col] = Cell(scalar: encoded, attr: cell.attr)
+            lastPrintedPosition = (row, col)
+            return
+        }
+
+        var targetRow = row
+        var targetCol = col
+        var retainedSourceTarget = false
+        if col + 1 == grid.size.columns {
+            if modes.autowrap {
+                if let sourceHyperlinkTargetID, hyperlinkTargets != nil {
+                    hyperlinkTargets!.retain(id: sourceHyperlinkTargetID, count: 1)
+                    retainedSourceTarget = true
+                }
+                clearHyperlinkCells(row: row, columns: col..<(col + 1))
+                grid[row, col] = .blank
+                carriageReturn()
+                lineFeed(markWrapped: true)
+                targetRow = grid.cursorRow
+                targetCol = 0
+            } else {
+                targetCol = grid.size.columns - 2
+            }
+        }
+
+        placePrintedCell(
+            scalar: encoded,
+            attr: cell.attr,
+            width: 2,
+            row: targetRow,
+            col: targetCol,
+            hyperlinkTargetID: sourceHyperlinkTargetID
+        )
+        if retainedSourceTarget, let sourceHyperlinkTargetID, hyperlinkTargets != nil {
+            hyperlinkTargets!.release(id: sourceHyperlinkTargetID, count: 1)
+            if hyperlinkTargets!.isEmpty { hyperlinkTargets = nil }
+        }
     }
 
-    private func previousCellPosition() -> (row: Int, col: Int)? {
+    private func previousCellPosition(appending _: UInt32) -> (row: Int, col: Int)? {
+        if let lastPrintedPosition,
+           lastPrintedPosition.row == grid.cursorRow,
+           lastPrintedPosition.col == grid.cursorCol {
+            return lastPrintedPosition
+        }
         if pendingWrap {
             return (grid.cursorRow, grid.cursorCol) // 光标停在刚写完的末列
         }
         guard grid.cursorCol > 0 else { return nil }
         return (grid.cursorRow, grid.cursorCol - 1)
+    }
+
+    /// 把一个已经确定宽度的字符原子地写入 grid，并同步宽格、链接和光标。
+    private mutating func placePrintedCell(
+        scalar: UInt32,
+        attr: UInt32,
+        width: Int,
+        row: Int,
+        col: Int,
+        hyperlinkTargetID: UInt32?
+    ) {
+        // 覆写别人的半个宽字符时，把孤儿半格清掉，不留残影。
+        clearWideOrphan(row: row, col: col)
+        if width == 2 { clearWideOrphan(row: row, col: col + 1) }
+
+        let baseAttr = attr & ~(Cell.Attr.wideLeading | Cell.Attr.wideTrailing)
+        grid[row, col] = Cell(
+            scalar: scalar,
+            attr: baseAttr | (width == 2 ? Cell.Attr.wideLeading : 0)
+        )
+        if width == 2 {
+            grid[row, col + 1] = Cell(
+                scalar: 0x20,
+                attr: baseAttr | Cell.Attr.wideTrailing
+            )
+        }
+
+        if let hyperlinkTargetID {
+            replaceHyperlinkCells(
+                row: row,
+                columns: col..<(col + width),
+                targetID: hyperlinkTargetID
+            )
+        } else if let hyperlinks {
+            let stableLineID = scrollback.totalAppendedLines + UInt64(row)
+            if hyperlinks.mayContainRow(lineID: stableLineID) {
+                replaceHyperlinkCells(
+                    row: row,
+                    columns: col..<(col + width),
+                    targetID: nil
+                )
+            }
+        }
+
+        if col + width < grid.size.columns {
+            grid.cursorCol = col + width
+        } else {
+            grid.cursorCol = grid.size.columns - 1
+            pendingWrap = modes.autowrap
+        }
+        lastPrintedPosition = (row, col)
     }
 
     private mutating func clearWideOrphan(row: Int, col: Int) {
@@ -605,10 +682,12 @@ public struct Terminal: Sendable {
         case 0x08:
             if grid.cursorCol > 0 { grid.cursorCol -= 1 }
             pendingWrap = false
+            cancelClusterContinuation()
         case 0x09:
             // 固定 8 列制表位。HTS/TBC 自定义制表位极少被用到，需要时再加。
             let next = (grid.cursorCol / 8 + 1) * 8
             grid.cursorCol = min(next, grid.size.columns - 1)
+            cancelClusterContinuation()
         default:
             break
         }
@@ -629,6 +708,17 @@ public struct Terminal: Sendable {
             return Int(params[base])
         }
 
+        // SGR 只改变后续 cell 属性，DSR/DA 只回报状态；它们可以安全地
+        // 出现在同一字符簇的标量之间。其余 CSI 都可能移动光标或改写 grid。
+        let preservesClusterContinuation = prefix == 0
+            && intermediates.isEmpty
+            && (final == UInt8(ascii: "m")
+                || final == UInt8(ascii: "n")
+                || final == UInt8(ascii: "c"))
+        if !preservesClusterContinuation {
+            cancelClusterContinuation()
+        }
+
         if prefix == UInt8(ascii: "?") {
             decPrivateMode(params: params, set: final == UInt8(ascii: "h"))
             return
@@ -645,13 +735,16 @@ public struct Terminal: Sendable {
         case UInt8(ascii: "G"), UInt8(ascii: "`"):
             grid.cursorCol = clampCol(param(0) - 1)
             pendingWrap = false
+            cancelClusterContinuation()
         case UInt8(ascii: "d"):
             grid.cursorRow = clampRow(originOffset + param(0) - 1)
             pendingWrap = false
+            cancelClusterContinuation()
         case UInt8(ascii: "H"), UInt8(ascii: "f"):
             grid.cursorRow = clampRow(originOffset + param(0) - 1)
             grid.cursorCol = clampCol(param(1) - 1)
             pendingWrap = false
+            cancelClusterContinuation()
         case UInt8(ascii: "J"): eraseDisplay(mode: param(0, default: 0))
         case UInt8(ascii: "K"): eraseLine(mode: param(0, default: 0))
         case UInt8(ascii: "L"): insertLines(param(0))
@@ -702,6 +795,10 @@ public struct Terminal: Sendable {
     // MARK: - TerminalActionHandler：ESC
 
     public mutating func escDispatch(intermediate: UInt8, final: UInt8) {
+        // DECID 只查询状态；其它 ESC 动作会移动光标、切屏或重置状态。
+        if final != UInt8(ascii: "Z") {
+            cancelClusterContinuation()
+        }
         guard intermediate == 0 else { return } // ESC ( B 等字符集指定：忽略
         switch final {
         case UInt8(ascii: "7"):
@@ -1226,6 +1323,15 @@ public struct Terminal: Sendable {
         )
     }
 
+    private func hyperlinkTargetID(row: Int, column: Int) -> UInt32? {
+        guard let hyperlinks,
+              let coordinate = hyperlinkCoordinate(row: row, column: column),
+              let record = hyperlinks.record(headLineID: coordinate.headLineID),
+              let span = record.span(containing: coordinate.offset)
+        else { return nil }
+        return span.targetID
+    }
+
     private mutating func rebuildHyperlinkRowIndex(
         row: Int,
         coordinate: (headLineID: UInt64, offset: UInt32, segmentEnd: UInt32)
@@ -1252,6 +1358,7 @@ public struct Terminal: Sendable {
     }
 
     private mutating func lineFeed(markWrapped: Bool = false) {
+        cancelClusterContinuation()
         if grid.cursorRow == scrollBottom {
             scrollRegionUp()
         } else if grid.cursorRow < grid.size.rows - 1 {
@@ -1268,6 +1375,12 @@ public struct Terminal: Sendable {
     private mutating func carriageReturn() {
         grid.cursorCol = 0
         pendingWrap = false
+        cancelClusterContinuation()
+    }
+
+    private mutating func cancelClusterContinuation() {
+        pendingJoin = false
+        lastPrintedPosition = nil
     }
 
     /// 区域上滚一行；只有主屏整屏滚动才把滚出的行送进 scrollback。
@@ -1307,6 +1420,7 @@ public struct Terminal: Sendable {
         grid.cursorCol = clampCol(saved.col)
         currentAttr = saved.attr
         pendingWrap = false
+        cancelClusterContinuation()
     }
 
     private mutating func setScrollRegion(top: Int, bottom: Int) {
@@ -1318,6 +1432,7 @@ public struct Terminal: Sendable {
         grid.cursorRow = modes.originMode ? scrollTop : 0
         grid.cursorCol = 0
         pendingWrap = false
+        cancelClusterContinuation()
     }
 
     private var originOffset: Int { modes.originMode ? scrollTop : 0 }
@@ -1336,6 +1451,7 @@ public struct Terminal: Sendable {
         grid.cursorRow = clampRow(grid.cursorRow + rowDelta)
         grid.cursorCol = clampCol(grid.cursorCol + colDelta)
         pendingWrap = false
+        cancelClusterContinuation()
     }
 
     private mutating func stampSemantic(_ mark: SemanticMark? = nil, at transitionColumn: Int? = nil) {
@@ -1602,6 +1718,7 @@ public struct Terminal: Sendable {
     /// 备用屏：vim / less 进出的机制。备用屏没有 scrollback，退出时主屏原样恢复。
     private mutating func switchAlternateScreen(to enter: Bool, saveCursor: Bool) {
         guard enter != modes.alternateScreen else { return }
+        cancelClusterContinuation()
         if enter {
             if saveCursor {
                 savedCursor = (grid.cursorRow, grid.cursorCol, currentAttr)
